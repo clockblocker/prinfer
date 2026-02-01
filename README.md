@@ -14,6 +14,9 @@ npm install prinfer
 # Basic usage
 prinfer src/utils.ts myFunction
 
+# Find variable at specific line
+prinfer src/utils.ts:75 commandResult
+
 # With custom tsconfig
 prinfer src/utils.ts myFunction --project ./tsconfig.json
 
@@ -40,24 +43,32 @@ console.log(result.signature);
 console.log(result.returnType);
 // => "boolean"
 
+// Find variable at specific line
+const result2 = inferType("./src/utils.ts", "commandResult", { line: 75 });
+console.log(result2.signature);
+// => "Result<VaultAction[], CommandError>"
+
 // With custom tsconfig
-const result2 = inferType("./src/utils.ts", "myFunction", "./tsconfig.json");
+const result3 = inferType("./src/utils.ts", "myFunction", { project: "./tsconfig.json" });
 ```
 
 ### API Reference
 
-#### `inferType(file, name, project?)`
+#### `inferType(file, name, options?)`
 
 Infer the type of a function or variable in a TypeScript file.
 
 **Parameters:**
 - `file` - Path to the TypeScript file
 - `name` - Name of the function/variable to inspect
-- `project` - Optional path to tsconfig.json
+- `options` - Optional object with:
+  - `line` - Line number to narrow search (1-based)
+  - `project` - Path to tsconfig.json
 
 **Returns:** `InferredTypeResult`
 - `signature` - The inferred type signature
 - `returnType` - The return type (for functions)
+- `line` - The line number where the symbol was found
 
 #### Types
 
@@ -65,13 +76,55 @@ Infer the type of a function or variable in a TypeScript file.
 interface Options {
   file: string;
   name: string;
+  line?: number;
   project?: string;
 }
 
 interface InferredTypeResult {
   signature: string;
   returnType?: string;
+  line?: number;
 }
+```
+
+## MCP Server (Claude Integration)
+
+prinfer includes an MCP server for use with Claude Code or Claude Desktop.
+
+### Setup for Claude Code
+
+Add to your `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "prinfer": {
+      "command": "npx",
+      "args": ["prinfer-mcp"]
+    }
+  }
+}
+```
+
+Or if installed globally (`npm i -g prinfer`):
+
+```json
+{
+  "mcpServers": {
+    "prinfer": {
+      "command": "prinfer-mcp"
+    }
+  }
+}
+```
+
+### Tool Usage
+
+Once configured, Claude can use the `infer_type` tool:
+
+```
+infer_type(file: "src/utils.ts", name: "myFunction")
+infer_type(file: "src/utils.ts", name: "commandResult", line: 75)
 ```
 
 ## Requirements
