@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.5.2
+
+### Patch Changes
+
+- 3b9dd90: Fix: use settings.json for Claude Code MCP configuration instead of claude_desktop_config.json
+
 ## 0.5.1
 
 ### Patch Changes
