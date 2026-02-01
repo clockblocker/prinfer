@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.4.1
+
+### Patch Changes
+
+- 0ddb3e8: Update README with "typehints for your AI agent" positioning.
+
 ## 0.4.0
 
 ### Minor Changes
