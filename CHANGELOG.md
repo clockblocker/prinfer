@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.4.0
+
+### Minor Changes
+
+- 39a73e8: Add auto-installed Claude skill on global install. Includes coding guideline for type inference and `/check-type` slash command.
+
 ## 0.3.0
 
 ### Minor Changes
