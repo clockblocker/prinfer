@@ -3,10 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-interface McpConfig {
-	mcpServers?: Record<string, { command: string; args?: string[] }>;
-}
-
 const SKILL_CONTENT = `# TypeScript Type Inference (prinfer)
 
 ## Coding Guideline
@@ -53,31 +49,7 @@ function main() {
 		return;
 	}
 
-	let success = true;
-
-	// Install MCP server
-	const configFile = path.join(claudeDir, "settings.json");
-	try {
-		let config: McpConfig = {};
-		if (fs.existsSync(configFile)) {
-			config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
-		}
-
-		if (!config.mcpServers?.prinfer) {
-			config.mcpServers = config.mcpServers || {};
-			config.mcpServers.prinfer = { command: "prinfer-mcp" };
-			fs.writeFileSync(
-				configFile,
-				`${JSON.stringify(config, null, 2)}\n`,
-			);
-			console.log("[ok] Added MCP server to settings.json");
-		}
-	} catch (err) {
-		console.error(`[error] MCP setup failed: ${(err as Error).message}`);
-		success = false;
-	}
-
-	// Install skill
+	// Install skill only (MCP setup requires 'claude' CLI which may not be available during npm install)
 	const skillsDir = path.join(claudeDir, "skills");
 	const skillFile = path.join(skillsDir, "prefer-infer.md");
 	try {
@@ -93,12 +65,11 @@ function main() {
 		}
 	} catch (err) {
 		console.error(`[error] Skill setup failed: ${(err as Error).message}`);
-		success = false;
+		console.error("Run 'prinfer setup' for full installation.");
 	}
 
-	if (!success) {
-		console.error("\nSome steps failed. Run 'prinfer setup' for details.");
-	}
+	// Remind user to run setup for MCP
+	console.log("Run 'prinfer setup' to configure the MCP server.");
 }
 
 main();

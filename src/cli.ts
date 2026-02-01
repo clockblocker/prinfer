@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,23 +33,41 @@ Examples:
 const MANUAL_SETUP = `
 Manual setup instructions:
 
-1. Add MCP server to ~/.claude/settings.json:
-
-   {
-     "mcpServers": {
-       "prinfer": {
-         "command": "prinfer-mcp"
-       }
-     }
-   }
+1. Add MCP server:
+   Run: claude mcp add prinfer node /path/to/prinfer-mcp
 
 2. Create skill file at ~/.claude/skills/prefer-infer.md:
-
    See https://github.com/clockblocker/prinfer for skill content.
 `.trim();
 
-interface McpConfig {
-	mcpServers?: Record<string, { command: string; args?: string[] }>;
+function getMcpBinaryPath(): string {
+	// Resolve absolute path to prinfer-mcp
+	// It's in the same directory as this script (dist/)
+	const thisScript = new URL(import.meta.url).pathname;
+	return path.join(path.dirname(thisScript), "mcp.js");
+}
+
+function installMcpServer(): boolean {
+	try {
+		const mcpPath = getMcpBinaryPath();
+
+		// Always remove first to ensure correct path (handles upgrades/fixes)
+		try {
+			execSync("claude mcp remove prinfer", { stdio: "pipe" });
+		} catch {
+			// Ignore if not exists
+		}
+
+		// Add MCP server with absolute path
+		execSync(`claude mcp add prinfer node ${mcpPath}`, {
+			stdio: "inherit",
+		});
+		console.log("[ok] Added prinfer MCP server");
+		return true;
+	} catch (err) {
+		console.error(`[error] MCP setup failed: ${(err as Error).message}`);
+		return false;
+	}
 }
 
 const SKILL_CONTENT = `# TypeScript Type Inference (prinfer)
@@ -97,37 +116,11 @@ function runSetup(): void {
 		process.exit(1);
 	}
 
-	let mcpOk = false;
-	let skillOk = false;
-
-	// Install MCP server
-	const configFile = path.join(claudeDir, "settings.json");
-	try {
-		let config: McpConfig = {};
-		if (fs.existsSync(configFile)) {
-			config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
-		}
-
-		if (config.mcpServers?.prinfer) {
-			console.log("[ok] MCP server already configured");
-			mcpOk = true;
-		} else {
-			config.mcpServers = config.mcpServers || {};
-			config.mcpServers.prinfer = { command: "prinfer-mcp" };
-			fs.writeFileSync(
-				configFile,
-				`${JSON.stringify(config, null, 2)}\n`,
-			);
-			console.log("[ok] Added MCP server to settings.json");
-			mcpOk = true;
-		}
-	} catch (err) {
-		console.error(
-			`[error] Failed to configure MCP server: ${(err as Error).message}`,
-		);
-	}
+	// Install MCP server using claude CLI
+	const mcpOk = installMcpServer();
 
 	// Install skill
+	let skillOk = false;
 	const skillsDir = path.join(claudeDir, "skills");
 	const skillFile = path.join(skillsDir, "prefer-infer.md");
 	try {
