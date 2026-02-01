@@ -32,7 +32,7 @@ Examples:
 const MANUAL_SETUP = `
 Manual setup instructions:
 
-1. Add MCP server to ~/.claude/claude_desktop_config.json:
+1. Add MCP server to ~/.claude/settings.json:
 
    {
      "mcpServers": {
@@ -101,7 +101,7 @@ function runSetup(): void {
 	let skillOk = false;
 
 	// Install MCP server
-	const configFile = path.join(claudeDir, "claude_desktop_config.json");
+	const configFile = path.join(claudeDir, "settings.json");
 	try {
 		let config: McpConfig = {};
 		if (fs.existsSync(configFile)) {
@@ -118,7 +118,7 @@ function runSetup(): void {
 				configFile,
 				`${JSON.stringify(config, null, 2)}\n`,
 			);
-			console.log("[ok] Added MCP server to claude_desktop_config.json");
+			console.log("[ok] Added MCP server to settings.json");
 			mcpOk = true;
 		}
 	} catch (err) {

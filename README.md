@@ -61,7 +61,7 @@ Plus a `/check-type` command for quick lookups.
 
 If `prinfer setup` doesn't work, configure manually:
 
-**1. Add MCP server** to `~/.claude/claude_desktop_config.json`:
+**1. Add MCP server** to `~/.claude/settings.json`:
 
 ```json
 {
