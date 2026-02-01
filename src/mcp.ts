@@ -14,15 +14,7 @@ Setup:
   Run 'prinfer setup' to configure Claude Code automatically.
 
 Manual setup:
-  Add to ~/.claude/settings.json:
-
-  {
-    "mcpServers": {
-      "prinfer": {
-        "command": "prinfer-mcp"
-      }
-    }
-  }
+  Run: claude mcp add prinfer node /path/to/prinfer-mcp
 
 Provided tools:
   infer_type(file, name, line?, project?)

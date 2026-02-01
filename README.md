@@ -61,16 +61,10 @@ Plus a `/check-type` command for quick lookups.
 
 If `prinfer setup` doesn't work, configure manually:
 
-**1. Add MCP server** to `~/.claude/settings.json`:
+**1. Add MCP server** using the Claude CLI:
 
-```json
-{
-  "mcpServers": {
-    "prinfer": {
-      "command": "prinfer-mcp"
-    }
-  }
-}
+```bash
+claude mcp add prinfer node /path/to/node_modules/prinfer/dist/mcp.js
 ```
 
 **2. Create skill file** at `~/.claude/skills/prefer-infer.md` with content from [prefer-infer.md](https://github.com/clockblocker/prinfer/blob/master/src/postinstall.ts#L10-L42)
