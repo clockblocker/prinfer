@@ -3,6 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+interface McpConfig {
+	mcpServers?: Record<string, { command: string; args?: string[] }>;
+}
+
 const SKILL_CONTENT = `# TypeScript Type Inference (prinfer)
 
 ## Coding Guideline
@@ -40,38 +44,61 @@ Use the \`infer_type\` MCP tool to check the type:
 
 function main() {
 	const homeDir = os.homedir();
-	const skillsDir = path.join(homeDir, ".claude", "skills");
-	const skillFile = path.join(skillsDir, "prefer-infer.md");
-
-	// Check if ~/.claude exists
 	const claudeDir = path.join(homeDir, ".claude");
+
 	if (!fs.existsSync(claudeDir)) {
 		console.log(
-			"~/.claude directory not found. Skipping skill installation.",
-		);
-		console.log(
-			"To manually install, create ~/.claude/skills/prefer-infer.md",
+			"~/.claude not found. Run 'prinfer setup' after installing Claude Code.",
 		);
 		return;
 	}
 
-	// Create skills directory if it doesn't exist
-	if (!fs.existsSync(skillsDir)) {
-		fs.mkdirSync(skillsDir, { recursive: true });
+	let success = true;
+
+	// Install MCP server
+	const configFile = path.join(claudeDir, "claude_desktop_config.json");
+	try {
+		let config: McpConfig = {};
+		if (fs.existsSync(configFile)) {
+			config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+		}
+
+		if (!config.mcpServers?.prinfer) {
+			config.mcpServers = config.mcpServers || {};
+			config.mcpServers.prinfer = { command: "prinfer-mcp" };
+			fs.writeFileSync(
+				configFile,
+				`${JSON.stringify(config, null, 2)}\n`,
+			);
+			console.log("[ok] Added MCP server to claude_desktop_config.json");
+		}
+	} catch (err) {
+		console.error(`[error] MCP setup failed: ${(err as Error).message}`);
+		success = false;
 	}
 
-	// Check if skill already exists
-	if (fs.existsSync(skillFile)) {
-		console.log(
-			"prinfer skill already installed at ~/.claude/skills/prefer-infer.md",
-		);
-		return;
+	// Install skill
+	const skillsDir = path.join(claudeDir, "skills");
+	const skillFile = path.join(skillsDir, "prefer-infer.md");
+	try {
+		if (!fs.existsSync(skillsDir)) {
+			fs.mkdirSync(skillsDir, { recursive: true });
+		}
+
+		if (!fs.existsSync(skillFile)) {
+			fs.writeFileSync(skillFile, SKILL_CONTENT);
+			console.log(
+				"[ok] Installed skill to ~/.claude/skills/prefer-infer.md",
+			);
+		}
+	} catch (err) {
+		console.error(`[error] Skill setup failed: ${(err as Error).message}`);
+		success = false;
 	}
 
-	// Write the skill file
-	fs.writeFileSync(skillFile, SKILL_CONTENT);
-	console.log("Installed prinfer skill to ~/.claude/skills/prefer-infer.md");
-	console.log("You can now use /check-type to verify TypeScript types!");
+	if (!success) {
+		console.error("\nSome steps failed. Run 'prinfer setup' for details.");
+	}
 }
 
 main();

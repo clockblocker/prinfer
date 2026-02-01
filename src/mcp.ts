@@ -4,6 +4,39 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { inferType } from "./index.js";
 
+const HELP = `
+prinfer-mcp - MCP server for TypeScript type inference
+
+This is an MCP (Model Context Protocol) server. It's designed to be run
+by Claude Code, not directly from the command line.
+
+Setup:
+  Run 'prinfer setup' to configure Claude Code automatically.
+
+Manual setup:
+  Add to ~/.claude/claude_desktop_config.json:
+
+  {
+    "mcpServers": {
+      "prinfer": {
+        "command": "prinfer-mcp"
+      }
+    }
+  }
+
+Provided tools:
+  infer_type(file, name, line?, project?)
+    Infer the TypeScript type of a function or variable.
+
+See also:
+  prinfer --help    CLI for direct type inspection
+`.trim();
+
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+	console.log(HELP);
+	process.exit(0);
+}
+
 const server = new McpServer({
 	name: "prinfer",
 	version: "0.2.1",
