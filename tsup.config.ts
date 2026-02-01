@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     cli: "src/cli.ts",
+    mcp: "src/mcp.ts",
   },
   format: ["esm", "cjs"],
   dts: true,
@@ -12,13 +13,14 @@ export default defineConfig({
   clean: true,
   external: ["typescript"],
   onSuccess: async () => {
-    // Add shebang to CLI output
+    // Add shebang to CLI and MCP outputs
     const fs = await import("fs");
-    const cliPath = "./dist/cli.js";
-    if (fs.existsSync(cliPath)) {
-      const content = fs.readFileSync(cliPath, "utf-8");
-      if (!content.startsWith("#!/usr/bin/env bun")) {
-        fs.writeFileSync(cliPath, `#!/usr/bin/env bun\n${content}`);
+    for (const file of ["./dist/cli.js", "./dist/mcp.js"]) {
+      if (fs.existsSync(file)) {
+        const content = fs.readFileSync(file, "utf-8");
+        if (!content.startsWith("#!/usr/bin/env node")) {
+          fs.writeFileSync(file, `#!/usr/bin/env node\n${content}`);
+        }
       }
     }
   },

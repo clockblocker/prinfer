@@ -19,7 +19,8 @@
 		}
 	},
 	"bin": {
-		"prinfer": "./dist/cli.js"
+		"prinfer": "./dist/cli.js",
+		"prinfer-mcp": "./dist/mcp.js"
 	},
 	"files": [
 		"dist"
@@ -62,5 +63,9 @@
 	},
 	"engines": {
 		"bun": ">=1.0.0"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.25.3",
+		"zod": "^4.3.6"
 	}
 }
