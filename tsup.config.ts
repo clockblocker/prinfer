@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     cli: "src/cli.ts",
     mcp: "src/mcp.ts",
+    postinstall: "src/postinstall.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

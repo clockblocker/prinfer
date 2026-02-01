@@ -127,6 +127,13 @@ infer_type(file: "src/utils.ts", name: "myFunction")
 infer_type(file: "src/utils.ts", name: "commandResult", line: 75)
 ```
 
+### Auto-installed Skill
+
+When you install prinfer globally (`npm i -g prinfer`), a Claude skill is automatically added to `~/.claude/skills/prinfer.md`. This provides:
+
+1. **Coding guideline** - Encourages Claude to prefer type inference over explicit annotations
+2. **`/check-type` command** - Check types directly: `/check-type src/utils.ts:75 commandResult`
+
 ## Requirements
 
 - Node.js >= 18.0.0
