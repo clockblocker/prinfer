@@ -1,13 +1,18 @@
-import path from "node:path";
 import fs from "node:fs";
-import type { Options, InferredTypeResult } from "./types.js";
-import { loadProgram, findFirstMatch, getTypeInfo } from "./core.js";
+import path from "node:path";
+import { findFirstMatch, getTypeInfo, loadProgram } from "./core.js";
+import type { InferredTypeResult, Options } from "./types.js";
 
 // Re-export types
 export type { Options, InferredTypeResult };
 
 // Re-export core utilities
-export { loadProgram, findFirstMatch, getTypeInfo, findNearestTsconfig } from "./core.js";
+export {
+	findFirstMatch,
+	findNearestTsconfig,
+	getTypeInfo,
+	loadProgram,
+} from "./core.js";
 
 /**
  * Infer the type of a function or variable in a TypeScript file
@@ -30,33 +35,33 @@ export { loadProgram, findFirstMatch, getTypeInfo, findNearestTsconfig } from ".
  * ```
  */
 export function inferType(
-  file: string,
-  name: string,
-  project?: string
+	file: string,
+	name: string,
+	project?: string,
 ): InferredTypeResult {
-  const entryFileAbs = path.resolve(process.cwd(), file);
+	const entryFileAbs = path.resolve(process.cwd(), file);
 
-  if (!fs.existsSync(entryFileAbs)) {
-    throw new Error(`File not found: ${entryFileAbs}`);
-  }
+	if (!fs.existsSync(entryFileAbs)) {
+		throw new Error(`File not found: ${entryFileAbs}`);
+	}
 
-  const program = loadProgram(entryFileAbs, project);
-  const sourceFile = program.getSourceFile(entryFileAbs);
+	const program = loadProgram(entryFileAbs, project);
+	const sourceFile = program.getSourceFile(entryFileAbs);
 
-  if (!sourceFile) {
-    throw new Error(
-      `Could not load source file into the program (check tsconfig include/exclude): ${entryFileAbs}`
-    );
-  }
+	if (!sourceFile) {
+		throw new Error(
+			`Could not load source file into the program (check tsconfig include/exclude): ${entryFileAbs}`,
+		);
+	}
 
-  const node = findFirstMatch(sourceFile, name);
-  if (!node) {
-    throw new Error(
-      `No function-like symbol named "${name}" found in ${entryFileAbs}`
-    );
-  }
+	const node = findFirstMatch(sourceFile, name);
+	if (!node) {
+		throw new Error(
+			`No function-like symbol named "${name}" found in ${entryFileAbs}`,
+		);
+	}
 
-  return getTypeInfo(program, node);
+	return getTypeInfo(program, node);
 }
 
 /**
@@ -66,5 +71,5 @@ export function inferType(
  * @returns The inferred type information
  */
 export function inferTypeFromOptions(options: Options): InferredTypeResult {
-  return inferType(options.file, options.name, options.project);
+	return inferType(options.file, options.name, options.project);
 }

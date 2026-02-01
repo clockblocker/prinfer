@@ -1,11 +1,20 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.2.6/schema.json",
+	"files": {
+		"includes": [
+			"src/**",
+			"*.ts",
+			"package.json",
+			"biome.json",
+			"tsconfig.json"
+		]
+	},
 	"assist": {
 		"actions": {
 			"source": {
 				"organizeImports": "on",
 				"useSortedAttributes": "on",
-				"useSortedKeys": "on",
+				"useSortedKeys": "off",
 				"useSortedProperties": "on"
 			}
 		},
@@ -34,6 +43,7 @@
 			},
 			"recommended": true,
 			"style": {
+				"noNonNullAssertion": "off",
 				"noInferrableTypes": "error",
 				"noParameterAssign": "error",
 				"noUnusedTemplateLiteral": "error",
@@ -45,7 +55,7 @@
 				"useNumberNamespace": "error",
 				"useSelfClosingElements": "error",
 				"useSingleVarDeclarator": "error"
-			},
+			}
 		}
 	}
 }
