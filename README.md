@@ -1,112 +1,51 @@
 # prinfer
 
-TypeScript type inference inspection tool. Inspect the inferred types of functions and variables in your TypeScript code.
+**Typehints for your AI agent.**
 
-## Installation
+prinfer gives AI coding assistants the ability to inspect TypeScript's inferred types — so they can write cleaner code without redundant type annotations.
+
+## Why?
+
+AI agents write TypeScript, but they can't see what the compiler infers. This leads to:
+- Unnecessary explicit type annotations everywhere
+- Verbose code that fights against TypeScript's design
+- Missed opportunities to leverage type inference
+
+prinfer solves this by exposing TypeScript's type inference to your agent via MCP.
+
+## Quick Start
 
 ```bash
-npm install prinfer
+npm i -g prinfer
 ```
 
-## CLI Usage
+That's it. On install, prinfer automatically:
+1. Adds itself as an MCP tool for Claude
+2. Installs a skill that teaches Claude to prefer type inference
 
-```bash
-# Basic usage
-prinfer src/utils.ts myFunction
+## What Gets Installed
 
-# Find variable at specific line
-prinfer src/utils.ts:75 commandResult
+### MCP Server (`prinfer-mcp`)
 
-# With custom tsconfig
-prinfer src/utils.ts myFunction --project ./tsconfig.json
-
-# Show help
-prinfer --help
-```
-
-### Output
+Your agent gets an `infer_type` tool to check what TypeScript infers:
 
 ```
-(x: number, y: string) => boolean
-returns: boolean
+infer_type(file: "src/utils.ts", name: "myFunction")
+infer_type(file: "src/utils.ts", name: "commandResult", line: 75)
 ```
 
-## Programmatic API
+### Claude Skill (`~/.claude/skills/prinfer.md`)
 
-```typescript
-import { inferType } from "prinfer";
+A coding guideline that encourages your agent to:
+- Rely on type inference instead of explicit annotations
+- Use prinfer to verify types before adding redundant hints
+- Write idiomatic TypeScript
 
-// Basic usage
-const result = inferType("./src/utils.ts", "myFunction");
-console.log(result.signature);
-// => "(x: number, y: string) => boolean"
-console.log(result.returnType);
-// => "boolean"
+Plus a `/check-type` command for quick lookups.
 
-// Find variable at specific line
-const result2 = inferType("./src/utils.ts", "commandResult", { line: 75 });
-console.log(result2.signature);
-// => "Result<VaultAction[], CommandError>"
+## MCP Setup
 
-// With custom tsconfig
-const result3 = inferType("./src/utils.ts", "myFunction", { project: "./tsconfig.json" });
-```
-
-### API Reference
-
-#### `inferType(file, name, options?)`
-
-Infer the type of a function or variable in a TypeScript file.
-
-**Parameters:**
-- `file` - Path to the TypeScript file
-- `name` - Name of the function/variable to inspect
-- `options` - Optional object with:
-  - `line` - Line number to narrow search (1-based)
-  - `project` - Path to tsconfig.json
-
-**Returns:** `InferredTypeResult`
-- `signature` - The inferred type signature
-- `returnType` - The return type (for functions)
-- `line` - The line number where the symbol was found
-
-#### Types
-
-```typescript
-interface Options {
-  file: string;
-  name: string;
-  line?: number;
-  project?: string;
-}
-
-interface InferredTypeResult {
-  signature: string;
-  returnType?: string;
-  line?: number;
-}
-```
-
-## MCP Server (Claude Integration)
-
-prinfer includes an MCP server for use with Claude Code or Claude Desktop.
-
-### Setup for Claude Code
-
-Add to your `~/.claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "prinfer": {
-      "command": "npx",
-      "args": ["prinfer-mcp"]
-    }
-  }
-}
-```
-
-Or if installed globally (`npm i -g prinfer`):
+If the auto-setup didn't work, add to `~/.claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -118,21 +57,32 @@ Or if installed globally (`npm i -g prinfer`):
 }
 ```
 
-### Tool Usage
+## CLI Usage
 
-Once configured, Claude can use the `infer_type` tool:
+prinfer also works as a standalone CLI:
 
+```bash
+prinfer src/utils.ts myFunction
+prinfer src/utils.ts:75 commandResult
 ```
-infer_type(file: "src/utils.ts", name: "myFunction")
-infer_type(file: "src/utils.ts", name: "commandResult", line: 75)
+
+Output:
+```
+(x: number, y: string) => boolean
+returns: boolean
 ```
 
-### Auto-installed Skill
+## Programmatic API
 
-When you install prinfer globally (`npm i -g prinfer`), a Claude skill is automatically added to `~/.claude/skills/prinfer.md`. This provides:
+```typescript
+import { inferType } from "prinfer";
 
-1. **Coding guideline** - Encourages Claude to prefer type inference over explicit annotations
-2. **`/check-type` command** - Check types directly: `/check-type src/utils.ts:75 commandResult`
+const result = inferType("./src/utils.ts", "myFunction");
+// => { signature: "(x: number, y: string) => boolean", returnType: "boolean", line: 4 }
+
+// With line number for disambiguation
+const result2 = inferType("./src/utils.ts", "commandResult", { line: 75 });
+```
 
 ## Requirements
 
