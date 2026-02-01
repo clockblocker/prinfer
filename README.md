@@ -6,7 +6,8 @@
 
 **Typehints for your AI agent.**
 
-prinfer gives AI coding assistants the ability to inspect TypeScript's inferred types — so they can write cleaner code without redundant type annotations.
+Give AI coding assistant the ability to inspect TypeScript's inferred types mimicking the IDE's hover behavior.
+so they can write cleaner code without redundant type annotations.
 
 ## Why?
 
@@ -40,12 +41,14 @@ prinfer setup
 
 ### MCP Server (`prinfer-mcp`)
 
-Your agent gets an `infer_type` tool to check what TypeScript infers:
+Your agent gets a `hover` tool to check what TypeScript infers at any position:
 
 ```
-infer_type(file: "src/utils.ts", name: "myFunction")
-infer_type(file: "src/utils.ts", name: "commandResult", line: 75)
+hover(file: "src/utils.ts", line: 75, column: 10)
+hover(file: "src/utils.ts", line: 75, column: 10, include_docs: true)
 ```
+
+The position-based API matches IDE behavior and returns instantiated generic types at call sites.
 
 ### Claude Skill (`~/.claude/skills/prefer-infer.md`)
 
@@ -74,8 +77,9 @@ claude mcp add prinfer node /path/to/node_modules/prinfer/dist/mcp.js
 prinfer also works as a standalone CLI:
 
 ```bash
-prinfer src/utils.ts myFunction
-prinfer src/utils.ts:75 commandResult
+prinfer src/utils.ts:75:10
+prinfer src/utils.ts:75:10 --docs
+prinfer src/utils.ts:75:10 --project ./tsconfig.json
 ```
 
 Output:
@@ -83,18 +87,25 @@ Output:
 ```
 (x: number, y: string) => boolean
 returns: boolean
+name: myFunction
+kind: function
+docs: Adds two numbers together.
 ```
 
 ## Programmatic API
 
 ```typescript
-import { inferType } from "prinfer";
+import { hover } from "prinfer";
 
-const result = inferType("./src/utils.ts", "myFunction");
-// => { signature: "(x: number, y: string) => boolean", returnType: "boolean", line: 4 }
+const result = hover("./src/utils.ts", 75, 10);
+// => { signature: "(x: number, y: string) => boolean", returnType: "boolean", line: 75, column: 10, kind: "function", name: "myFunction" }
 
-// With line number for disambiguation
-const result2 = inferType("./src/utils.ts", "commandResult", { line: 75 });
+// With documentation
+const result2 = hover("./src/utils.ts", 75, 10, { include_docs: true });
+// => { ..., documentation: "Adds two numbers together." }
+
+// With custom tsconfig
+const result3 = hover("./src/utils.ts", 75, 10, { project: "./tsconfig.json" });
 ```
 
 ## Requirements
