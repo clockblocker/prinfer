@@ -6,7 +6,7 @@ import {
 	findNodeByNameAndLine,
 	getTypeInfo,
 	loadProgram,
-} from "../core.js";
+} from "../core/index.js";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
