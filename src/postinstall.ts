@@ -41,7 +41,7 @@ Use the \`infer_type\` MCP tool to check the type:
 function main() {
 	const homeDir = os.homedir();
 	const skillsDir = path.join(homeDir, ".claude", "skills");
-	const skillFile = path.join(skillsDir, "prinfer.md");
+	const skillFile = path.join(skillsDir, "prefer-infer.md");
 
 	// Check if ~/.claude exists
 	const claudeDir = path.join(homeDir, ".claude");
@@ -49,7 +49,9 @@ function main() {
 		console.log(
 			"~/.claude directory not found. Skipping skill installation.",
 		);
-		console.log("To manually install, create ~/.claude/skills/prinfer.md");
+		console.log(
+			"To manually install, create ~/.claude/skills/prefer-infer.md",
+		);
 		return;
 	}
 
@@ -61,14 +63,14 @@ function main() {
 	// Check if skill already exists
 	if (fs.existsSync(skillFile)) {
 		console.log(
-			"prinfer skill already installed at ~/.claude/skills/prinfer.md",
+			"prinfer skill already installed at ~/.claude/skills/prefer-infer.md",
 		);
 		return;
 	}
 
 	// Write the skill file
 	fs.writeFileSync(skillFile, SKILL_CONTENT);
-	console.log("Installed prinfer skill to ~/.claude/skills/prinfer.md");
+	console.log("Installed prinfer skill to ~/.claude/skills/prefer-infer.md");
 	console.log("You can now use /check-type to verify TypeScript types!");
 }
 
