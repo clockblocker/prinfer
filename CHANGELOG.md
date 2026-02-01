@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.2.1
+
+### Patch Changes
+
+- 278e9d4: Add line-based type inference support. You can now specify a line number to find variables at specific locations using `file.ts:75 varName` syntax.
+
 ## 0.2.0
 
 ### Minor Changes
