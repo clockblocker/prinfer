@@ -1,5 +1,11 @@
 # prinfer
 
+## 1.0.0
+
+### Major Changes
+
+- 42376a6: Remove `inferType` and `inferTypeFromOptions` from public API. Use `hover()` instead for type lookups.
+
 ## 0.6.0
 
 ### Minor Changes
