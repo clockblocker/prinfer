@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.3.0
+
+### Minor Changes
+
+- 66a3c64: Add MCP server support. Run `prinfer-mcp` to start the MCP server for use with Claude Code or Claude Desktop.
+
 ## 0.2.1
 
 ### Patch Changes
