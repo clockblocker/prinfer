@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.4.2
+
+### Patch Changes
+
+- ab0ae9e: Add logo to README and rename skill file to prefer-infer.md
+
 ## 0.4.1
 
 ### Patch Changes
