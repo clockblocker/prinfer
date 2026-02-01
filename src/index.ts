@@ -6,7 +6,7 @@ import {
 	getHoverInfo,
 	getTypeInfo,
 	loadProgram,
-} from "./core.js";
+} from "./core/index.js";
 import type {
 	HoverOptions,
 	HoverResult,
@@ -28,7 +28,7 @@ export {
 	getLineNumber,
 	getTypeInfo,
 	loadProgram,
-} from "./core.js";
+} from "./core/index.js";
 
 /**
  * Infer the type of a function or variable in a TypeScript file
