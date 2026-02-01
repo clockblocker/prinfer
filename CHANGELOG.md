@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.5.3
+
+### Patch Changes
+
+- fix: use `claude mcp add` instead of manual config file writing
+
 ## 0.5.2
 
 ### Patch Changes

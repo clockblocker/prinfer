@@ -1,6 +1,6 @@
 {
 	"name": "prinfer",
-	"version": "0.5.2",
+	"version": "0.5.3",
 	"description": "TypeScript type inference inspection tool",
 	"type": "module",
 	"main": "./dist/index.cjs",
