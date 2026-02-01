@@ -8,4 +8,4 @@ export {
 } from "./node-find.js";
 export { getLineNumber } from "./node-match.js";
 export { findNearestTsconfig, loadProgram } from "./program.js";
-export { getTypeInfo } from "./type-info.js";
+export { getTypeInfo, type InferredTypeResult } from "./type-info.js";

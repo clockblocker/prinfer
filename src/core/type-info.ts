@@ -1,7 +1,18 @@
 import ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
-import type { InferredTypeResult } from "../types.js";
 import { getLineNumber, isArrowOrFnExpr } from "./node-match.js";
+
+/**
+ * Result of type inference (internal use)
+ */
+export interface InferredTypeResult {
+	/** The inferred type signature */
+	signature: string;
+	/** The return type (for functions) */
+	returnType?: string;
+	/** The line number where the symbol was found */
+	line?: number;
+}
 
 /**
  * Get type information for a node
