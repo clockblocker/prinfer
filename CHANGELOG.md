@@ -1,5 +1,24 @@
 # prinfer
 
+## 0.6.0
+
+### Minor Changes
+
+- 9f5cec0: Replace name-based lookup with position-based hover API
+
+  BREAKING CHANGE: The API has changed from name-based to position-based lookup.
+
+  - New `hover(file, line, column, options?)` function replacing name-based lookup
+  - CLI syntax changed to `prinfer file:line:column [--docs] [--project path]`
+  - MCP tool changed to `hover` with file, line, column parameters
+  - Returns instantiated generic types at call sites
+  - JSDoc/TSDoc extraction with `include_docs` option
+  - Returns symbol kind and name in results
+
+### Patch Changes
+
+- 0397e29: Rename `/check-type` skill command to `/hover` for consistency with the API naming
+
 ## 0.5.3
 
 ### Patch Changes
