@@ -7,6 +7,7 @@ prinfer gives AI coding assistants the ability to inspect TypeScript's inferred 
 ## Why?
 
 AI agents write TypeScript, but they can't see what the compiler infers. This leads to:
+
 - Unnecessary explicit type annotations everywhere
 - Verbose code that fights against TypeScript's design
 - Missed opportunities to leverage type inference
@@ -19,7 +20,12 @@ prinfer solves this by exposing TypeScript's type inference to your agent via MC
 npm i -g prinfer
 ```
 
+```bash
+bun add -g prinfer
+```
+
 That's it. On install, prinfer automatically:
+
 1. Adds itself as an MCP tool for Claude
 2. Installs a skill that teaches Claude to prefer type inference
 
@@ -37,6 +43,7 @@ infer_type(file: "src/utils.ts", name: "commandResult", line: 75)
 ### Claude Skill (`~/.claude/skills/prinfer.md`)
 
 A coding guideline that encourages your agent to:
+
 - Rely on type inference instead of explicit annotations
 - Use prinfer to verify types before adding redundant hints
 - Write idiomatic TypeScript
@@ -67,6 +74,7 @@ prinfer src/utils.ts:75 commandResult
 ```
 
 Output:
+
 ```
 (x: number, y: string) => boolean
 returns: boolean
