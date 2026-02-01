@@ -5,10 +5,11 @@ const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
-  prinfer <file.ts> <name> [--project <tsconfig.json>]
+  prinfer <file.ts>[:<line>] <name> [--project <tsconfig.json>]
 
 Arguments:
   file.ts              Path to the TypeScript file
+  :line                Optional line number to narrow search (e.g., file.ts:75)
   name                 Name of the function/variable to inspect
 
 Options:
@@ -17,13 +18,24 @@ Options:
 
 Examples:
   prinfer src/utils.ts myFunction
+  prinfer src/utils.ts:75 commandResult
   prinfer src/utils.ts myFunction --project ./tsconfig.json
 `.trim();
 
 interface CliOptions {
 	file: string;
 	name: string;
+	line?: number;
 	project?: string;
+}
+
+function parseFileArg(arg: string): { file: string; line?: number } {
+	// Match pattern: file.ts:123 or just file.ts
+	const match = arg.match(/^(.+):(\d+)$/);
+	if (match) {
+		return { file: match[1], line: Number.parseInt(match[2], 10) };
+	}
+	return { file: arg };
 }
 
 function parseArgs(argv: string[]): CliOptions | null {
@@ -35,16 +47,18 @@ function parseArgs(argv: string[]): CliOptions | null {
 		return null;
 	}
 
-	const file = args[0];
+	const fileArg = args[0];
 	const name = args[1];
 
-	if (!file || !name) {
+	if (!fileArg || !name) {
 		console.error(
 			"Error: Both <file> and <name> arguments are required.\n",
 		);
 		console.log(HELP);
 		process.exit(1);
 	}
+
+	const { file, line } = parseFileArg(fileArg);
 
 	// Find project option
 	let project: string | undefined;
@@ -58,7 +72,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		}
 	}
 
-	return { file, name, project };
+	return { file, name, line, project };
 }
 
 function main(): void {
@@ -69,7 +83,10 @@ function main(): void {
 	}
 
 	try {
-		const result = inferType(options.file, options.name, options.project);
+		const result = inferType(options.file, options.name, {
+			line: options.line,
+			project: options.project,
+		});
 
 		console.log(result.signature);
 		if (result.returnType) {
