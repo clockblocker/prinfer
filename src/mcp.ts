@@ -14,7 +14,7 @@ Setup:
   Run 'prinfer setup' to configure Claude Code automatically.
 
 Manual setup:
-  Add to ~/.claude/claude_desktop_config.json:
+  Add to ~/.claude/settings.json:
 
   {
     "mcpServers": {

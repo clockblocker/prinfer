@@ -56,7 +56,7 @@ function main() {
 	let success = true;
 
 	// Install MCP server
-	const configFile = path.join(claudeDir, "claude_desktop_config.json");
+	const configFile = path.join(claudeDir, "settings.json");
 	try {
 		let config: McpConfig = {};
 		if (fs.existsSync(configFile)) {
@@ -70,7 +70,7 @@ function main() {
 				configFile,
 				`${JSON.stringify(config, null, 2)}\n`,
 			);
-			console.log("[ok] Added MCP server to claude_desktop_config.json");
+			console.log("[ok] Added MCP server to settings.json");
 		}
 	} catch (err) {
 		console.error(`[error] MCP setup failed: ${(err as Error).message}`);
