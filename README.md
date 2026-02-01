@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="printfer-logo.webp" alt="prinfer logo" width="400">
+</p>
+
 # prinfer
 
 **Typehints for your AI agent.**
@@ -18,7 +22,11 @@ prinfer solves this by exposing TypeScript's type inference to your agent via MC
 
 ```bash
 npm i -g prinfer
-# or
+```
+
+or
+
+```bash
 bun add -g prinfer
 ```
 
@@ -38,7 +46,7 @@ infer_type(file: "src/utils.ts", name: "myFunction")
 infer_type(file: "src/utils.ts", name: "commandResult", line: 75)
 ```
 
-### Claude Skill (`~/.claude/skills/prinfer.md`)
+### Claude Skill (`~/.claude/skills/prefer-infer.md`)
 
 A coding guideline that encourages your agent to:
 
