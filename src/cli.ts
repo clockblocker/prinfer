@@ -10,6 +10,8 @@ prinfer - TypeScript type inference inspection tool
 
 Usage:
   prinfer <file.ts>:<line>:<column> [--docs] [--project <tsconfig.json>]
+  prinfer <file.ts>:<name> [--docs] [--project <tsconfig.json>]
+  prinfer <file.ts>:<name>:<line> [--docs] [--project <tsconfig.json>]
   prinfer setup
 
 Commands:
@@ -17,6 +19,8 @@ Commands:
 
 Arguments:
   file.ts:line:column  Path to TypeScript file with 1-based line and column
+  file.ts:name         Path to TypeScript file with symbol name
+  file.ts:name:line    Path to TypeScript file with symbol name and line hint
 
 Options:
   --docs, -d           Include JSDoc/TSDoc documentation
@@ -25,6 +29,8 @@ Options:
 
 Examples:
   prinfer src/utils.ts:75:10
+  prinfer src/utils.ts:createHandler
+  prinfer src/utils.ts:createHandler:75
   prinfer src/utils.ts:75:10 --docs
   prinfer src/utils.ts:75:10 --project ./tsconfig.json
   prinfer setup
@@ -153,7 +159,8 @@ function runSetup(): void {
 	}
 }
 
-interface CliOptions {
+interface CliPositionOptions {
+	mode: "position";
 	file: string;
 	line: number;
 	column: number;
@@ -161,18 +168,55 @@ interface CliOptions {
 	project?: string;
 }
 
-function parsePositionArg(
-	arg: string,
-): { file: string; line: number; column: number } | null {
-	// Match pattern: file.ts:line:column
-	const match = arg.match(/^(.+):(\d+):(\d+)$/);
-	if (match) {
+interface CliNameOptions {
+	mode: "name";
+	file: string;
+	name: string;
+	line?: number;
+	includeDocs: boolean;
+	project?: string;
+}
+
+type CliOptions = CliPositionOptions | CliNameOptions;
+
+type ParsedArg =
+	| { mode: "position"; file: string; line: number; column: number }
+	| { mode: "name"; file: string; name: string; line?: number };
+
+function parsePositionArg(arg: string): ParsedArg | null {
+	// Match pattern: file.ts:line:column (position-based)
+	const posMatch = arg.match(/^(.+):(\d+):(\d+)$/);
+	if (posMatch) {
 		return {
-			file: match[1],
-			line: Number.parseInt(match[2], 10),
-			column: Number.parseInt(match[3], 10),
+			mode: "position",
+			file: posMatch[1],
+			line: Number.parseInt(posMatch[2], 10),
+			column: Number.parseInt(posMatch[3], 10),
 		};
 	}
+
+	// Match pattern: file.ts:name:line (name with line hint)
+	// Name must start with a letter or underscore and not be all digits
+	const nameLineMatch = arg.match(/^(.+):([a-zA-Z_][a-zA-Z0-9_]*):(\d+)$/);
+	if (nameLineMatch) {
+		return {
+			mode: "name",
+			file: nameLineMatch[1],
+			name: nameLineMatch[2],
+			line: Number.parseInt(nameLineMatch[3], 10),
+		};
+	}
+
+	// Match pattern: file.ts:name (name-based)
+	const nameMatch = arg.match(/^(.+):([a-zA-Z_][a-zA-Z0-9_]*)$/);
+	if (nameMatch) {
+		return {
+			mode: "name",
+			file: nameMatch[1],
+			name: nameMatch[2],
+		};
+	}
+
 	return null;
 }
 
@@ -196,13 +240,11 @@ function parseArgs(argv: string[]): CliOptions | null {
 
 	if (!parsed) {
 		console.error(
-			"Error: Position argument must be in format <file>:<line>:<column>\n",
+			"Error: Argument must be in format <file>:<line>:<column> or <file>:<name> or <file>:<name>:<line>\n",
 		);
 		console.log(HELP);
 		process.exit(1);
 	}
-
-	const { file, line, column } = parsed;
 
 	// Check for docs flag
 	const includeDocs = args.includes("--docs") || args.includes("-d");
@@ -219,7 +261,25 @@ function parseArgs(argv: string[]): CliOptions | null {
 		}
 	}
 
-	return { file, line, column, includeDocs, project };
+	if (parsed.mode === "position") {
+		return {
+			mode: "position",
+			file: parsed.file,
+			line: parsed.line,
+			column: parsed.column,
+			includeDocs,
+			project,
+		};
+	}
+
+	return {
+		mode: "name",
+		file: parsed.file,
+		name: parsed.name,
+		line: parsed.line,
+		includeDocs,
+		project,
+	};
 }
 
 function main(): void {
@@ -230,10 +290,17 @@ function main(): void {
 	}
 
 	try {
-		const result = hover(options.file, options.line, options.column, {
-			include_docs: options.includeDocs,
-			project: options.project,
-		});
+		const result =
+			options.mode === "position"
+				? hover(options.file, options.line, options.column, {
+						include_docs: options.includeDocs,
+						project: options.project,
+					})
+				: hover(options.file, options.name, {
+						include_docs: options.includeDocs,
+						project: options.project,
+						line: options.line,
+					});
 
 		console.log(result.signature);
 		if (result.returnType) {

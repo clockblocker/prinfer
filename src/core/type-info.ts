@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { TypeScriptInternalError } from "../errors.js";
 import type { InferredTypeResult } from "../types.js";
 import { getLineNumber, isArrowOrFnExpr } from "./node-match.js";
 
@@ -10,8 +11,38 @@ export function getTypeInfo(
 	node: ts.Node,
 	sourceFile?: ts.SourceFile,
 ): InferredTypeResult {
+	// Call getTypeChecker() first to ensure parent references are set up
+	// (this makes node.getSourceFile() work)
 	const checker = program.getTypeChecker();
 	const sf = sourceFile ?? node.getSourceFile();
+
+	try {
+		return getTypeInfoImpl(checker, node, sf);
+	} catch (error) {
+		if (error instanceof Error) {
+			let line: number | undefined;
+			try {
+				if (sf) line = getLineNumber(sf, node);
+			} catch {
+				// Ignore if we can't get line number
+			}
+			throw new TypeScriptInternalError({
+				file: sf?.fileName ?? "unknown",
+				line,
+				operation: "getting type information",
+				cause: error,
+			});
+		}
+		throw error;
+	}
+}
+
+function getTypeInfoImpl(
+	checker: ts.TypeChecker,
+	node: ts.Node,
+	sourceFile: ts.SourceFile,
+): InferredTypeResult {
+	const sf = sourceFile;
 	const line = getLineNumber(sf, node);
 	const flags = ts.TypeFormatFlags.NoTruncation;
 

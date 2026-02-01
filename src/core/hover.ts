@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { TypeScriptInternalError } from "../errors.js";
 import type { HoverResult } from "../types.js";
 import { isArrowOrFnExpr } from "./node-match.js";
 
@@ -98,6 +99,33 @@ export function getHoverInfo(
 	includeDocs: boolean,
 ): HoverResult {
 	const checker = program.getTypeChecker();
+	const sf = sourceFile;
+	const { line, character } = sf.getLineAndCharacterOfPosition(
+		node.getStart(sf),
+	);
+
+	try {
+		return getHoverInfoImpl(checker, node, sourceFile, includeDocs);
+	} catch (error) {
+		if (error instanceof Error) {
+			throw new TypeScriptInternalError({
+				file: sourceFile.fileName,
+				line: line + 1,
+				column: character + 1,
+				operation: "getting type information",
+				cause: error,
+			});
+		}
+		throw error;
+	}
+}
+
+function getHoverInfoImpl(
+	checker: ts.TypeChecker,
+	node: ts.Node,
+	sourceFile: ts.SourceFile,
+	includeDocs: boolean,
+): HoverResult {
 	const sf = sourceFile;
 	const { line, character } = sf.getLineAndCharacterOfPosition(
 		node.getStart(sf),
