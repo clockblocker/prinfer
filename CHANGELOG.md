@@ -1,5 +1,11 @@
 # prinfer
 
+## 0.5.1
+
+### Patch Changes
+
+- 7aeb91f: Fix postinstall script to skip when dist folder is not built yet
+
 ## 0.5.0
 
 ### Minor Changes
