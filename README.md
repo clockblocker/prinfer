@@ -58,7 +58,7 @@ A coding guideline that encourages your agent to:
 - Use prinfer to verify types before adding redundant hints
 - Write idiomatic TypeScript
 
-Plus a `/check-type` command for quick lookups.
+Plus a `/hover` command for quick lookups.
 
 ## Manual Setup
 
