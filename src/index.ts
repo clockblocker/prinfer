@@ -1,16 +1,30 @@
 import fs from "node:fs";
 import path from "node:path";
-import { findNodeByNameAndLine, getTypeInfo, loadProgram } from "./core.js";
-import type { InferredTypeResult, Options } from "./types.js";
+import {
+	findNodeAtPosition,
+	findNodeByNameAndLine,
+	getHoverInfo,
+	getTypeInfo,
+	loadProgram,
+} from "./core.js";
+import type {
+	HoverOptions,
+	HoverResult,
+	InferredTypeResult,
+	Options,
+} from "./types.js";
 
 // Re-export types
-export type { Options, InferredTypeResult };
+export type { HoverOptions, HoverResult, InferredTypeResult, Options };
 
 // Re-export core utilities
 export {
 	findFirstMatch,
 	findNearestTsconfig,
+	findNodeAtPosition,
 	findNodeByNameAndLine,
+	getDocumentation,
+	getHoverInfo,
 	getLineNumber,
 	getTypeInfo,
 	loadProgram,
@@ -87,4 +101,59 @@ export function inferTypeFromOptions(options: Options): InferredTypeResult {
 		line: options.line,
 		project: options.project,
 	});
+}
+
+/**
+ * Get type information at a specific position in a TypeScript file
+ *
+ * @param file - Path to the TypeScript file
+ * @param line - 1-based line number
+ * @param column - 1-based column number
+ * @param options - Optional hover options (project path, include_docs)
+ * @returns The hover information at the position
+ * @throws Error if file not found or no symbol at position
+ *
+ * @example
+ * ```ts
+ * import { hover } from "prinfer";
+ *
+ * const result = hover("./src/utils.ts", 75, 10);
+ * console.log(result.signature);
+ * // => "(x: number) => string"
+ *
+ * // With documentation
+ * const result2 = hover("./src/utils.ts", 75, 10, { include_docs: true });
+ * console.log(result2.documentation);
+ * // => "Formats a number as a string"
+ * ```
+ */
+export function hover(
+	file: string,
+	line: number,
+	column: number,
+	options?: HoverOptions,
+): HoverResult {
+	const { project, include_docs = false } = options ?? {};
+
+	const entryFileAbs = path.resolve(process.cwd(), file);
+
+	if (!fs.existsSync(entryFileAbs)) {
+		throw new Error(`File not found: ${entryFileAbs}`);
+	}
+
+	const program = loadProgram(entryFileAbs, project);
+	const sourceFile = program.getSourceFile(entryFileAbs);
+
+	if (!sourceFile) {
+		throw new Error(
+			`Could not load source file into the program (check tsconfig include/exclude): ${entryFileAbs}`,
+		);
+	}
+
+	const node = findNodeAtPosition(sourceFile, line, column);
+	if (!node) {
+		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
+	}
+
+	return getHoverInfo(program, node, sourceFile, include_docs);
 }
