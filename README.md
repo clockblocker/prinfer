@@ -18,9 +18,7 @@ prinfer solves this by exposing TypeScript's type inference to your agent via MC
 
 ```bash
 npm i -g prinfer
-```
-
-```bash
+# or
 bun add -g prinfer
 ```
 
