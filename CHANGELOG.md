@@ -1,5 +1,15 @@
 # prinfer
 
+## 0.5.0
+
+### Minor Changes
+
+- b30545c: Add `prinfer setup` command and improve help
+
+  - Run `prinfer setup` to manually configure MCP server and skill
+  - `prinfer-mcp --help` now shows setup instructions
+  - Better error messages when auto-install fails
+
 ## 0.4.2
 
 ### Patch Changes
