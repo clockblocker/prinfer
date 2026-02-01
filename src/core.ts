@@ -102,6 +102,40 @@ function isFunctionLikeNamed(node: ts.Node, name: string): boolean {
 }
 
 /**
+ * Check if a node is any variable declaration with the given name
+ */
+function isVariableNamed(node: ts.Node, name: string): boolean {
+	if (
+		ts.isVariableDeclaration(node) &&
+		ts.isIdentifier(node.name) &&
+		node.name.text === name
+	) {
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Check if a node matches the given name (function-like or variable)
+ */
+function isNamedNode(node: ts.Node, name: string): boolean {
+	return isFunctionLikeNamed(node, name) || isVariableNamed(node, name);
+}
+
+/**
+ * Get the 1-based line number for a node
+ */
+export function getLineNumber(
+	sourceFile: ts.SourceFile,
+	node: ts.Node,
+): number {
+	const { line } = sourceFile.getLineAndCharacterOfPosition(
+		node.getStart(sourceFile),
+	);
+	return line + 1;
+}
+
+/**
  * Find the first function-like node with the given name in a source file
  */
 export function findFirstMatch(
@@ -124,13 +158,47 @@ export function findFirstMatch(
 }
 
 /**
+ * Find a node by name and optionally by line number
+ */
+export function findNodeByNameAndLine(
+	sourceFile: ts.SourceFile,
+	name: string,
+	line?: number,
+): ts.Node | undefined {
+	let found: ts.Node | undefined;
+
+	const visit = (node: ts.Node) => {
+		if (found) return;
+		if (isNamedNode(node, name)) {
+			if (line !== undefined) {
+				const nodeLine = getLineNumber(sourceFile, node);
+				if (nodeLine === line) {
+					found = node;
+					return;
+				}
+			} else {
+				found = node;
+				return;
+			}
+		}
+		ts.forEachChild(node, visit);
+	};
+
+	visit(sourceFile);
+	return found;
+}
+
+/**
  * Get type information for a node
  */
 export function getTypeInfo(
 	program: ts.Program,
 	node: ts.Node,
+	sourceFile?: ts.SourceFile,
 ): InferredTypeResult {
 	const checker = program.getTypeChecker();
+	const sf = sourceFile ?? node.getSourceFile();
+	const line = getLineNumber(sf, node);
 
 	let sig: ts.Signature | undefined;
 
@@ -156,7 +224,7 @@ export function getTypeInfo(
 		const signature = checker.signatureToString(sig, undefined, flags);
 		const ret = checker.getReturnTypeOfSignature(sig);
 		const returnType = checker.typeToString(ret, undefined, flags);
-		return { signature, returnType };
+		return { signature, returnType, line };
 	}
 
 	// Fallback: type at the name location
@@ -167,5 +235,5 @@ export function getTypeInfo(
 	}
 
 	const t = checker.getTypeAtLocation(nameNode);
-	return { signature: checker.typeToString(t, undefined, flags) };
+	return { signature: checker.typeToString(t, undefined, flags), line };
 }

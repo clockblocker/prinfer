@@ -6,6 +6,8 @@ export interface Options {
 	file: string;
 	/** Name of the function/variable to inspect */
 	name: string;
+	/** Optional line number to narrow search */
+	line?: number;
 	/** Optional path to tsconfig.json */
 	project?: string;
 }
@@ -18,4 +20,6 @@ export interface InferredTypeResult {
 	signature: string;
 	/** The return type (for functions) */
 	returnType?: string;
+	/** The line number where the symbol was found */
+	line?: number;
 }

@@ -41,7 +41,7 @@ describe("inferType", () => {
 	test("throws error for missing symbol", () => {
 		expect(() => {
 			inferType(sampleFile, "nonExistent");
-		}).toThrow('No function-like symbol named "nonExistent"');
+		}).toThrow('No symbol named "nonExistent"');
 	});
 });
 
@@ -67,5 +67,30 @@ describe("inferTypeFromOptions", () => {
 			project: projectPath,
 		});
 		expect(result.signature).toBeDefined();
+	});
+});
+
+describe("line-based search", () => {
+	test("finds symbol at specific line", () => {
+		const result = inferType(sampleFile, "multiply", { line: 9 });
+		expect(result.signature).toContain("number");
+		expect(result.line).toBe(9);
+	});
+
+	test("includes line number in result", () => {
+		const result = inferType(sampleFile, "add");
+		expect(result.line).toBe(4);
+	});
+
+	test("finds object variable by name and line", () => {
+		const result = inferType(sampleFile, "utils", { line: 27 });
+		expect(result.signature).toContain("format");
+		expect(result.line).toBe(27);
+	});
+
+	test("throws error when line does not match", () => {
+		expect(() => {
+			inferType(sampleFile, "add", { line: 1 });
+		}).toThrow("at line 1");
 	});
 });

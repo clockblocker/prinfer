@@ -55,7 +55,7 @@ describe("CLI", () => {
 
 	test("shows error for missing symbol", async () => {
 		const { stderr, exitCode } = await runCli([sampleFile, "nonExistent"]);
-		expect(stderr).toContain("No function-like symbol");
+		expect(stderr).toContain('No symbol named "nonExistent"');
 		expect(exitCode).toBe(1);
 	});
 
@@ -97,5 +97,25 @@ describe("CLI", () => {
 		]);
 		expect(stdout).toContain("number");
 		expect(exitCode).toBe(0);
+	});
+
+	test("accepts file:line syntax", async () => {
+		const { stdout, exitCode } = await runCli([
+			`${sampleFile}:9`,
+			"multiply",
+		]);
+		expect(stdout).toContain("number");
+		expect(exitCode).toBe(0);
+	});
+
+	test("shows error when line does not match", async () => {
+		const { stderr, exitCode } = await runCli([`${sampleFile}:1`, "add"]);
+		expect(stderr).toContain("at line 1");
+		expect(exitCode).toBe(1);
+	});
+
+	test("help shows line syntax", async () => {
+		const { stdout } = await runCli(["--help"]);
+		expect(stdout).toContain(":line");
 	});
 });
