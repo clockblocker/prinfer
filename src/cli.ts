@@ -87,17 +87,17 @@ Use the \`prinfer\` MCP tool (\`hover\`) to verify what TypeScript infers before
 
 ## Commands
 
-### /check-type
+### /hover
 
 Check the inferred type at a specific position in a TypeScript file.
 
-Usage: \`/check-type <file>:<line>:<column>\`
+Usage: \`/hover <file>:<line>:<column>\`
 
 Examples:
-- \`/check-type src/utils.ts:75:10\`
-- \`/check-type src/utils.ts:42:5\`
+- \`/hover src/utils.ts:75:10\`
+- \`/hover src/utils.ts:42:5\`
 
-<command-name>check-type</command-name>
+<command-name>hover</command-name>
 
 Use the \`hover\` MCP tool to check the type:
 1. Parse the arguments to extract file, line, and column
