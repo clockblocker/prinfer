@@ -41,14 +41,19 @@ prinfer setup
 
 ### MCP Server (`prinfer-mcp`)
 
-Your agent gets a `hover` tool to check what TypeScript infers at any position:
+Your agent gets tools to check what TypeScript infers:
 
 ```
 hover(file: "src/utils.ts", line: 75, column: 10)
 hover(file: "src/utils.ts", line: 75, column: 10, include_docs: true)
+
+hoverByName(file: "src/utils.ts", name: "createHandler")
+hoverByName(file: "src/utils.ts", name: "createHandler", line: 75)
+
+batch_hover(file: "src/utils.ts", positions: [{line: 75, column: 10}, {line: 100, column: 5}])
 ```
 
-The position-based API matches IDE behavior and returns instantiated generic types at call sites.
+The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position.
 
 ### Claude Skill (`~/.claude/skills/prefer-infer.md`)
 
@@ -77,8 +82,14 @@ claude mcp add prinfer node /path/to/node_modules/prinfer/dist/mcp.js
 prinfer also works as a standalone CLI:
 
 ```bash
+# By position (line:column)
 prinfer src/utils.ts:75:10
 prinfer src/utils.ts:75:10 --docs
+
+# By symbol name
+prinfer src/utils.ts:createHandler
+prinfer src/utils.ts:createHandler:75    # with line hint
+
 prinfer src/utils.ts:75:10 --project ./tsconfig.json
 ```
 
@@ -95,17 +106,32 @@ docs: Adds two numbers together.
 ## Programmatic API
 
 ```typescript
-import { hover } from "prinfer";
+import { hover, batchHover } from "prinfer";
 
+// By position (line, column)
 const result = hover("./src/utils.ts", 75, 10);
-// => { signature: "(x: number, y: string) => boolean", returnType: "boolean", line: 75, column: 10, kind: "function", name: "myFunction" }
+// => { signature: "(x: number) => string", returnType: "string", line: 75, column: 10, kind: "function", name: "myFunction" }
+
+// By symbol name
+const result2 = hover("./src/utils.ts", "createHandler");
+// => { signature: "(config: Config) => Handler", ... }
+
+// By name with line hint (for duplicate names)
+const result3 = hover("./src/utils.ts", "createHandler", { line: 75 });
 
 // With documentation
-const result2 = hover("./src/utils.ts", 75, 10, { include_docs: true });
-// => { ..., documentation: "Adds two numbers together." }
+const result4 = hover("./src/utils.ts", 75, 10, { include_docs: true });
+// => { ..., documentation: "Formats a number as a string." }
 
 // With custom tsconfig
-const result3 = hover("./src/utils.ts", 75, 10, { project: "./tsconfig.json" });
+const result5 = hover("./src/utils.ts", 75, 10, { project: "./tsconfig.json" });
+
+// Batch mode - multiple positions, single program load
+const batch = batchHover("./src/utils.ts", [
+  { line: 75, column: 10 },
+  { line: 100, column: 5 },
+]);
+// => { items: [...], successCount: 2, errorCount: 0 }
 ```
 
 ## Requirements
