@@ -30,10 +30,11 @@ or
 bun add -g prinfer
 ```
 
-That's it. On install, prinfer automatically:
+On install, prinfer automatically configures itself for Claude Code. If auto-setup doesn't run (common with global installs), run:
 
-1. Adds itself as an MCP tool for Claude
-2. Installs a skill that teaches Claude to prefer type inference
+```bash
+prinfer setup
+```
 
 ## What Gets Installed
 
@@ -56,9 +57,11 @@ A coding guideline that encourages your agent to:
 
 Plus a `/check-type` command for quick lookups.
 
-## MCP Setup
+## Manual Setup
 
-If the auto-setup didn't work, add to `~/.claude/claude_desktop_config.json`:
+If `prinfer setup` doesn't work, configure manually:
+
+**1. Add MCP server** to `~/.claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -69,6 +72,8 @@ If the auto-setup didn't work, add to `~/.claude/claude_desktop_config.json`:
   }
 }
 ```
+
+**2. Create skill file** at `~/.claude/skills/prefer-infer.md` with content from [prefer-infer.md](https://github.com/clockblocker/prinfer/blob/master/src/postinstall.ts#L10-L42)
 
 ## CLI Usage
 
