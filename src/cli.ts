@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { inferType } from "./index.js";
 
 const HELP = `

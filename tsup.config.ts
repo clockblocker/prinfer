@@ -17,8 +17,8 @@ export default defineConfig({
     const cliPath = "./dist/cli.js";
     if (fs.existsSync(cliPath)) {
       const content = fs.readFileSync(cliPath, "utf-8");
-      if (!content.startsWith("#!/usr/bin/env node")) {
-        fs.writeFileSync(cliPath, `#!/usr/bin/env node\n${content}`);
+      if (!content.startsWith("#!/usr/bin/env bun")) {
+        fs.writeFileSync(cliPath, `#!/usr/bin/env bun\n${content}`);
       }
     }
   },
