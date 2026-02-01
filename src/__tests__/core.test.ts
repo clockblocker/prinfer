@@ -3,12 +3,14 @@ import path from "node:path";
 import {
 	findFirstMatch,
 	findNearestTsconfig,
+	findNodeByNameAndLine,
 	getTypeInfo,
 	loadProgram,
 } from "../core.js";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
+const genericMethodFile = path.join(fixturesDir, "generic-method.ts");
 
 describe("findNearestTsconfig", () => {
 	test("finds tsconfig.json in project root", () => {
@@ -115,5 +117,17 @@ describe("getTypeInfo", () => {
 		const info = getTypeInfo(program, node);
 		expect(info.signature).toContain("string");
 		expect(info.returnType).toContain("Promise");
+	});
+});
+
+describe("generic method calls", () => {
+	test("infers instantiated type at call site", () => {
+		const program = loadProgram(genericMethodFile);
+		const sourceFile = program.getSourceFile(genericMethodFile)!;
+		const node = findNodeByNameAndLine(sourceFile, "executeCommand", 22);
+		expect(node).toBeDefined();
+		const info = getTypeInfo(program, node!);
+		expect(info.signature).toContain('"Generate"');
+		expect(info.returnType).toBe('{ result: "Generate"; }');
 	});
 });

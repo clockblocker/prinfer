@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { inferType } from "./index.js";
+import { hover } from "./index.js";
 
 const HELP = `
 prinfer-mcp - MCP server for TypeScript type inference
@@ -17,8 +17,8 @@ Manual setup:
   Run: claude mcp add prinfer node /path/to/prinfer-mcp
 
 Provided tools:
-  infer_type(file, name, line?, project?)
-    Infer the TypeScript type of a function or variable.
+  hover(file, line, column, include_docs?, project?)
+    Get TypeScript type information at a specific position.
 
 See also:
   prinfer --help    CLI for direct type inspection
@@ -31,35 +31,39 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 
 const server = new McpServer({
 	name: "prinfer",
-	version: "0.2.1",
+	version: "0.3.0",
 });
 
 server.tool(
-	"infer_type",
-	"Infer the TypeScript type of a function or variable in a file. Returns the type signature and optionally the return type for functions.",
+	"hover",
+	"Get TypeScript type information at a specific position in a file. Returns the type signature, return type, documentation, and symbol kind.",
 	{
 		file: z.string().describe("Path to the TypeScript file"),
-		name: z
-			.string()
-			.describe("Name of the function or variable to inspect"),
-		line: z
-			.number()
+		line: z.number().describe("1-based line number"),
+		column: z.number().describe("1-based column (character position)"),
+		include_docs: z
+			.boolean()
 			.optional()
-			.describe("Optional line number to narrow search (1-based)"),
+			.describe("Include JSDoc/TSDoc documentation"),
 		project: z
 			.string()
 			.optional()
 			.describe("Optional path to tsconfig.json"),
 	},
-	async ({ file, name, line, project }) => {
+	async ({ file, line, column, include_docs, project }) => {
 		try {
-			const result = inferType(file, name, { line, project });
+			const result = hover(file, line, column, { include_docs, project });
 			let text = `Type: ${result.signature}`;
 			if (result.returnType) {
 				text += `\nReturns: ${result.returnType}`;
 			}
-			if (result.line) {
-				text += `\nLine: ${result.line}`;
+			if (result.name) {
+				text += `\nName: ${result.name}`;
+			}
+			text += `\nKind: ${result.kind}`;
+			text += `\nPosition: ${result.line}:${result.column}`;
+			if (result.documentation) {
+				text += `\nDocumentation: ${result.documentation}`;
 			}
 			return { content: [{ type: "text", text }] };
 		} catch (error) {

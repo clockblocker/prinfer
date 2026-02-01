@@ -3,30 +3,30 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inferType } from "./index.js";
+import { hover } from "./index.js";
 
 const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
-  prinfer <file.ts>[:<line>] <name> [--project <tsconfig.json>]
+  prinfer <file.ts>:<line>:<column> [--docs] [--project <tsconfig.json>]
   prinfer setup
 
 Commands:
   setup                Install MCP server and skill for Claude Code
 
 Arguments:
-  file.ts              Path to the TypeScript file
-  :line                Optional line number to narrow search (e.g., file.ts:75)
-  name                 Name of the function/variable to inspect
+  file.ts:line:column  Path to TypeScript file with 1-based line and column
 
 Options:
+  --docs, -d           Include JSDoc/TSDoc documentation
   --project, -p        Path to tsconfig.json (optional)
   --help, -h           Show this help message
 
 Examples:
-  prinfer src/utils.ts myFunction
-  prinfer src/utils.ts:75 commandResult
+  prinfer src/utils.ts:75:10
+  prinfer src/utils.ts:75:10 --docs
+  prinfer src/utils.ts:75:10 --project ./tsconfig.json
   prinfer setup
 `.trim();
 
@@ -83,26 +83,26 @@ When writing TypeScript code, prefer relying on type inference over explicit typ
   - The type serves as documentation for complex structures
   - You're defining a public API contract
 
-Use the \`prinfer\` MCP tool (\`infer_type\`) to verify what TypeScript infers before adding explicit types.
+Use the \`prinfer\` MCP tool (\`hover\`) to verify what TypeScript infers before adding explicit types.
 
 ## Commands
 
 ### /check-type
 
-Check the inferred type of a TypeScript symbol.
+Check the inferred type at a specific position in a TypeScript file.
 
-Usage: \`/check-type <file>:<line> <name>\` or \`/check-type <file> <name>\`
+Usage: \`/check-type <file>:<line>:<column>\`
 
 Examples:
-- \`/check-type src/utils.ts:75 commandResult\`
-- \`/check-type src/utils.ts myFunction\`
+- \`/check-type src/utils.ts:75:10\`
+- \`/check-type src/utils.ts:42:5\`
 
 <command-name>check-type</command-name>
 
-Use the \`infer_type\` MCP tool to check the type:
-1. Parse the arguments to extract file, optional line number, and symbol name
-2. Call \`infer_type(file, name, line?)\`
-3. Report the inferred signature and return type
+Use the \`hover\` MCP tool to check the type:
+1. Parse the arguments to extract file, line, and column
+2. Call \`hover(file, line, column, { include_docs: true })\`
+3. Report the inferred signature, return type, and documentation
 `;
 
 function runSetup(): void {
@@ -155,18 +155,25 @@ function runSetup(): void {
 
 interface CliOptions {
 	file: string;
-	name: string;
-	line?: number;
+	line: number;
+	column: number;
+	includeDocs: boolean;
 	project?: string;
 }
 
-function parseFileArg(arg: string): { file: string; line?: number } {
-	// Match pattern: file.ts:123 or just file.ts
-	const match = arg.match(/^(.+):(\d+)$/);
+function parsePositionArg(
+	arg: string,
+): { file: string; line: number; column: number } | null {
+	// Match pattern: file.ts:line:column
+	const match = arg.match(/^(.+):(\d+):(\d+)$/);
 	if (match) {
-		return { file: match[1], line: Number.parseInt(match[2], 10) };
+		return {
+			file: match[1],
+			line: Number.parseInt(match[2], 10),
+			column: Number.parseInt(match[3], 10),
+		};
 	}
-	return { file: arg };
+	return null;
 }
 
 function parseArgs(argv: string[]): CliOptions | null {
@@ -184,18 +191,21 @@ function parseArgs(argv: string[]): CliOptions | null {
 		return null;
 	}
 
-	const fileArg = args[0];
-	const name = args[1];
+	const positionArg = args[0];
+	const parsed = parsePositionArg(positionArg);
 
-	if (!fileArg || !name) {
+	if (!parsed) {
 		console.error(
-			"Error: Both <file> and <name> arguments are required.\n",
+			"Error: Position argument must be in format <file>:<line>:<column>\n",
 		);
 		console.log(HELP);
 		process.exit(1);
 	}
 
-	const { file, line } = parseFileArg(fileArg);
+	const { file, line, column } = parsed;
+
+	// Check for docs flag
+	const includeDocs = args.includes("--docs") || args.includes("-d");
 
 	// Find project option
 	let project: string | undefined;
@@ -209,7 +219,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		}
 	}
 
-	return { file, name, line, project };
+	return { file, line, column, includeDocs, project };
 }
 
 function main(): void {
@@ -220,14 +230,21 @@ function main(): void {
 	}
 
 	try {
-		const result = inferType(options.file, options.name, {
-			line: options.line,
+		const result = hover(options.file, options.line, options.column, {
+			include_docs: options.includeDocs,
 			project: options.project,
 		});
 
 		console.log(result.signature);
 		if (result.returnType) {
 			console.log("returns:", result.returnType);
+		}
+		if (result.name) {
+			console.log("name:", result.name);
+		}
+		console.log("kind:", result.kind);
+		if (result.documentation) {
+			console.log("docs:", result.documentation);
 		}
 	} catch (error) {
 		console.error((error as Error).message);

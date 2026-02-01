@@ -4,6 +4,7 @@ import path from "node:path";
 const cliPath = path.join(import.meta.dir, "..", "cli.ts");
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
+const jsdocFile = path.join(fixturesDir, "with-jsdoc.ts");
 
 async function runCli(
 	args: string[],
@@ -38,30 +39,29 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
-	test("infers type for a valid file and symbol", async () => {
-		const { stdout, exitCode } = await runCli([sampleFile, "add"]);
+	test("gets type at file:line:column", async () => {
+		// "add" function at line 4, column 17
+		const { stdout, exitCode } = await runCli([`${sampleFile}:4:17`]);
 		expect(stdout).toContain("number");
+		expect(stdout).toContain("kind:");
 		expect(exitCode).toBe(0);
 	});
 
 	test("shows error for missing file", async () => {
-		const { stderr, exitCode } = await runCli([
-			"/nonexistent/file.ts",
-			"foo",
-		]);
+		const { stderr, exitCode } = await runCli(["/nonexistent/file.ts:1:1"]);
 		expect(stderr).toContain("File not found");
 		expect(exitCode).toBe(1);
 	});
 
-	test("shows error for missing symbol", async () => {
-		const { stderr, exitCode } = await runCli([sampleFile, "nonExistent"]);
-		expect(stderr).toContain('No symbol named "nonExistent"');
+	test("shows error for invalid position format", async () => {
+		const { stderr, exitCode } = await runCli([sampleFile]);
+		expect(stderr).toContain("format");
 		expect(exitCode).toBe(1);
 	});
 
-	test("shows error when only file is provided", async () => {
-		const { stderr, exitCode } = await runCli([sampleFile]);
-		expect(stderr).toContain("required");
+	test("shows error for invalid position with only file:line", async () => {
+		const { stderr, exitCode } = await runCli([`${sampleFile}:4`]);
+		expect(stderr).toContain("format");
 		expect(exitCode).toBe(1);
 	});
 
@@ -73,8 +73,7 @@ describe("CLI", () => {
 			"tsconfig.json",
 		);
 		const { stdout, exitCode } = await runCli([
-			sampleFile,
-			"add",
+			`${sampleFile}:4:17`,
 			"--project",
 			projectPath,
 		]);
@@ -90,8 +89,7 @@ describe("CLI", () => {
 			"tsconfig.json",
 		);
 		const { stdout, exitCode } = await runCli([
-			sampleFile,
-			"add",
+			`${sampleFile}:4:17`,
 			"-p",
 			projectPath,
 		]);
@@ -99,23 +97,32 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
-	test("accepts file:line syntax", async () => {
+	test("accepts --docs flag", async () => {
+		// "add" function with JSDoc at line 9, column 17
 		const { stdout, exitCode } = await runCli([
-			`${sampleFile}:9`,
-			"multiply",
+			`${jsdocFile}:9:17`,
+			"--docs",
 		]);
-		expect(stdout).toContain("number");
+		expect(stdout).toContain("docs:");
+		expect(stdout).toContain("Adds two numbers");
 		expect(exitCode).toBe(0);
 	});
 
-	test("shows error when line does not match", async () => {
-		const { stderr, exitCode } = await runCli([`${sampleFile}:1`, "add"]);
-		expect(stderr).toContain("at line 1");
+	test("accepts -d flag", async () => {
+		const { stdout, exitCode } = await runCli([`${jsdocFile}:9:17`, "-d"]);
+		expect(stdout).toContain("docs:");
+		expect(exitCode).toBe(0);
+	});
+
+	test("shows error for invalid position", async () => {
+		const { stderr, exitCode } = await runCli([`${sampleFile}:1000:1`]);
+		expect(stderr).toContain("No symbol found");
 		expect(exitCode).toBe(1);
 	});
 
-	test("help shows line syntax", async () => {
+	test("help shows file:line:column syntax", async () => {
 		const { stdout } = await runCli(["--help"]);
-		expect(stdout).toContain(":line");
+		expect(stdout).toContain(":line:");
+		expect(stdout).toContain(":column");
 	});
 });
