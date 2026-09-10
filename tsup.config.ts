@@ -8,11 +8,17 @@ export default defineConfig({
     postinstall: "src/postinstall.ts",
   },
   format: ["esm", "cjs"],
-  dts: true,
+  // Declaration bundling still runs through the TS 6 compatibility API.
+  // tsup's generated declaration config uses baseUrl internally.
+  dts: {
+    compilerOptions: {
+      ignoreDeprecations: "6.0",
+    },
+  },
   splitting: false,
   sourcemap: true,
   clean: true,
-  external: ["typescript"],
+  external: ["@typescript/typescript6"],
   onSuccess: async () => {
     // Add shebang to CLI and MCP outputs
     const fs = await import("fs");

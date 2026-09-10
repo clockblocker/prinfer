@@ -136,8 +136,16 @@ const batch = batchHover("./src/utils.ts", [
 
 ## Requirements
 
-- Node.js >= 18.0.0
-- TypeScript >= 4.7.0 (peer dependency)
+- Node.js >= 20.0.0
+
+## Development
+
+The repository uses TypeScript 7 for type-checking (`bun run typecheck`).
+Because TypeScript 7.0 does not yet expose a stable programmatic API, the
+TypeScript 6 compatibility package is installed alongside it for `prinfer`'s
+compiler-API integration and declaration bundling. It is isolated as an
+internal dependency, so projects using TypeScript 7 do not need to alias or
+downgrade their own `typescript` package.
 
 ## License
 
