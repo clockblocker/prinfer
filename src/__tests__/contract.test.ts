@@ -46,11 +46,14 @@ describe("contract v1", () => {
 	});
 
 	test("classifies public errors", () => {
-		const response = contractError(new Error("No symbol found at file.ts:1:1"), {
-			file: "/project/file.ts",
-			line: 1,
-			column: 1,
-		});
+		const response = contractError(
+			new Error("No symbol found at file.ts:1:1"),
+			{
+				file: "/project/file.ts",
+				line: 1,
+				column: 1,
+			},
+		);
 
 		expect(contractErrorResponseSchema.parse(response)).toEqual(response);
 		expect(response.error.code).toBe("SYMBOL_NOT_FOUND");

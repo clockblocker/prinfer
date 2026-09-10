@@ -1,7 +1,7 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { HoverOptions, HoverPosition, HoverResult } from "./types.js";
 
@@ -30,7 +30,9 @@ interface OpenDocument {
 }
 
 const require = createRequire(
-	process.argv[1] ? path.resolve(process.argv[1]) : path.join(process.cwd(), "package.json"),
+	process.argv[1]
+		? path.resolve(process.argv[1])
+		: path.join(process.cwd(), "package.json"),
 );
 const nativePackage = require.resolve("@typescript/native/package.json");
 const nativeTsc = path.join(path.dirname(nativePackage), "bin", "tsc");
@@ -48,7 +50,7 @@ class NativeLspClient {
 	private stderr = "";
 	readonly ready: Promise<void>;
 
-	constructor(private readonly root: string) {
+	constructor(root: string) {
 		this.child = spawn(process.execPath, [nativeTsc, "--lsp", "--stdio"], {
 			cwd: root,
 			stdio: ["pipe", "pipe", "pipe"],
@@ -77,7 +79,10 @@ class NativeLspClient {
 		});
 	}
 
-	async hover(file: string, position: HoverPosition): Promise<LspHover | null> {
+	async hover(
+		file: string,
+		position: HoverPosition,
+	): Promise<LspHover | null> {
 		await this.ready;
 		const uri = pathToFileURL(file).href;
 		this.openOrUpdate(uri, file);
@@ -132,7 +137,9 @@ class NativeLspClient {
 
 	private send(message: unknown): void {
 		const json = JSON.stringify(message);
-		this.child.stdin.write(`Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`);
+		this.child.stdin.write(
+			`Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`,
+		);
 	}
 
 	private onData(chunk: Buffer): void {
@@ -146,7 +153,9 @@ class NativeLspClient {
 			const length = Number(match[1]);
 			const bodyStart = headerEnd + 4;
 			if (this.buffer.length < bodyStart + length) return;
-			const body = this.buffer.subarray(bodyStart, bodyStart + length).toString();
+			const body = this.buffer
+				.subarray(bodyStart, bodyStart + length)
+				.toString();
 			this.buffer = this.buffer.subarray(bodyStart + length);
 			this.onMessage(JSON.parse(body) as LspResponse);
 		}
@@ -157,8 +166,13 @@ class NativeLspClient {
 		if (message.method) {
 			const result =
 				message.method === "workspace/configuration" &&
-				Array.isArray((message.params as { items?: unknown[] } | undefined)?.items)
-					? (message.params as { items: unknown[] }).items.map(() => null)
+				Array.isArray(
+					(message.params as { items?: unknown[] } | undefined)
+						?.items,
+				)
+					? (message.params as { items: unknown[] }).items.map(
+							() => null,
+						)
 					: null;
 			this.send({ jsonrpc: "2.0", id: message.id, result });
 			return;
@@ -167,7 +181,9 @@ class NativeLspClient {
 		if (!pending) return;
 		this.pending.delete(message.id);
 		if (message.error) {
-			pending.reject(new Error(`TypeScript LSP: ${message.error.message}`));
+			pending.reject(
+				new Error(`TypeScript LSP: ${message.error.message}`),
+			);
 		} else {
 			pending.resolve(message.result);
 		}
@@ -186,7 +202,8 @@ export async function nativeHover(
 	options?: HoverOptions,
 ): Promise<HoverResult> {
 	const entryFileAbs = path.resolve(process.cwd(), file);
-	if (!fs.existsSync(entryFileAbs)) throw new Error(`File not found: ${entryFileAbs}`);
+	if (!fs.existsSync(entryFileAbs))
+		throw new Error(`File not found: ${entryFileAbs}`);
 	const root = resolveRoot(entryFileAbs, options?.project);
 	let client = sessions.get(root);
 	if (!client) {
@@ -194,7 +211,8 @@ export async function nativeHover(
 		sessions.set(root, client);
 	}
 	const hover = await client.hover(entryFileAbs, { line, column });
-	if (!hover) throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
+	if (!hover)
+		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
 	return toHoverResult(hover, line, column, options?.include_docs ?? false);
 }
 
@@ -204,14 +222,22 @@ export async function nativeHoverByName(
 	options?: HoverOptions & { line?: number },
 ): Promise<HoverResult> {
 	const entryFileAbs = path.resolve(process.cwd(), file);
-	if (!fs.existsSync(entryFileAbs)) throw new Error(`File not found: ${entryFileAbs}`);
+	if (!fs.existsSync(entryFileAbs))
+		throw new Error(`File not found: ${entryFileAbs}`);
 	const lines = fs.readFileSync(entryFileAbs, "utf8").split(/\r?\n/);
-	const candidates = options?.line ? [[options.line - 1, lines[options.line - 1] ?? ""]] as const : lines.map((text, index) => [index, text] as const);
+	const candidates = options?.line
+		? ([[options.line - 1, lines[options.line - 1] ?? ""]] as const)
+		: lines.map((text, index) => [index, text] as const);
 	const pattern = new RegExp(`(^|[^\\w$])${escapeRegExp(name)}([^\\w$]|$)`);
 	for (const [index, text] of candidates) {
 		const match = pattern.exec(text);
 		if (match) {
-			return nativeHover(file, index + 1, match.index + match[1].length + 1, options);
+			return nativeHover(
+				file,
+				index + 1,
+				match.index + match[1].length + 1,
+				options,
+			);
 		}
 	}
 	const lineInfo = options?.line ? ` at line ${options.line}` : "";
@@ -226,7 +252,11 @@ export function closeNativeSessions(): void {
 function resolveRoot(file: string, project?: string): string {
 	if (!project) return findConfigRoot(path.dirname(file));
 	const resolved = path.resolve(process.cwd(), project);
-	return path.dirname(fs.statSync(resolved).isDirectory() ? path.join(resolved, "tsconfig.json") : resolved);
+	return path.dirname(
+		fs.statSync(resolved).isDirectory()
+			? path.join(resolved, "tsconfig.json")
+			: resolved,
+	);
 }
 
 function findConfigRoot(start: string): string {
@@ -242,7 +272,8 @@ function findConfigRoot(start: string): string {
 function languageId(file: string): string {
 	if (file.endsWith(".tsx")) return "typescriptreact";
 	if (file.endsWith(".jsx")) return "javascriptreact";
-	if (file.endsWith(".js") || file.endsWith(".mjs") || file.endsWith(".cjs")) return "javascript";
+	if (file.endsWith(".js") || file.endsWith(".mjs") || file.endsWith(".cjs"))
+		return "javascript";
 	return "typescript";
 }
 
@@ -253,13 +284,21 @@ function toHoverResult(
 	includeDocs: boolean,
 ): HoverResult {
 	const markdown = hoverContents(hover.contents);
-	const codeMatch = /```(?:typescript|tsx|javascript|jsx)?\s*\n([\s\S]*?)```/.exec(markdown);
+	const codeMatch =
+		/```(?:typescript|tsx|javascript|jsx)?\s*\n([\s\S]*?)```/.exec(
+			markdown,
+		);
 	const signature = (codeMatch?.[1] ?? markdown).trim();
 	const documentation = codeMatch
 		? markdown.slice((codeMatch.index ?? 0) + codeMatch[0].length).trim()
 		: undefined;
-	const name = /\b(?:function|class|interface|type|const|let|var|method|property)\s+([\w$]+)/.exec(signature)?.[1];
-	const returnType = /\)\s*(?::|=>)\s*([^\n{;]+)/.exec(signature)?.[1]?.trim();
+	const name =
+		/\b(?:function|class|interface|type|const|let|var|method|property)\s+([\w$]+)/.exec(
+			signature,
+		)?.[1];
+	const returnType = /\)\s*(?::|=>)\s*([^\n{;]+)/
+		.exec(signature)?.[1]
+		?.trim();
 	return {
 		signature,
 		returnType,

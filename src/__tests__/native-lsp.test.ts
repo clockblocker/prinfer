@@ -13,7 +13,9 @@ afterAll(closeNativeSessions);
 describe("TypeScript 7 native LSP", () => {
 	test("returns native hover information by position", async () => {
 		const result = await nativeHover(fixture, 4, 17);
-		expect(result.signature).toBe("function add(a: number, b: number): number");
+		expect(result.signature).toBe(
+			"function add(a: number, b: number): number",
+		);
 		expect(result.returnType).toBe("number");
 		expect(result.name).toBe("add");
 		expect(result.kind).toBe("function");

@@ -12,8 +12,8 @@ import {
 	hoverSuccess,
 	hoverSuccessSchema,
 } from "./contract.js";
-import { batchHover, hover } from "./index.js";
 import { findNearestTsconfig } from "./core/index.js";
+import { batchHover, hover } from "./index.js";
 import { nativeHover, nativeHoverByName } from "./native-lsp.js";
 import type {
 	BatchHoverResult,
@@ -67,7 +67,8 @@ function formatBatchHoverResult(result: BatchHoverResult): string {
 		text += `\n--- ${item.position.line}:${item.position.column} ---\n`;
 		if (item.error) {
 			text += `Error [${item.error.code}]: ${item.error.message}\n`;
-			if (item.error.suggestion) text += `Suggestion: ${item.error.suggestion}\n`;
+			if (item.error.suggestion)
+				text += `Suggestion: ${item.error.suggestion}\n`;
 		} else if (item.result) {
 			text += `${formatHoverResult(item.result)}\n`;
 		}
@@ -122,9 +123,14 @@ function nearbyCandidates(
 		: lines.join("\n");
 	const identifiers = [...new Set(text.match(/[A-Za-z_$][\w$]*/g) ?? [])];
 	const ranked = name
-		? identifiers.sort((left, right) => nameDistance(left, name) - nameDistance(right, name))
+		? identifiers.sort(
+				(left, right) =>
+					nameDistance(left, name) - nameDistance(right, name),
+			)
 		: identifiers;
-	const candidates = ranked.filter((candidate) => candidate !== name).slice(0, 5);
+	const candidates = ranked
+		.filter((candidate) => candidate !== name)
+		.slice(0, 5);
 	return candidates.length ? candidates : undefined;
 }
 
@@ -164,10 +170,15 @@ const MAX_BATCH_POSITIONS = 100;
 const backendSchema = z
 	.enum(["typescript6", "typescript7"])
 	.optional()
-	.describe("Inference backend; TypeScript 7 uses the experimental native LSP");
+	.describe(
+		"Inference backend; TypeScript 7 uses the experimental native LSP",
+	);
 
 function useNative(backend?: "typescript6" | "typescript7"): boolean {
-	return (backend ?? process.env.PRINFER_BACKEND ?? "typescript7") === "typescript7";
+	return (
+		(backend ?? process.env.PRINFER_BACKEND ?? "typescript7") ===
+		"typescript7"
+	);
 }
 
 async function nativeBatchHover(
@@ -238,16 +249,25 @@ function createServer(): McpServer {
 		async ({ file, line, column, include_docs, project, backend }) => {
 			try {
 				const result = useNative(backend)
-					? await nativeHover(file, line, column, { include_docs, project })
+					? await nativeHover(file, line, column, {
+							include_docs,
+							project,
+						})
 					: hover(file, line, column, { include_docs, project });
 				return {
 					content: [
-						{ type: "text" as const, text: formatHoverResult(result) },
+						{
+							type: "text" as const,
+							text: formatHoverResult(result),
+						},
 					],
 					structuredContent: hoverSuccess(result),
 				};
 			} catch (error) {
-				return errorResult(error, errorContext(file, project, { line, column }));
+				return errorResult(
+					error,
+					errorContext(file, project, { line, column }),
+				);
 			}
 		},
 	);
@@ -283,23 +303,27 @@ function createServer(): McpServer {
 		project?: string;
 		backend?: "typescript6" | "typescript7";
 	}) => {
-			try {
-				const result = useNative(backend)
-					? await nativeHoverByName(file, name, { include_docs, line, project })
-					: hover(file, name, { include_docs, line, project });
-				return {
-					content: [
-						{ type: "text" as const, text: formatHoverResult(result) },
-					],
-					structuredContent: hoverSuccess(result),
-				};
-			} catch (error) {
-				return errorResult(
-					error,
-					errorContext(file, project, { line }, name),
-				);
-			}
-		};
+		try {
+			const result = useNative(backend)
+				? await nativeHoverByName(file, name, {
+						include_docs,
+						line,
+						project,
+					})
+				: hover(file, name, { include_docs, line, project });
+			return {
+				content: [
+					{ type: "text" as const, text: formatHoverResult(result) },
+				],
+				structuredContent: hoverSuccess(result),
+			};
+		} catch (error) {
+			return errorResult(
+				error,
+				errorContext(file, project, { line }, name),
+			);
+		}
+	};
 
 	server.registerTool(
 		"hover_by_name",
@@ -333,12 +357,18 @@ function createServer(): McpServer {
 				positions: z
 					.array(
 						z.object({
-							line: positiveInteger.describe("1-based line number"),
+							line: positiveInteger.describe(
+								"1-based line number",
+							),
 							column: z
-								.number().int().positive()
+								.number()
+								.int()
+								.positive()
 								.describe("1-based column number"),
 						}),
-					).min(1).max(MAX_BATCH_POSITIONS)
+					)
+					.min(1)
+					.max(MAX_BATCH_POSITIONS)
 					.describe(`1-${MAX_BATCH_POSITIONS} positions to look up`),
 				include_docs: z
 					.boolean()
@@ -355,7 +385,10 @@ function createServer(): McpServer {
 		async ({ file, positions, include_docs, project, backend }) => {
 			try {
 				const result = useNative(backend)
-					? await nativeBatchHover(file, positions, { include_docs, project })
+					? await nativeBatchHover(file, positions, {
+							include_docs,
+							project,
+						})
 					: batchHover(file, positions, { include_docs, project });
 				return {
 					content: [

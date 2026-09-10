@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { contractError } from "./contract.js";
 import {
+	findNearestTsconfig,
 	findNodeAtPosition,
 	findNodeByNameAndLine,
-	findNearestTsconfig,
 	getHoverInfo,
 	loadProgram,
 } from "./core/index.js";
@@ -15,26 +16,39 @@ import type {
 	HoverPosition,
 	HoverResult,
 } from "./types.js";
-import { contractError } from "./contract.js";
 
 export {
+	type BatchHoverSuccess,
 	batchHoverResultSchema,
 	batchHoverSuccess,
 	batchHoverSuccessSchema,
 	CONTRACT_VERSION,
+	type ContractErrorCode,
+	type ContractErrorResponse,
 	contractError,
 	contractErrorCodeSchema,
 	contractErrorResponseSchema,
 	contractErrorSchema,
+	type HoverSuccess,
 	hoverResultSchema,
 	hoverSuccess,
 	hoverSuccessSchema,
-	type BatchHoverSuccess,
-	type ContractErrorCode,
-	type ContractErrorResponse,
-	type HoverSuccess,
 } from "./contract.js";
-
+// Re-export core utilities
+export {
+	clearProgramCache,
+	findFirstMatch,
+	findNearestTsconfig,
+	findNodeAtPosition,
+	findNodeByNameAndLine,
+	getDocumentation,
+	getHoverInfo,
+	getLineNumber,
+	getTypeInfo,
+	type InferredTypeResult,
+	invalidateProgramCache,
+	loadProgram,
+} from "./core/index.js";
 // Re-export types
 export type {
 	BatchHoverItem,
@@ -44,22 +58,6 @@ export type {
 	HoverPosition,
 	HoverResult,
 };
-
-// Re-export core utilities
-export {
-	findFirstMatch,
-	findNearestTsconfig,
-	findNodeAtPosition,
-	findNodeByNameAndLine,
-	getDocumentation,
-	getHoverInfo,
-	getLineNumber,
-	getTypeInfo,
-	clearProgramCache,
-	invalidateProgramCache,
-	type InferredTypeResult,
-	loadProgram,
-} from "./core/index.js";
 
 /**
  * Get type information at a specific position in a TypeScript file
@@ -262,7 +260,9 @@ export function batchHover(
 				items.push({
 					position: pos,
 					error: contractError(
-						new Error(`No symbol found at ${entryFileAbs}:${pos.line}:${pos.column}`),
+						new Error(
+							`No symbol found at ${entryFileAbs}:${pos.line}:${pos.column}`,
+						),
 						{
 							file: entryFileAbs,
 							line: pos.line,

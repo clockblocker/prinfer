@@ -1,6 +1,6 @@
 {
 	"name": "prinfer",
-	"version": "1.0.0",
+	"version": "2.0.0",
 	"description": "TypeScript type inference inspection tool",
 	"type": "module",
 	"main": "./dist/index.cjs",
@@ -39,8 +39,8 @@
 		}
 	},
 	"bin": {
-		"prinfer": "./dist/cli.js",
-		"prinfer-mcp": "./dist/mcp.js"
+		"prinfer": "dist/cli.js",
+		"prinfer-mcp": "dist/mcp.js"
 	},
 	"files": [
 		"dist"
@@ -74,6 +74,7 @@
 		"url": ""
 	},
 	"devDependencies": {
+		"@biomejs/biome": "2.5.7",
 		"@changesets/cli": "^2.29.8",
 		"bun-types": "latest",
 		"simple-git-hooks": "^2.13.1",

@@ -47,7 +47,9 @@ describe("loadProgram", () => {
 	});
 
 	test("rebuilds when a source file changes", () => {
-		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-cache-"));
+		const directory = fs.mkdtempSync(
+			path.join(os.tmpdir(), "prinfer-cache-"),
+		);
 		const file = path.join(directory, "sample.ts");
 		try {
 			fs.writeFileSync(file, "export const value = 1;\n");
@@ -64,7 +66,9 @@ describe("loadProgram", () => {
 	});
 
 	test("rebuilds when tsconfig changes or a root file is added", () => {
-		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-cache-"));
+		const directory = fs.mkdtempSync(
+			path.join(os.tmpdir(), "prinfer-cache-"),
+		);
 		const file = path.join(directory, "sample.ts");
 		const addedFile = path.join(directory, "added.ts");
 		const project = path.join(directory, "tsconfig.json");
@@ -72,7 +76,10 @@ describe("loadProgram", () => {
 			fs.writeFileSync(file, "export const value = 1;\n");
 			fs.writeFileSync(
 				project,
-				JSON.stringify({ compilerOptions: { strict: true }, include: ["*.ts"] }),
+				JSON.stringify({
+					compilerOptions: { strict: true },
+					include: ["*.ts"],
+				}),
 			);
 			const first = loadProgram(file, project);
 
@@ -90,7 +97,9 @@ describe("loadProgram", () => {
 			);
 			const withChangedConfig = loadProgram(file, project);
 			expect(withChangedConfig).not.toBe(withAddedFile);
-			expect(withChangedConfig.getCompilerOptions().noUnusedLocals).toBe(true);
+			expect(withChangedConfig.getCompilerOptions().noUnusedLocals).toBe(
+				true,
+			);
 		} finally {
 			clearProgramCache();
 			fs.rmSync(directory, { recursive: true });

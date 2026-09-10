@@ -2,9 +2,9 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import {
+	type ContractErrorCode,
 	contractError,
 	hoverSuccess,
-	type ContractErrorCode,
 } from "./contract.js";
 import { hover } from "./index.js";
 
@@ -81,8 +81,12 @@ function runSetup(args: string[]): void {
 		console.log("[ok] Configured prinfer for Codex");
 		console.log("Restart Codex to load the MCP server.");
 	} catch (error) {
-		console.error(`[error] Codex setup failed: ${(error as Error).message}`);
-		console.error(`Run manually: ${command.map(quoteShellArgument).join(" ")}`);
+		console.error(
+			`[error] Codex setup failed: ${(error as Error).message}`,
+		);
+		console.error(
+			`Run manually: ${command.map(quoteShellArgument).join(" ")}`,
+		);
 		process.exit(1);
 	}
 }

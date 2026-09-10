@@ -51,13 +51,13 @@ export function loadProgram(
 			rootNames: [entryFileAbs],
 			oldProgram: cached?.program,
 			options: {
-			target: ts.ScriptTarget.ES2022,
-			module: ts.ModuleKind.ESNext,
-			strict: true,
-			allowJs: true,
-			checkJs: false,
-			moduleResolution: ts.ModuleResolutionKind.Bundler,
-			skipLibCheck: true,
+				target: ts.ScriptTarget.ES2022,
+				module: ts.ModuleKind.ESNext,
+				strict: true,
+				allowJs: true,
+				checkJs: false,
+				moduleResolution: ts.ModuleResolutionKind.Bundler,
+				skipLibCheck: true,
 			},
 		});
 		cacheProgram(cacheKey, program, [entryFileAbs], fileDir);
@@ -144,8 +144,7 @@ function cacheProgram(
 
 function cacheEntryIsFresh(entry: ProgramCacheEntry): boolean {
 	return (
-		signaturesAreFresh(entry.files) &&
-		signaturesAreFresh(entry.directories)
+		signaturesAreFresh(entry.files) && signaturesAreFresh(entry.directories)
 	);
 }
 

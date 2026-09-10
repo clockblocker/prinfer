@@ -3,6 +3,7 @@ import { inferredType, inferredTypeInfo } from "../testing.js";
 import { inferredType as inferredTypeFromVitestAlias } from "../vitest.js";
 
 const genericResult = <const T extends string>(value: T) => ({ value });
+// biome-ignore lint/correctness/noUnusedVariables: looked up by name from this source file
 const capturedGenericResult = genericResult("preserved-literal");
 
 describe("test-runner snapshot integration", () => {
@@ -26,6 +27,8 @@ describe("test-runner snapshot integration", () => {
 			inferredTypeFromVitestAlias(import.meta.url, {
 				name: "capturedGenericResult",
 			}),
-		).toBe(inferredType(import.meta.url, { name: "capturedGenericResult" }));
+		).toBe(
+			inferredType(import.meta.url, { name: "capturedGenericResult" }),
+		);
 	});
 });

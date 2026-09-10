@@ -66,9 +66,7 @@ export const contractErrorResponseSchema = z.object({
 });
 
 export type ContractErrorCode = z.infer<typeof contractErrorCodeSchema>;
-export type ContractErrorResponse = z.infer<
-	typeof contractErrorResponseSchema
->;
+export type ContractErrorResponse = z.infer<typeof contractErrorResponseSchema>;
 export type HoverSuccess = z.infer<typeof hoverSuccessSchema>;
 export type BatchHoverSuccess = z.infer<typeof batchHoverSuccessSchema>;
 
