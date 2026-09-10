@@ -6,6 +6,8 @@ export interface HoverOptions {
 	project?: string;
 	/** Include JSDoc/TSDoc documentation */
 	include_docs?: boolean;
+	/** Experimental inference backend. Defaults to PRINFER_BACKEND or typescript7. */
+	backend?: "typescript6" | "typescript7";
 }
 
 /**

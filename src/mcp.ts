@@ -9,7 +9,13 @@ import {
 	hoverSuccessSchema,
 } from "./contract.js";
 import { batchHover, hover } from "./index.js";
-import type { BatchHoverResult, HoverResult } from "./types.js";
+import { nativeHover, nativeHoverByName } from "./native-lsp.js";
+import type {
+	BatchHoverResult,
+	HoverOptions,
+	HoverPosition,
+	HoverResult,
+} from "./types.js";
 
 const HELP = `
 prinfer-mcp - MCP server for TypeScript type inference
@@ -70,6 +76,44 @@ function errorResult(error: unknown) {
 	};
 }
 
+const backendSchema = z
+	.enum(["typescript6", "typescript7"])
+	.optional()
+	.describe("Inference backend; TypeScript 7 uses the experimental native LSP");
+
+function useNative(backend?: "typescript6" | "typescript7"): boolean {
+	return (backend ?? process.env.PRINFER_BACKEND ?? "typescript7") === "typescript7";
+}
+
+async function nativeBatchHover(
+	file: string,
+	positions: HoverPosition[],
+	options: HoverOptions,
+): Promise<BatchHoverResult> {
+	const items = await Promise.all(
+		positions.map(async (position) => {
+			try {
+				return {
+					position,
+					result: await nativeHover(
+						file,
+						position.line,
+						position.column,
+						options,
+					),
+				};
+			} catch (error) {
+				return { position, error: (error as Error).message };
+			}
+		}),
+	);
+	return {
+		items,
+		successCount: items.filter((item) => item.result).length,
+		errorCount: items.filter((item) => item.error).length,
+	};
+}
+
 function createServer(): McpServer {
 	const server = new McpServer(
 		{ name: "prinfer", version: "1.0.0" },
@@ -96,15 +140,15 @@ function createServer(): McpServer {
 					.string()
 					.optional()
 					.describe("Optional path to tsconfig.json"),
+				backend: backendSchema,
 			}),
 			outputSchema: hoverSuccessSchema,
 		},
-		async ({ file, line, column, include_docs, project }) => {
+		async ({ file, line, column, include_docs, project, backend }) => {
 			try {
-				const result = hover(file, line, column, {
-					include_docs,
-					project,
-				});
+				const result = useNative(backend)
+					? await nativeHover(file, line, column, { include_docs, project })
+					: hover(file, line, column, { include_docs, project });
 				return {
 					content: [{ type: "text", text: formatHoverResult(result) }],
 					structuredContent: hoverSuccess(result),
@@ -135,16 +179,15 @@ function createServer(): McpServer {
 					.string()
 					.optional()
 					.describe("Optional path to tsconfig.json"),
+				backend: backendSchema,
 			}),
 			outputSchema: hoverSuccessSchema,
 		},
-		async ({ file, name, line, include_docs, project }) => {
+		async ({ file, name, line, include_docs, project, backend }) => {
 			try {
-				const result = hover(file, name, {
-					include_docs,
-					line,
-					project,
-				});
+				const result = useNative(backend)
+					? await nativeHoverByName(file, name, { include_docs, line, project })
+					: hover(file, name, { include_docs, line, project });
 				return {
 					content: [{ type: "text", text: formatHoverResult(result) }],
 					structuredContent: hoverSuccess(result),
@@ -180,15 +223,15 @@ function createServer(): McpServer {
 					.string()
 					.optional()
 					.describe("Optional path to tsconfig.json"),
+				backend: backendSchema,
 			}),
 			outputSchema: batchHoverSuccessSchema,
 		},
-		async ({ file, positions, include_docs, project }) => {
+		async ({ file, positions, include_docs, project, backend }) => {
 			try {
-				const result = batchHover(file, positions, {
-					include_docs,
-					project,
-				});
+				const result = useNative(backend)
+					? await nativeBatchHover(file, positions, { include_docs, project })
+					: batchHover(file, positions, { include_docs, project });
 				return {
 					content: [
 						{ type: "text", text: formatBatchHoverResult(result) },

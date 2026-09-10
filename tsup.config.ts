@@ -17,7 +17,7 @@ export default defineConfig({
   splitting: false,
   sourcemap: true,
   clean: true,
-  external: ["@typescript/typescript6"],
+  external: ["@typescript/native", "@typescript/typescript6"],
   onSuccess: async () => {
     // Add shebang to CLI and MCP outputs
     const fs = await import("fs");

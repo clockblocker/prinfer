@@ -62,6 +62,22 @@ batch_hover(file: "src/utils.ts", positions: [{line: 75, column: 10}, {line: 100
 
 The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position.
 
+### Experimental TypeScript 7 backend
+
+The MCP tools accept `backend: "typescript7"` to use the native TypeScript 7
+language server. The server process is kept warm and shared across hover
+requests for the same project:
+
+```text
+hover(file: "src/utils.ts", line: 75, column: 10, backend: "typescript7")
+```
+
+The MCP server uses this backend by default. This backend is experimental
+because TypeScript 7.0's LSP is stable for editors, but its programmatic API
+and output mapping are not yet stable. Use `backend: "typescript6"` for one
+request or set `PRINFER_BACKEND=typescript6` on the MCP server process to use
+the existing compiler-API implementation.
+
 ## Manual Setup
 
 The Codex adapter uses the standard Codex MCP command. You can run it manually
