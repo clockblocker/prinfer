@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import {
+	contractErrorResponseSchema,
+	hoverSuccessSchema,
+} from "../contract.js";
 
 const cliPath = path.join(import.meta.dir, "..", "cli.ts");
 const fixturesDir = path.join(import.meta.dir, "fixtures");
@@ -45,6 +49,48 @@ describe("CLI", () => {
 		expect(stdout).toContain("number");
 		expect(stdout).toContain("kind:");
 		expect(exitCode).toBe(0);
+	});
+
+	test("emits contract v1 JSON for a successful lookup", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			`${sampleFile}:4:17`,
+			"--json",
+		]);
+		const response = hoverSuccessSchema.parse(JSON.parse(stdout));
+
+		expect(response.version).toBe(1);
+		expect(response.ok).toBe(true);
+		expect(response.result.name).toBe("add");
+		expect(response.result.returnType).toBe("number");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+	});
+
+	test("emits contract v1 JSON errors on stdout", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			"/nonexistent/file.ts:1:1",
+			"--json",
+		]);
+		const response = contractErrorResponseSchema.parse(JSON.parse(stdout));
+
+		expect(response.version).toBe(1);
+		expect(response.ok).toBe(false);
+		expect(response.error.code).toBe("FILE_NOT_FOUND");
+		expect(response.error.file).toBe("/nonexistent/file.ts");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(1);
+	});
+
+	test("emits a stable JSON error for invalid arguments", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			sampleFile,
+			"--json",
+		]);
+		const response = contractErrorResponseSchema.parse(JSON.parse(stdout));
+
+		expect(response.error.code).toBe("INVALID_ARGUMENT");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(1);
 	});
 
 	test("shows error for missing file", async () => {

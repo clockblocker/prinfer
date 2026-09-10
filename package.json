@@ -27,6 +27,7 @@
 	],
 	"scripts": {
 		"build": "bun run tsup",
+		"bench:runtime": "bun run build && node benchmarks/runtime.mjs",
 		"typecheck": "bunx tsc --noEmit",
 		"test": "bun test",
 		"ci": "bun run typecheck && bun run build && bunx biome check . && bun test",

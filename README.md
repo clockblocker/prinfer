@@ -86,6 +86,9 @@ prinfer also works as a standalone CLI:
 prinfer src/utils.ts:75:10
 prinfer src/utils.ts:75:10 --docs
 
+# Machine-readable output
+prinfer src/utils.ts:75:10 --json
+
 # By symbol name
 prinfer src/utils.ts:createHandler
 prinfer src/utils.ts:createHandler:75    # with line hint
@@ -101,6 +104,42 @@ returns: boolean
 name: myFunction
 kind: function
 docs: Adds two numbers together.
+```
+
+### JSON contract
+
+Pass `--json` to emit the versioned contract on stdout. Successful commands
+exit with status 0:
+
+```json
+{
+  "version": 1,
+  "ok": true,
+  "result": {
+    "signature": "(x: number) => string",
+    "returnType": "string",
+    "line": 75,
+    "column": 10,
+    "kind": "function",
+    "name": "createHandler"
+  }
+}
+```
+
+Failures emit the same contract on stdout and exit with status 1. Stderr stays
+empty in JSON mode. Stable error codes are `INVALID_ARGUMENT`,
+`FILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`, `TYPESCRIPT_ERROR`, and `INTERNAL_ERROR`.
+
+```json
+{
+  "version": 1,
+  "ok": false,
+  "error": {
+    "code": "SYMBOL_NOT_FOUND",
+    "message": "No symbol named \"missing\" found",
+    "file": "/project/src/utils.ts"
+  }
+}
 ```
 
 ## Programmatic API

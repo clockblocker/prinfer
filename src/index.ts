@@ -15,6 +15,24 @@ import type {
 	HoverResult,
 } from "./types.js";
 
+export {
+	batchHoverResultSchema,
+	batchHoverSuccess,
+	batchHoverSuccessSchema,
+	CONTRACT_VERSION,
+	contractError,
+	contractErrorCodeSchema,
+	contractErrorResponseSchema,
+	contractErrorSchema,
+	hoverResultSchema,
+	hoverSuccess,
+	hoverSuccessSchema,
+	type BatchHoverSuccess,
+	type ContractErrorCode,
+	type ContractErrorResponse,
+	type HoverSuccess,
+} from "./contract.js";
+
 // Re-export types
 export type {
 	BatchHoverItem,
@@ -35,6 +53,8 @@ export {
 	getHoverInfo,
 	getLineNumber,
 	getTypeInfo,
+	clearProgramCache,
+	invalidateProgramCache,
 	type InferredTypeResult,
 	loadProgram,
 } from "./core/index.js";

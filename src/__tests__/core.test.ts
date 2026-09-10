@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
+	clearProgramCache,
 	findFirstMatch,
 	findNearestTsconfig,
 	findNodeByNameAndLine,
 	getTypeInfo,
+	invalidateProgramCache,
 	loadProgram,
 } from "../core/index.js";
 
@@ -27,6 +31,72 @@ describe("findNearestTsconfig", () => {
 });
 
 describe("loadProgram", () => {
+	test("reuses an unchanged program", () => {
+		clearProgramCache();
+		const first = loadProgram(sampleFile);
+		const second = loadProgram(sampleFile);
+		expect(second).toBe(first);
+	});
+
+	test("supports explicit cache invalidation", () => {
+		clearProgramCache();
+		const first = loadProgram(sampleFile);
+		invalidateProgramCache(sampleFile);
+		const second = loadProgram(sampleFile);
+		expect(second).not.toBe(first);
+	});
+
+	test("rebuilds when a source file changes", () => {
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-cache-"));
+		const file = path.join(directory, "sample.ts");
+		try {
+			fs.writeFileSync(file, "export const value = 1;\n");
+			const first = loadProgram(file);
+			fs.writeFileSync(file, 'export const value = "changed";\n');
+			const second = loadProgram(file);
+
+			expect(second).not.toBe(first);
+			expect(second.getSourceFile(file)?.text).toContain("changed");
+		} finally {
+			clearProgramCache();
+			fs.rmSync(directory, { recursive: true });
+		}
+	});
+
+	test("rebuilds when tsconfig changes or a root file is added", () => {
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-cache-"));
+		const file = path.join(directory, "sample.ts");
+		const addedFile = path.join(directory, "added.ts");
+		const project = path.join(directory, "tsconfig.json");
+		try {
+			fs.writeFileSync(file, "export const value = 1;\n");
+			fs.writeFileSync(
+				project,
+				JSON.stringify({ compilerOptions: { strict: true }, include: ["*.ts"] }),
+			);
+			const first = loadProgram(file, project);
+
+			fs.writeFileSync(addedFile, "export const added = true;\n");
+			const withAddedFile = loadProgram(file, project);
+			expect(withAddedFile).not.toBe(first);
+			expect(withAddedFile.getSourceFile(addedFile)).toBeDefined();
+
+			fs.writeFileSync(
+				project,
+				JSON.stringify({
+					compilerOptions: { strict: true, noUnusedLocals: true },
+					include: ["*.ts"],
+				}),
+			);
+			const withChangedConfig = loadProgram(file, project);
+			expect(withChangedConfig).not.toBe(withAddedFile);
+			expect(withChangedConfig.getCompilerOptions().noUnusedLocals).toBe(true);
+		} finally {
+			clearProgramCache();
+			fs.rmSync(directory, { recursive: true });
+		}
+	});
+
 	test("loads a program from a TypeScript file", () => {
 		const program = loadProgram(sampleFile);
 		expect(program).toBeDefined();

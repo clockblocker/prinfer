@@ -3,15 +3,20 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+	contractError,
+	hoverSuccess,
+	type ContractErrorCode,
+} from "./contract.js";
 import { hover } from "./index.js";
 
 const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
-  prinfer <file.ts>:<line>:<column> [--docs] [--project <tsconfig.json>]
-  prinfer <file.ts>:<name> [--docs] [--project <tsconfig.json>]
-  prinfer <file.ts>:<name>:<line> [--docs] [--project <tsconfig.json>]
+  prinfer <file.ts>:<line>:<column> [--docs] [--json] [--project <tsconfig.json>]
+  prinfer <file.ts>:<name> [--docs] [--json] [--project <tsconfig.json>]
+  prinfer <file.ts>:<name>:<line> [--docs] [--json] [--project <tsconfig.json>]
   prinfer setup
 
 Commands:
@@ -24,6 +29,7 @@ Arguments:
 
 Options:
   --docs, -d           Include JSDoc/TSDoc documentation
+  --json               Emit the versioned JSON contract on stdout
   --project, -p        Path to tsconfig.json (optional)
   --help, -h           Show this help message
 
@@ -165,6 +171,7 @@ interface CliPositionOptions {
 	line: number;
 	column: number;
 	includeDocs: boolean;
+	json: boolean;
 	project?: string;
 }
 
@@ -174,6 +181,7 @@ interface CliNameOptions {
 	name: string;
 	line?: number;
 	includeDocs: boolean;
+	json: boolean;
 	project?: string;
 }
 
@@ -222,6 +230,7 @@ function parsePositionArg(arg: string): ParsedArg | null {
 
 function parseArgs(argv: string[]): CliOptions | null {
 	const args = argv.slice(2);
+	const json = args.includes("--json");
 
 	// Check for help flag
 	if (args.includes("--help") || args.includes("-h") || args.length === 0) {
@@ -239,9 +248,10 @@ function parseArgs(argv: string[]): CliOptions | null {
 	const parsed = parsePositionArg(positionArg);
 
 	if (!parsed) {
-		console.error(
-			"Error: Argument must be in format <file>:<line>:<column> or <file>:<name> or <file>:<name>:<line>\n",
-		);
+		const message =
+			"Argument must be in format <file>:<line>:<column> or <file>:<name> or <file>:<name>:<line>";
+		if (json) failJson(message, "INVALID_ARGUMENT");
+		console.error(`Error: ${message}\n`);
 		console.log(HELP);
 		process.exit(1);
 	}
@@ -255,7 +265,9 @@ function parseArgs(argv: string[]): CliOptions | null {
 	if (projectIdx >= 0) {
 		project = args[projectIdx + 1];
 		if (!project) {
-			console.error("Error: --project requires a path argument.\n");
+			const message = "--project requires a path argument.";
+			if (json) failJson(message, "INVALID_ARGUMENT");
+			console.error(`Error: ${message}\n`);
 			console.log(HELP);
 			process.exit(1);
 		}
@@ -268,6 +280,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 			line: parsed.line,
 			column: parsed.column,
 			includeDocs,
+			json,
 			project,
 		};
 	}
@@ -278,8 +291,20 @@ function parseArgs(argv: string[]): CliOptions | null {
 		name: parsed.name,
 		line: parsed.line,
 		includeDocs,
+		json,
 		project,
 	};
+}
+
+function failJson(
+	message: string,
+	code: ContractErrorCode,
+	context: { file?: string; line?: number; column?: number } = {},
+): never {
+	console.log(
+		JSON.stringify(contractError(new Error(message), { code, ...context })),
+	);
+	process.exit(1);
 }
 
 function main(): void {
@@ -302,6 +327,11 @@ function main(): void {
 						line: options.line,
 					});
 
+		if (options.json) {
+			console.log(JSON.stringify(hoverSuccess(result)));
+			return;
+		}
+
 		console.log(result.signature);
 		if (result.returnType) {
 			console.log("returns:", result.returnType);
@@ -314,6 +344,18 @@ function main(): void {
 			console.log("docs:", result.documentation);
 		}
 	} catch (error) {
+		if (options.json) {
+			const context =
+				options.mode === "position"
+					? {
+							file: path.resolve(options.file),
+							line: options.line,
+							column: options.column,
+						}
+					: { file: path.resolve(options.file), line: options.line };
+			console.log(JSON.stringify(contractError(error, context)));
+			process.exit(1);
+		}
 		console.error((error as Error).message);
 		process.exit(1);
 	}

@@ -2,6 +2,12 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
+import {
+	batchHoverSuccess,
+	batchHoverSuccessSchema,
+	hoverSuccess,
+	hoverSuccessSchema,
+} from "./contract.js";
 import { batchHover, hover } from "./index.js";
 import type { BatchHoverResult, HoverResult } from "./types.js";
 
@@ -22,31 +28,6 @@ Provided tools:
 See also:
   prinfer --help    CLI for direct type inspection
 `.trim();
-
-const hoverResultSchema = z.object({
-	signature: z.string(),
-	returnType: z.string().optional(),
-	line: z.number(),
-	column: z.number(),
-	documentation: z.string().optional(),
-	kind: z.string(),
-	name: z.string().optional(),
-});
-
-const batchHoverResultSchema = z.object({
-	items: z.array(
-		z.object({
-			position: z.object({
-				line: z.number(),
-				column: z.number(),
-			}),
-			result: hoverResultSchema.optional(),
-			error: z.string().optional(),
-		}),
-	),
-	successCount: z.number(),
-	errorCount: z.number(),
-});
 
 function formatError(error: unknown): string {
 	const err = error as Error;
@@ -110,7 +91,7 @@ function createServer(): McpServer {
 					.optional()
 					.describe("Optional path to tsconfig.json"),
 			}),
-			outputSchema: hoverResultSchema,
+			outputSchema: hoverSuccessSchema,
 		},
 		async ({ file, line, column, include_docs, project }) => {
 			try {
@@ -120,7 +101,7 @@ function createServer(): McpServer {
 				});
 				return {
 					content: [{ type: "text", text: formatHoverResult(result) }],
-					structuredContent: result,
+					structuredContent: hoverSuccess(result),
 				};
 			} catch (error) {
 				return errorResult(error);
@@ -149,7 +130,7 @@ function createServer(): McpServer {
 					.optional()
 					.describe("Optional path to tsconfig.json"),
 			}),
-			outputSchema: hoverResultSchema,
+			outputSchema: hoverSuccessSchema,
 		},
 		async ({ file, name, line, include_docs, project }) => {
 			try {
@@ -160,7 +141,7 @@ function createServer(): McpServer {
 				});
 				return {
 					content: [{ type: "text", text: formatHoverResult(result) }],
-					structuredContent: result,
+					structuredContent: hoverSuccess(result),
 				};
 			} catch (error) {
 				return errorResult(error);
@@ -194,7 +175,7 @@ function createServer(): McpServer {
 					.optional()
 					.describe("Optional path to tsconfig.json"),
 			}),
-			outputSchema: batchHoverResultSchema,
+			outputSchema: batchHoverSuccessSchema,
 		},
 		async ({ file, positions, include_docs, project }) => {
 			try {
@@ -206,7 +187,7 @@ function createServer(): McpServer {
 					content: [
 						{ type: "text", text: formatBatchHoverResult(result) },
 					],
-					structuredContent: result,
+					structuredContent: batchHoverSuccess(result),
 				};
 			} catch (error) {
 				return errorResult(error);
