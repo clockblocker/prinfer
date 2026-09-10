@@ -35,8 +35,7 @@
 		"version": "changeset version",
 		"release": "bun run build && changeset publish",
 		"prepublishOnly": "bun run ci",
-		"prepare": "simple-git-hooks",
-		"postinstall": "[ ! -f ./dist/postinstall.js ] || node ./dist/postinstall.js"
+		"prepare": "simple-git-hooks"
 	},
 	"simple-git-hooks": {
 		"pre-commit": "bunx biome check ."

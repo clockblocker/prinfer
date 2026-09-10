@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import {
 	contractError,
@@ -17,10 +15,10 @@ Usage:
   prinfer <file.ts>:<line>:<column> [--docs] [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<name> [--docs] [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<name>:<line> [--docs] [--json] [--project <tsconfig.json>]
-  prinfer setup
+  prinfer setup codex [--print]
 
 Commands:
-  setup                Install MCP server and skill for Claude Code
+  setup codex          Configure the prinfer MCP server for Codex
 
 Arguments:
   file.ts:line:column  Path to TypeScript file with 1-based line and column
@@ -30,6 +28,7 @@ Arguments:
 Options:
   --docs, -d           Include JSDoc/TSDoc documentation
   --json               Emit the versioned JSON contract on stdout
+  --print              Print setup commands without changing configuration
   --project, -p        Path to tsconfig.json (optional)
   --help, -h           Show this help message
 
@@ -39,130 +38,58 @@ Examples:
   prinfer src/utils.ts:createHandler:75
   prinfer src/utils.ts:75:10 --docs
   prinfer src/utils.ts:75:10 --project ./tsconfig.json
-  prinfer setup
-`.trim();
-
-const MANUAL_SETUP = `
-Manual setup instructions:
-
-1. Add MCP server:
-   Run: claude mcp add prinfer node /path/to/prinfer-mcp
-
-2. Create skill file at ~/.claude/skills/prefer-infer.md:
-   See https://github.com/clockblocker/prinfer for skill content.
+  prinfer setup codex
+  prinfer setup codex --print
 `.trim();
 
 function getMcpBinaryPath(): string {
-	// Resolve absolute path to prinfer-mcp
-	// It's in the same directory as this script (dist/)
-	const thisScript = new URL(import.meta.url).pathname;
+	const thisScript = path.resolve(process.argv[1]);
 	return path.join(path.dirname(thisScript), "mcp.js");
 }
 
-function installMcpServer(): boolean {
+function runSetup(args: string[]): void {
+	const client = args[1];
+	if (client !== "codex") {
+		console.error("Error: setup requires a supported client: codex");
+		process.exit(1);
+	}
+
+	const command = [
+		"codex",
+		"mcp",
+		"add",
+		"prinfer",
+		"--",
+		"node",
+		getMcpBinaryPath(),
+	];
+	if (args.includes("--print")) {
+		console.log(command.map(quoteShellArgument).join(" "));
+		return;
+	}
+
 	try {
-		const mcpPath = getMcpBinaryPath();
-
-		// Always remove first to ensure correct path (handles upgrades/fixes)
-		try {
-			execSync("claude mcp remove prinfer", { stdio: "pipe" });
-		} catch {
-			// Ignore if not exists
-		}
-
-		// Add MCP server with absolute path
-		execSync(`claude mcp add prinfer node ${mcpPath}`, {
-			stdio: "inherit",
+		execFileSync("codex", ["mcp", "remove", "prinfer"], {
+			stdio: "ignore",
 		});
-		console.log("[ok] Added prinfer MCP server");
-		return true;
-	} catch (err) {
-		console.error(`[error] MCP setup failed: ${(err as Error).message}`);
-		return false;
+	} catch {
+		// The server was not previously configured.
+	}
+
+	try {
+		execFileSync("codex", command.slice(1), { stdio: "inherit" });
+		console.log("[ok] Configured prinfer for Codex");
+		console.log("Restart Codex to load the MCP server.");
+	} catch (error) {
+		console.error(`[error] Codex setup failed: ${(error as Error).message}`);
+		console.error(`Run manually: ${command.map(quoteShellArgument).join(" ")}`);
+		process.exit(1);
 	}
 }
 
-const SKILL_CONTENT = `# TypeScript Type Inference (prinfer)
-
-## Coding Guideline
-
-When writing TypeScript code, prefer relying on type inference over explicit type annotations:
-
-- Let TypeScript infer return types for functions when the implementation makes them obvious
-- Let TypeScript infer variable types from their initializers
-- Only add explicit types when:
-  - The inferred type is too wide (e.g., \`string\` instead of a literal type)
-  - The type serves as documentation for complex structures
-  - You're defining a public API contract
-
-Use the \`prinfer\` MCP tool (\`hover\`) to verify what TypeScript infers before adding explicit types.
-
-## Commands
-
-### /hover
-
-Check the inferred type at a specific position in a TypeScript file.
-
-Usage: \`/hover <file>:<line>:<column>\`
-
-Examples:
-- \`/hover src/utils.ts:75:10\`
-- \`/hover src/utils.ts:42:5\`
-
-<command-name>hover</command-name>
-
-Use the \`hover\` MCP tool to check the type:
-1. Parse the arguments to extract file, line, and column
-2. Call \`hover(file, line, column, { include_docs: true })\`
-3. Report the inferred signature, return type, and documentation
-`;
-
-function runSetup(): void {
-	const homeDir = os.homedir();
-	const claudeDir = path.join(homeDir, ".claude");
-
-	if (!fs.existsSync(claudeDir)) {
-		console.error("Error: ~/.claude directory not found.");
-		console.error("Make sure Claude Code is installed first.\n");
-		console.error(MANUAL_SETUP);
-		process.exit(1);
-	}
-
-	// Install MCP server using claude CLI
-	const mcpOk = installMcpServer();
-
-	// Install skill
-	let skillOk = false;
-	const skillsDir = path.join(claudeDir, "skills");
-	const skillFile = path.join(skillsDir, "prefer-infer.md");
-	try {
-		if (!fs.existsSync(skillsDir)) {
-			fs.mkdirSync(skillsDir, { recursive: true });
-		}
-
-		if (fs.existsSync(skillFile)) {
-			console.log("[ok] Skill already installed");
-			skillOk = true;
-		} else {
-			fs.writeFileSync(skillFile, SKILL_CONTENT);
-			console.log(
-				"[ok] Installed skill to ~/.claude/skills/prefer-infer.md",
-			);
-			skillOk = true;
-		}
-	} catch (err) {
-		console.error(
-			`[error] Failed to install skill: ${(err as Error).message}`,
-		);
-	}
-
-	if (mcpOk && skillOk) {
-		console.log("\nSetup complete! Restart Claude Code to use prinfer.");
-	} else {
-		console.error("\nSome steps failed. Manual setup:\n");
-		console.error(MANUAL_SETUP);
-		process.exit(1);
-	}
+function quoteShellArgument(argument: string): string {
+	if (/^[a-zA-Z0-9_./:@-]+$/.test(argument)) return argument;
+	return `'${argument.replaceAll("'", `'"'"'`)}'`;
 }
 
 interface CliPositionOptions {
@@ -240,7 +167,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 
 	// Check for setup command
 	if (args[0] === "setup") {
-		runSetup();
+		runSetup(args);
 		return null;
 	}
 

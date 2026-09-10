@@ -18,7 +18,7 @@ This is a Model Context Protocol server designed to be launched by an MCP
 client over stdio.
 
 Setup:
-  Run 'prinfer setup' to configure Claude Code automatically.
+  Run 'prinfer setup codex' to configure Codex automatically.
 
 Provided tools:
   hover(file, line, column, include_docs?, project?)
@@ -71,7 +71,13 @@ function errorResult(error: unknown) {
 }
 
 function createServer(): McpServer {
-	const server = new McpServer({ name: "prinfer", version: "1.0.0" });
+	const server = new McpServer(
+		{ name: "prinfer", version: "1.0.0" },
+		{
+			instructions:
+				"Use prinfer to inspect TypeScript's inferred types before adding explicit annotations. Prefer hover for a known position, hoverByName for a known symbol, and batch_hover for multiple positions in one file.",
+		},
+	);
 
 	server.registerTool(
 		"hover",

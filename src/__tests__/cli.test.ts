@@ -43,6 +43,24 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
+	test("prints Codex setup without changing configuration", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			"setup",
+			"codex",
+			"--print",
+		]);
+		expect(stdout).toContain("codex mcp add prinfer -- node");
+		expect(stdout).toContain("mcp.js");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+	});
+
+	test("rejects unsupported setup clients", async () => {
+		const { stderr, exitCode } = await runCli(["setup", "claude"]);
+		expect(stderr).toContain("supported client: codex");
+		expect(exitCode).toBe(1);
+	});
+
 	test("gets type at file:line:column", async () => {
 		// "add" function at line 4, column 17
 		const { stdout, exitCode } = await runCli([`${sampleFile}:4:17`]);

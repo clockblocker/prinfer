@@ -31,13 +31,20 @@ or
 bun add -g prinfer
 ```
 
-On install, prinfer automatically configures itself for Claude Code. If auto-setup doesn't run (common with global installs), run:
+Installation does not modify any agent configuration. Configure the Codex
+adapter explicitly:
 
 ```bash
-prinfer setup
+prinfer setup codex
 ```
 
-## What Gets Installed
+To inspect the command without changing configuration:
+
+```bash
+prinfer setup codex --print
+```
+
+## Interfaces
 
 ### MCP Server (`prinfer-mcp`)
 
@@ -55,27 +62,14 @@ batch_hover(file: "src/utils.ts", positions: [{line: 75, column: 10}, {line: 100
 
 The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position.
 
-### Claude Skill (`~/.claude/skills/prefer-infer.md`)
-
-A coding guideline that encourages your agent to:
-
-- Rely on type inference instead of explicit annotations
-- Use prinfer to verify types before adding redundant hints
-- Write idiomatic TypeScript
-
-Plus a `/hover` command for quick lookups.
-
 ## Manual Setup
 
-If `prinfer setup` doesn't work, configure manually:
-
-**1. Add MCP server** using the Claude CLI:
+The Codex adapter uses the standard Codex MCP command. You can run it manually
+with the installed `prinfer-mcp` binary:
 
 ```bash
-claude mcp add prinfer node /path/to/node_modules/prinfer/dist/mcp.js
+codex mcp add prinfer -- prinfer-mcp
 ```
-
-**2. Create skill file** at `~/.claude/skills/prefer-infer.md` with content from [prefer-infer.md](https://github.com/clockblocker/prinfer/blob/master/src/postinstall.ts#L10-L42)
 
 ## CLI Usage
 
