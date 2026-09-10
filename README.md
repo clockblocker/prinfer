@@ -211,6 +211,32 @@ const batch = batchHover("./src/utils.ts", [
 // => { items: [...], successCount: 2, errorCount: 0 }
 ```
 
+## Inferred type snapshots
+
+Use the runner-neutral `prinfer/testing` entry point with ordinary snapshot
+matchers in Vitest, Bun, Jest, and compatible test runners. Passing
+`import.meta.url` keeps the lookup stable
+when the test file moves; selecting a uniquely named declaration avoids brittle
+line and column literals.
+
+```typescript
+import { expect, test } from "vitest";
+import { inferredType } from "prinfer/testing";
+
+const result = createRouter({ users: usersRoute });
+
+test("preserves the public inferred type", () => {
+  expect(inferredType(import.meta.url, { name: "result" }))
+    .toMatchInlineSnapshot(`"Router<{ users: UserRoute; }>"`);
+});
+```
+
+Update snapshots with the test runner's normal update command. TypeScript types
+are erased at runtime, so the helper inspects the test source through the
+nearest `tsconfig.json` rather than inspecting the runtime value.
+The former `prinfer/vitest` entry point remains as a deprecated compatibility
+alias.
+
 ## Requirements
 
 - Node.js >= 20.0.0

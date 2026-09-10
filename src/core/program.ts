@@ -33,7 +33,12 @@ export function loadProgram(
 		? path.resolve(process.cwd(), project)
 		: findNearestTsconfig(fileDir);
 
-	const cacheKey = tsconfigPath ?? entryFileAbs;
+	// The inspected file may intentionally be excluded from the project's
+	// production tsconfig (test files commonly are). Keep the entry in the cache
+	// identity because each program below explicitly adds it as a root.
+	const cacheKey = tsconfigPath
+		? `${tsconfigPath}\0${entryFileAbs}`
+		: entryFileAbs;
 	const cached = programCache.get(cacheKey);
 	if (cached && cacheEntryIsFresh(cached)) {
 		programCache.delete(cacheKey);
@@ -71,15 +76,18 @@ export function loadProgram(
 		ts.sys,
 		path.dirname(tsconfigPath),
 	);
+	const rootNames = parsed.fileNames.includes(entryFileAbs)
+		? parsed.fileNames
+		: [...parsed.fileNames, entryFileAbs];
 	const program = ts.createProgram({
-		rootNames: parsed.fileNames,
+		rootNames,
 		options: parsed.options,
 		oldProgram: cached?.program,
 	});
 	cacheProgram(
 		cacheKey,
 		program,
-		parsed.fileNames,
+		rootNames,
 		path.dirname(tsconfigPath),
 		tsconfigPath,
 	);
@@ -99,7 +107,9 @@ export function invalidateProgramCache(
 	const tsconfigPath = project
 		? path.resolve(process.cwd(), project)
 		: findNearestTsconfig(path.dirname(entryFileAbs));
-	programCache.delete(tsconfigPath ?? entryFileAbs);
+	programCache.delete(
+		tsconfigPath ? `${tsconfigPath}\0${entryFileAbs}` : entryFileAbs,
+	);
 }
 
 function cacheProgram(

@@ -5,6 +5,8 @@ export default defineConfig({
     index: "src/index.ts",
     cli: "src/cli.ts",
     mcp: "src/mcp.ts",
+    testing: "src/testing.ts",
+    vitest: "src/vitest.ts",
   },
   format: ["esm", "cjs"],
   // Declaration bundling still runs through the TS 6 compatibility API.
