@@ -13,21 +13,6 @@ export const hoverResultSchema = z.object({
 	name: z.string().optional(),
 });
 
-export const batchHoverResultSchema = z.object({
-	items: z.array(
-		z.object({
-			position: z.object({
-				line: z.number(),
-				column: z.number(),
-			}),
-			result: hoverResultSchema.optional(),
-			error: z.string().optional(),
-		}),
-	),
-	successCount: z.number(),
-	errorCount: z.number(),
-});
-
 export const contractErrorCodeSchema = z.enum([
 	"INVALID_ARGUMENT",
 	"FILE_NOT_FOUND",
@@ -42,6 +27,24 @@ export const contractErrorSchema = z.object({
 	file: z.string().optional(),
 	line: z.number().optional(),
 	column: z.number().optional(),
+	project: z.string().optional(),
+	candidates: z.array(z.string()).optional(),
+	suggestion: z.string().optional(),
+});
+
+export const batchHoverResultSchema = z.object({
+	items: z.array(
+		z.object({
+			position: z.object({
+				line: z.number(),
+				column: z.number(),
+			}),
+			result: hoverResultSchema.optional(),
+			error: contractErrorSchema.optional(),
+		}),
+	),
+	successCount: z.number(),
+	errorCount: z.number(),
 });
 
 export const hoverSuccessSchema = z.object({
@@ -90,6 +93,8 @@ interface ContractErrorContext {
 	file?: string;
 	line?: number;
 	column?: number;
+	project?: string;
+	candidates?: string[];
 }
 
 export function contractError(
@@ -110,12 +115,36 @@ export function contractError(
 			file: context.file ?? internal?.file,
 			line: context.line ?? internal?.line,
 			column: context.column ?? internal?.column,
+			project: context.project,
+			candidates: context.candidates,
+			suggestion: suggestionFor(code),
 		},
 	});
 }
 
+function suggestionFor(code: ContractErrorCode): string {
+	switch (code) {
+		case "INVALID_ARGUMENT":
+			return "Use positive, 1-based integer line and column values and no more than 100 batch positions.";
+		case "FILE_NOT_FOUND":
+			return "Check the resolved file path and the MCP server working directory.";
+		case "SYMBOL_NOT_FOUND":
+			return "Try hover_by_name when you know the symbol name, or move the position onto the symbol token.";
+		case "TYPESCRIPT_ERROR":
+			return "Check the selected tsconfig and source syntax, or retry with backend typescript6.";
+		case "INTERNAL_ERROR":
+			return "Verify the file and project paths, then retry with backend typescript6 if the problem persists.";
+	}
+}
+
 function classifyError(error: Error): ContractErrorCode {
 	if (error instanceof TypeScriptInternalError) return "TYPESCRIPT_ERROR";
+	if (
+		error.message.startsWith("TypeScript LSP:") ||
+		error.message.startsWith("TypeScript 7 language server")
+	) {
+		return "TYPESCRIPT_ERROR";
+	}
 	if (error.message.startsWith("File not found:")) return "FILE_NOT_FOUND";
 	if (
 		error.message.startsWith("No symbol found") ||

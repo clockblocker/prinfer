@@ -54,13 +54,15 @@ Your agent gets tools to check what TypeScript infers:
 hover(file: "src/utils.ts", line: 75, column: 10)
 hover(file: "src/utils.ts", line: 75, column: 10, include_docs: true)
 
-hoverByName(file: "src/utils.ts", name: "createHandler")
-hoverByName(file: "src/utils.ts", name: "createHandler", line: 75)
+hover_by_name(file: "src/utils.ts", name: "createHandler")
+hover_by_name(file: "src/utils.ts", name: "createHandler", line: 75)
 
 batch_hover(file: "src/utils.ts", positions: [{line: 75, column: 10}, {line: 100, column: 5}])
 ```
 
-The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position.
+The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position. The former `hoverByName` MCP tool remains as a deprecated compatibility alias; new integrations should use `hover_by_name`.
+
+Line and column values are positive, 1-based integers. `batch_hover` accepts 1-100 positions per request. Batch failures are returned per item with stable error codes, resolved paths, detected project configuration, nearby symbol candidates when available, and recovery suggestions, so one bad position does not discard successful results.
 
 ### Experimental TypeScript 7 backend
 
@@ -72,11 +74,37 @@ requests for the same project:
 hover(file: "src/utils.ts", line: 75, column: 10, backend: "typescript7")
 ```
 
-The MCP server uses this backend by default. This backend is experimental
-because TypeScript 7.0's LSP is stable for editors, but its programmatic API
-and output mapping are not yet stable. Use `backend: "typescript6"` for one
-request or set `PRINFER_BACKEND=typescript6` on the MCP server process to use
-the existing compiler-API implementation.
+The MCP server intentionally uses this backend by default. It provides the
+closest match to current editor hover behavior, keeps one warm language-server
+session per project, and is the path prinfer expects most agents to use.
+
+It is labelled experimental because TypeScript 7.0's programmatic API and
+hover-output mapping may still change. If a request fails or its output differs
+from your editor, retry that request with `backend: "typescript6"`. To use the
+compiler-API implementation for every request, set
+`PRINFER_BACKEND=typescript6` on the MCP server process. Explicit `backend`
+arguments always override the environment setting.
+
+### MCP error contract
+
+MCP failures include both human-readable text and versioned structured content:
+
+```json
+{
+  "version": 1,
+  "ok": false,
+  "error": {
+    "code": "SYMBOL_NOT_FOUND",
+    "message": "No symbol found at /project/src/utils.ts:75:10",
+    "file": "/project/src/utils.ts",
+    "line": 75,
+    "column": 10,
+    "project": "/project/tsconfig.json",
+    "candidates": ["createHandler", "handler"],
+    "suggestion": "Try hover_by_name when you know the symbol name, or move the position onto the symbol token."
+  }
+}
+```
 
 ## Manual Setup
 

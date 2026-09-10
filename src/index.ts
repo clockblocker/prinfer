@@ -3,6 +3,7 @@ import path from "node:path";
 import {
 	findNodeAtPosition,
 	findNodeByNameAndLine,
+	findNearestTsconfig,
 	getHoverInfo,
 	loadProgram,
 } from "./core/index.js";
@@ -14,6 +15,7 @@ import type {
 	HoverPosition,
 	HoverResult,
 } from "./types.js";
+import { contractError } from "./contract.js";
 
 export {
 	batchHoverResultSchema,
@@ -234,6 +236,9 @@ export function batchHover(
 	const { project, include_docs = false } = options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
+	const resolvedProject = project
+		? path.resolve(process.cwd(), project)
+		: findNearestTsconfig(path.dirname(entryFileAbs));
 
 	if (!fs.existsSync(entryFileAbs)) {
 		throw new Error(`File not found: ${entryFileAbs}`);
@@ -256,7 +261,15 @@ export function batchHover(
 			if (!node) {
 				items.push({
 					position: pos,
-					error: `No symbol at ${pos.line}:${pos.column}`,
+					error: contractError(
+						new Error(`No symbol found at ${entryFileAbs}:${pos.line}:${pos.column}`),
+						{
+							file: entryFileAbs,
+							line: pos.line,
+							column: pos.column,
+							project: resolvedProject,
+						},
+					).error,
 				});
 				continue;
 			}
@@ -268,7 +281,15 @@ export function batchHover(
 			);
 			items.push({ position: pos, result });
 		} catch (err) {
-			items.push({ position: pos, error: (err as Error).message });
+			items.push({
+				position: pos,
+				error: contractError(err, {
+					file: entryFileAbs,
+					line: pos.line,
+					column: pos.column,
+					project: resolvedProject,
+				}).error,
+			});
 		}
 	}
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { hover } from "../index.js";
+import { batchHover, hover } from "../index.js";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
@@ -56,6 +56,26 @@ describe("hover", () => {
 		expect(() => {
 			hover(sampleFile, 1000, 1);
 		}).toThrow();
+	});
+});
+
+describe("batchHover", () => {
+	test("returns structured, actionable errors per failed position", () => {
+		const result = batchHover(sampleFile, [
+			{ line: 4, column: 17 },
+			{ line: 1000, column: 1 },
+		]);
+
+		expect(result.successCount).toBe(1);
+		expect(result.errorCount).toBe(1);
+		expect(result.items[1]?.error).toMatchObject({
+			code: "SYMBOL_NOT_FOUND",
+			file: sampleFile,
+			line: 1000,
+			column: 1,
+			project: path.join(import.meta.dir, "..", "..", "tsconfig.json"),
+		});
+		expect(result.items[1]?.error?.suggestion).toContain("hover_by_name");
 	});
 });
 

@@ -56,8 +56,22 @@ export interface BatchHoverItem {
 	position: HoverPosition;
 	/** The hover result if successful */
 	result?: HoverResult;
-	/** Error message if failed */
-	error?: string;
+	/** Structured error if the lookup failed */
+	error?: {
+		code:
+			| "INVALID_ARGUMENT"
+			| "FILE_NOT_FOUND"
+			| "SYMBOL_NOT_FOUND"
+			| "TYPESCRIPT_ERROR"
+			| "INTERNAL_ERROR";
+		message: string;
+		file?: string;
+		line?: number;
+		column?: number;
+		project?: string;
+		candidates?: string[];
+		suggestion?: string;
+	};
 }
 
 /**
