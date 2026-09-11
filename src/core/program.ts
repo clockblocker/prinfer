@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import ts from "@typescript/typescript6";
+import * as ts from "@typescript/typescript6";
 
 interface ProgramCacheEntry {
 	program: ts.Program;

@@ -1,4 +1,4 @@
-import ts from "@typescript/typescript6";
+import * as ts from "@typescript/typescript6";
 import { TypeScriptInternalError } from "../errors.js";
 import type { HoverResult } from "../types.js";
 import { isArrowOrFnExpr } from "./node-match.js";

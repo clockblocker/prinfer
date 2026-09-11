@@ -1,5 +1,11 @@
 # prinfer
 
+## 2.1.1
+
+### Patch Changes
+
+- Fix TypeScript host initialization under Bun 1.3 by using runtime-compatible namespace imports for the TypeScript 6 compatibility package.
+
 ## 2.1.0
 
 ### Minor Changes
