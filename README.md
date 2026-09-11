@@ -255,20 +255,56 @@ when the test file moves; selecting a uniquely named declaration avoids brittle
 line and column literals.
 
 ```typescript
-import { expect, test } from "vitest";
-import { inferredType } from "prinfer/testing";
+import { afterAll, expect, test } from "vitest";
+import {
+  closeTestingSessions,
+  inferredCompletions,
+  inferredType,
+} from "prinfer/testing";
+
+afterAll(closeTestingSessions);
 
 const result = createRouter({ users: usersRoute });
+type Drink = "coffee" | "tea";
+const selected: Drink = "coffee";
 
 test("preserves the public inferred type", () => {
   expect(inferredType(import.meta.url, { name: "result" }))
     .toMatchInlineSnapshot(`"Router<{ users: UserRoute; }>"`);
 });
+
+test("checks the public inferred type with TypeScript 7", async () => {
+  await expect(inferredType(import.meta.url, {
+    name: "result",
+    backend: "typescript7",
+  })).resolves.toMatchInlineSnapshot(`"Router<{ users: UserRoute; }>"`);
+});
+
+test("preserves contextual completions", async () => {
+  await expect(inferredCompletions(import.meta.url, {
+    line: 12,
+    column: 26,
+    backend: "typescript7",
+  })).resolves.toMatchInlineSnapshot(`
+    [
+      "coffee",
+      "tea",
+    ]
+  `);
+});
 ```
 
 Update snapshots with the test runner's normal update command. TypeScript types
 are erased at runtime, so the helper inspects the test source through the
-nearest `tsconfig.json` rather than inspecting the runtime value.
+nearest `tsconfig.json` rather than inspecting the runtime value. Completion
+snapshots explicitly opt into the asynchronous TypeScript 7 native compiler
+API and return only the suggested names. Passing `backend: "typescript7"` does
+the same for inferred-type snapshots; those calls return promises. `full: true`
+disables truncation and expands type aliases and indexed accesses when
+capturing named type aliases. Native requests share one compiler session per
+project, so call the async `closeTestingSessions` function from the runner's
+teardown hook. Calls without a backend remain synchronous and use the
+TypeScript 6 compatibility implementation.
 The former `prinfer/vitest` entry point remains as a deprecated compatibility
 alias.
 
@@ -278,12 +314,13 @@ alias.
 
 ## Development
 
-The repository uses TypeScript 7 for type-checking (`bun run typecheck`).
-Because TypeScript 7.0 does not yet expose a stable programmatic API, the
-TypeScript 6 compatibility package is installed alongside it for `prinfer`'s
-compiler-API integration and declaration bundling. It is isolated as an
-internal dependency, so projects using TypeScript 7 do not need to alias or
-downgrade their own `typescript` package.
+The repository uses TypeScript 7 for type-checking (`bun run typecheck`). The
+testing helpers use its unstable standalone async compiler API, while the CLI
+and MCP integration use its native language server. The TypeScript 6
+compatibility package remains installed for the synchronous public API and
+declaration bundling. It is isolated as an internal dependency, so projects
+using TypeScript 7 do not need to alias or downgrade their own `typescript`
+package.
 
 ## License
 

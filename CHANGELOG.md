@@ -1,5 +1,24 @@
 # prinfer
 
+## 2.3.0
+
+### Minor Changes
+
+- Move TypeScript 7 testing helpers to reusable standalone compiler sessions, including exact project selection, type-resolution timing, and async teardown.
+- Make `full: true` produce compact, untruncated, alias-expanded type snapshots so structural guards retain indexed-access and literal-union details.
+
+## 2.2.2
+
+### Patch Changes
+
+- Route explicit TypeScript 7 inferred-type snapshots through a shared native language server and add `closeTestingSessions` for test-runner teardown.
+
+## 2.2.1
+
+### Patch Changes
+
+- Add asynchronous TypeScript 7 completion snapshots through `inferredCompletions` in `prinfer/testing`.
+
 ## 2.2.0
 
 ### Minor Changes

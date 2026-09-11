@@ -66,7 +66,7 @@ class NativeLspClient {
 					`TypeScript 7 language server exited (${signal ?? code})${this.stderr ? `: ${this.stderr.trim()}` : ""}`,
 				),
 			);
-			sessions.delete(root);
+			if (sessions.get(root) === this) sessions.delete(root);
 		});
 
 		this.ready = this.request("initialize", {
@@ -210,11 +210,7 @@ export async function nativeHover(
 	if (!fs.existsSync(entryFileAbs))
 		throw new Error(`File not found: ${entryFileAbs}`);
 	const root = resolveRoot(entryFileAbs, options?.project);
-	let client = sessions.get(root);
-	if (!client) {
-		client = new NativeLspClient(root);
-		sessions.set(root, client);
-	}
+	const client = getNativeClient(root);
 	const { result: hover, resolutionMs } = await client.hover(entryFileAbs, {
 		line,
 		column,
@@ -264,6 +260,15 @@ export async function nativeHoverByName(
 export function closeNativeSessions(): void {
 	for (const client of sessions.values()) client.close();
 	sessions.clear();
+}
+
+function getNativeClient(root: string): NativeLspClient {
+	let client = sessions.get(root);
+	if (!client) {
+		client = new NativeLspClient(root);
+		sessions.set(root, client);
+	}
+	return client;
 }
 
 function resolveRoot(file: string, project?: string): string {
