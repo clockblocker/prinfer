@@ -1,4 +1,4 @@
-import * as ts from "@typescript/typescript6";
+import * as ts from "typescript";
 import {
 	getLineNumber,
 	isCallExpressionNamed,

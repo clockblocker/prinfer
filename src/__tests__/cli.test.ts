@@ -87,22 +87,30 @@ describe("CLI", () => {
 			);
 			expect(install.exitCode).toBe(0);
 
-			// Bun 1.3.14 produced this hoisted layout in the reported workspace:
-			// @typescript/old contains the @typescript/typescript6 wrapper itself.
+			// Bun 1.3.14 produced this hoisted layout with the former wrapper dependency:
+			// @typescript/old contained the @typescript/typescript6 wrapper itself.
 			const typescriptScope = path.join(
 				consumerDir,
 				"node_modules",
 				"@typescript",
 			);
-			fs.rmSync(path.join(typescriptScope, "old"), {
-				recursive: true,
-				force: true,
-			});
-			fs.cpSync(
-				path.join(typescriptScope, "typescript6"),
-				path.join(typescriptScope, "old"),
-				{ recursive: true },
+			const compatibilityWrapper = path.join(
+				typescriptScope,
+				"typescript6",
 			);
+			if (fs.existsSync(compatibilityWrapper)) {
+				fs.rmSync(path.join(typescriptScope, "old"), {
+					recursive: true,
+					force: true,
+				});
+				fs.cpSync(
+					compatibilityWrapper,
+					path.join(typescriptScope, "old"),
+					{
+						recursive: true,
+					},
+				);
+			}
 
 			const result = Bun.spawnSync(
 				["bunx", "prinfer", `${targetFile}:test`],

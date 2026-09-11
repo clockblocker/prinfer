@@ -1,4 +1,4 @@
-import * as ts from "@typescript/typescript6";
+import * as ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
 import { getLineNumber, isArrowOrFnExpr } from "./node-match.js";
 

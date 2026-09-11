@@ -78,8 +78,7 @@
 		"@changesets/cli": "^2.29.8",
 		"bun-types": "latest",
 		"simple-git-hooks": "^2.13.1",
-		"tsup": "^8.0.0",
-		"typescript": "npm:@typescript/typescript6@^6.0.2"
+		"tsup": "^8.0.0"
 	},
 	"engines": {
 		"bun": ">=1.0.0",
@@ -88,7 +87,7 @@
 	"dependencies": {
 		"@modelcontextprotocol/server": "^2.0.0",
 		"@typescript/native": "npm:typescript@^7.0.2",
-		"@typescript/typescript6": "^6.0.2",
+		"typescript": "^6.0.3",
 		"zod": "^4.3.6"
 	}
 }
