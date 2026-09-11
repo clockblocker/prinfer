@@ -1,5 +1,11 @@
 # prinfer
 
+## 2.2.0
+
+### Minor Changes
+
+- af0e0a6: Add CLI, MCP, and programmatic APIs for inspecting TypeScript autocomplete entries at a cursor position.
+
 ## 2.1.2
 
 ### Patch Changes
