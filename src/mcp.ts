@@ -244,7 +244,9 @@ function createServer(): McpServer {
 				include_timing: z
 					.boolean()
 					.optional()
-					.describe("Include the hovered symbol's type-resolution time"),
+					.describe(
+						"Include the hovered symbol's type-resolution time",
+					),
 				project: z
 					.string()
 					.optional()
@@ -253,7 +255,15 @@ function createServer(): McpServer {
 			}),
 			outputSchema: toolOutputSchema,
 		},
-		async ({ file, line, column, include_docs, include_timing, project, backend }) => {
+		async ({
+			file,
+			line,
+			column,
+			include_docs,
+			include_timing,
+			project,
+			backend,
+		}) => {
 			try {
 				const result = useNative(backend)
 					? await nativeHover(file, line, column, {
@@ -261,7 +271,11 @@ function createServer(): McpServer {
 							include_timing,
 							project,
 						})
-					: hover(file, line, column, { include_docs, include_timing, project });
+					: hover(file, line, column, {
+							include_docs,
+							include_timing,
+							project,
+						});
 				return {
 					content: [
 						{
@@ -325,7 +339,12 @@ function createServer(): McpServer {
 						line,
 						project,
 					})
-				: hover(file, name, { include_docs, include_timing, line, project });
+				: hover(file, name, {
+						include_docs,
+						include_timing,
+						line,
+						project,
+					});
 			return {
 				content: [
 					{ type: "text" as const, text: formatHoverResult(result) },
@@ -392,7 +411,9 @@ function createServer(): McpServer {
 				include_timing: z
 					.boolean()
 					.optional()
-					.describe("Include type-resolution time on each successful item"),
+					.describe(
+						"Include type-resolution time on each successful item",
+					),
 				project: z
 					.string()
 					.optional()
@@ -401,7 +422,14 @@ function createServer(): McpServer {
 			}),
 			outputSchema: batchToolOutputSchema,
 		},
-		async ({ file, positions, include_docs, include_timing, project, backend }) => {
+		async ({
+			file,
+			positions,
+			include_docs,
+			include_timing,
+			project,
+			backend,
+		}) => {
 			try {
 				const result = useNative(backend)
 					? await nativeBatchHover(file, positions, {

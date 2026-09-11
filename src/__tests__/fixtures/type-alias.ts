@@ -21,4 +21,5 @@ type ReadingRenderContext<
 	readonly finalField: Language;
 };
 
+// biome-ignore lint/correctness/noUnusedVariables: looked up by name from this fixture
 type test = ReadingRenderContext<"de", "Lexeme", "VERB">;

@@ -92,11 +92,16 @@ describe("batchHover", () => {
 	test("reports type-resolution timing per item", () => {
 		const result = batchHover(
 			sampleFile,
-			[{ line: 4, column: 17 }, { line: 9, column: 14 }],
+			[
+				{ line: 4, column: 17 },
+				{ line: 9, column: 14 },
+			],
 			{ include_timing: true },
 		);
 
-		expect(result.items[0]?.result?.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
+		expect(
+			result.items[0]?.result?.timing?.resolution_ms,
+		).toBeGreaterThanOrEqual(0);
 		expect("timing" in result).toBe(false);
 	});
 });

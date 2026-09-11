@@ -71,7 +71,9 @@ describe("CLI", () => {
 	});
 
 	test("gets an unexported type alias by name", async () => {
-		const { stdout, stderr, exitCode } = await runCli([`${typeAliasFile}:test`]);
+		const { stdout, stderr, exitCode } = await runCli([
+			`${typeAliasFile}:test`,
+		]);
 
 		expect(stdout).toContain('type test = { readonly language: "de";');
 		expect(stdout).toContain("more ...");

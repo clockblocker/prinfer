@@ -291,7 +291,10 @@ function main(): void {
 			console.log("docs:", result.documentation);
 		}
 		if (result.timing) {
-			console.log("type resolution:", `${result.timing.resolution_ms} ms`);
+			console.log(
+				"type resolution:",
+				`${result.timing.resolution_ms} ms`,
+			);
 		}
 	} catch (error) {
 		if (options.json) {

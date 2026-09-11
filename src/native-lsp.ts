@@ -221,7 +221,12 @@ export async function nativeHover(
 	});
 	if (!hover)
 		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
-	const result = toHoverResult(hover, line, column, options?.include_docs ?? false);
+	const result = toHoverResult(
+		hover,
+		line,
+		column,
+		options?.include_docs ?? false,
+	);
 	if (options?.include_timing) {
 		result.timing = { resolution_ms: resolutionMs };
 	}

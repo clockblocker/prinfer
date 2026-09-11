@@ -32,9 +32,9 @@ export {
 	contractErrorSchema,
 	type HoverSuccess,
 	hoverResultSchema,
-	hoverTimingSchema,
 	hoverSuccess,
 	hoverSuccessSchema,
+	hoverTimingSchema,
 } from "./contract.js";
 // Re-export core utilities
 export {
@@ -184,8 +184,13 @@ function hoverByNameImpl(
 	name: string,
 	options?: HoverByNameOptions,
 ): HoverResult {
-	const { project, include_docs = false, include_timing = false, full = false, line } =
-		options ?? {};
+	const {
+		project,
+		include_docs = false,
+		include_timing = false,
+		full = false,
+		line,
+	} = options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
 
@@ -248,7 +253,12 @@ export function batchHover(
 	positions: HoverPosition[],
 	options?: HoverOptions,
 ): BatchHoverResult {
-	const { project, include_docs = false, include_timing = false, full = false } = options ?? {};
+	const {
+		project,
+		include_docs = false,
+		include_timing = false,
+		full = false,
+	} = options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
 	const resolvedProject = project
