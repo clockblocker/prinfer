@@ -1,5 +1,11 @@
 # prinfer
 
+## 2.1.2
+
+### Patch Changes
+
+- 4582a54: Depend directly on TypeScript 6 so Bun cannot hoist the compatibility wrapper into its own internal dependency and initialize an empty compiler host.
+
 ## 2.1.1
 
 ### Patch Changes
