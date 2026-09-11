@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
 	batchHoverSuccess,
 	batchHoverSuccessSchema,
+	completionSuccess,
+	completionSuccessSchema,
 	contractError,
 	contractErrorResponseSchema,
 	hoverSuccess,
@@ -9,6 +11,19 @@ import {
 } from "../contract.js";
 
 describe("contract v1", () => {
+	test("validates completion success responses", () => {
+		const response = completionSuccess({
+			file: "/tmp/example.ts",
+			line: 1,
+			column: 20,
+			isGlobalCompletion: false,
+			isMemberCompletion: false,
+			isNewIdentifierLocation: false,
+			entries: [{ name: "coffee", kind: "string", sortText: "11" }],
+		});
+		expect(completionSuccessSchema.parse(response)).toEqual(response);
+	});
+
 	test("validates hover success responses", () => {
 		const response = hoverSuccess({
 			signature: "(value: string): number",

@@ -1,5 +1,6 @@
 // Re-export all public functions from core modules
 
+export { getCompletions } from "./completions.js";
 export { getDocumentation, getHoverInfo } from "./hover.js";
 export {
 	findFirstMatch,

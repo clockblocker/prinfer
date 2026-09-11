@@ -1,11 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { batchHover, hover } from "../index.js";
+import { batchHover, completions, hover } from "../index.js";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
 const jsdocFile = path.join(fixturesDir, "with-jsdoc.ts");
 const genericMethodFile = path.join(fixturesDir, "generic-method.ts");
+const completionsFile = path.join(fixturesDir, "completions.ts");
+
+describe("completions", () => {
+	test("returns string-literal values at the cursor", () => {
+		const result = completions(completionsFile, 3, 33);
+		expect(result.entries.map((entry) => entry.name)).toEqual([
+			"coffee",
+			"tea",
+		]);
+	});
+
+	test("preserves suggestions from a loose-autocomplete union", () => {
+		const result = completions(completionsFile, 8, 41);
+		expect(result.entries.map((entry) => entry.name)).toEqual([
+			"coffee",
+			"tea",
+		]);
+	});
+});
 
 describe("hover", () => {
 	test("gets type at function declaration", () => {

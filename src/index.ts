@@ -5,12 +5,16 @@ import {
 	findNearestTsconfig,
 	findNodeAtPosition,
 	findNodeByNameAndLine,
+	getCompletions,
 	getHoverInfo,
 	loadProgram,
 } from "./core/index.js";
 import type {
 	BatchHoverItem,
 	BatchHoverResult,
+	CompletionEntry,
+	CompletionOptions,
+	CompletionResult,
 	HoverByNameOptions,
 	HoverOptions,
 	HoverPosition,
@@ -43,6 +47,7 @@ export {
 	findNearestTsconfig,
 	findNodeAtPosition,
 	findNodeByNameAndLine,
+	getCompletions,
 	getDocumentation,
 	getHoverInfo,
 	getLineNumber,
@@ -55,12 +60,25 @@ export {
 export type {
 	BatchHoverItem,
 	BatchHoverResult,
+	CompletionEntry,
+	CompletionOptions,
+	CompletionResult,
 	HoverByNameOptions,
 	HoverOptions,
 	HoverPosition,
 	HoverResult,
 	HoverTiming,
 };
+
+/** Get the completion entries TypeScript offers at a 1-based cursor position. */
+export function completions(
+	file: string,
+	line: number,
+	column: number,
+	options?: CompletionOptions,
+): CompletionResult {
+	return getCompletions(file, line, column, options?.project);
+}
 
 /**
  * Get type information at a specific position in a TypeScript file

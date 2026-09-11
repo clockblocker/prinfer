@@ -7,16 +7,19 @@ import * as z from "zod/v4";
 import {
 	batchHoverSuccess,
 	batchHoverSuccessSchema,
+	completionSuccess,
+	completionSuccessSchema,
 	contractError,
 	contractErrorResponseSchema,
 	hoverSuccess,
 	hoverSuccessSchema,
 } from "./contract.js";
 import { findNearestTsconfig } from "./core/index.js";
-import { batchHover, hover } from "./index.js";
+import { batchHover, completions, hover } from "./index.js";
 import { nativeHover, nativeHoverByName } from "./native-lsp.js";
 import type {
 	BatchHoverResult,
+	CompletionResult,
 	HoverOptions,
 	HoverPosition,
 	HoverResult,
@@ -35,6 +38,7 @@ Provided tools:
   hover(file, line, column, include_docs?, include_timing?, project?)
   hover_by_name(file, name, line?, include_docs?, include_timing?, project?)
   batch_hover(file, positions, include_docs?, include_timing?, project?)
+  completions(file, line, column, project?)
 
 See also:
   prinfer --help    CLI for direct type inspection
@@ -77,6 +81,11 @@ function formatBatchHoverResult(result: BatchHoverResult): string {
 		}
 	}
 	return text;
+}
+
+function formatCompletionResult(result: CompletionResult): string {
+	if (result.entries.length === 0) return "No completion entries.";
+	return result.entries.map((entry) => entry.name).join("\n");
 }
 function errorResult(
 	error: unknown,
@@ -167,6 +176,11 @@ const batchToolOutputSchema = z.union([
 	contractErrorResponseSchema,
 ]);
 
+const completionToolOutputSchema = z.union([
+	completionSuccessSchema,
+	contractErrorResponseSchema,
+]);
+
 const positiveInteger = z.number().int().positive();
 const MAX_BATCH_POSITIONS = 100;
 
@@ -224,7 +238,44 @@ function createServer(): McpServer {
 		{ name: "prinfer", version: "1.0.0" },
 		{
 			instructions:
-				"Use prinfer to inspect TypeScript's inferred types before adding explicit annotations. Prefer hover for a known position, hover_by_name for a known symbol, and batch_hover for multiple positions in one file. TypeScript 7 is the default backend; retry with backend typescript6 if the experimental backend fails.",
+				"Use prinfer to inspect TypeScript's inferred types and editor completions before editing. Prefer hover for a known position, hover_by_name for a known symbol, batch_hover for multiple positions, and completions to discover valid values at a cursor. TypeScript 7 is the default hover backend; retry hover with backend typescript6 if the experimental backend fails.",
+		},
+	);
+
+	server.registerTool(
+		"completions",
+		{
+			description:
+				"Get the autocomplete entries TypeScript would offer at a 1-based cursor position, including string-literal union values.",
+			inputSchema: z.object({
+				file: z.string().describe("Path to the TypeScript file"),
+				line: positiveInteger.describe("1-based line number"),
+				column: positiveInteger.describe("1-based cursor column"),
+				project: z
+					.string()
+					.optional()
+					.describe("Optional path to tsconfig.json"),
+			}),
+			outputSchema: completionToolOutputSchema,
+		},
+		async ({ file, line, column, project }) => {
+			try {
+				const result = completions(file, line, column, { project });
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: formatCompletionResult(result),
+						},
+					],
+					structuredContent: completionSuccess(result),
+				};
+			} catch (error) {
+				return errorResult(
+					error,
+					errorContext(file, project, { line, column }),
+				);
+			}
 		},
 	);
 

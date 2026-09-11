@@ -3,21 +3,24 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import {
 	type ContractErrorCode,
+	completionSuccess,
 	contractError,
 	hoverSuccess,
 } from "./contract.js";
-import { hover } from "./index.js";
+import { completions, hover } from "./index.js";
 
 const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
+  prinfer complete <file.ts>:<line>:<column> [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<line>:<column> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<name> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<name>:<line> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer setup codex [--print]
 
 Commands:
+  complete             Show TypeScript autocomplete entries at a cursor
   setup codex          Configure the prinfer MCP server for Codex
 
 Arguments:
@@ -35,6 +38,7 @@ Options:
   --help, -h           Show this help message
 
 Examples:
+  prinfer complete src/utils.ts:75:10
   prinfer src/utils.ts:75:10
   prinfer src/utils.ts:createHandler
   prinfer src/utils.ts:createHandler:75
@@ -122,7 +126,16 @@ interface CliNameOptions {
 	project?: string;
 }
 
-type CliOptions = CliPositionOptions | CliNameOptions;
+interface CliCompletionOptions {
+	mode: "completion";
+	file: string;
+	line: number;
+	column: number;
+	json: boolean;
+	project?: string;
+}
+
+type CliOptions = CliPositionOptions | CliNameOptions | CliCompletionOptions;
 
 type ParsedArg =
 	| { mode: "position"; file: string; line: number; column: number }
@@ -181,8 +194,9 @@ function parseArgs(argv: string[]): CliOptions | null {
 		return null;
 	}
 
-	const positionArg = args[0];
-	const parsed = parsePositionArg(positionArg);
+	const completionMode = args[0] === "complete" || args[0] === "completions";
+	const positionArg = completionMode ? args[1] : args[0];
+	const parsed = positionArg ? parsePositionArg(positionArg) : null;
 
 	if (!parsed) {
 		const message =
@@ -210,6 +224,23 @@ function parseArgs(argv: string[]): CliOptions | null {
 			console.log(HELP);
 			process.exit(1);
 		}
+	}
+
+	if (completionMode) {
+		if (parsed.mode !== "position") {
+			const message = "complete requires <file>:<line>:<column>";
+			if (json) failJson(message, "INVALID_ARGUMENT");
+			console.error(`Error: ${message}`);
+			process.exit(1);
+		}
+		return {
+			mode: "completion",
+			file: parsed.file,
+			line: parsed.line,
+			column: parsed.column,
+			json,
+			project,
+		};
 	}
 
 	if (parsed.mode === "position") {
@@ -258,6 +289,22 @@ function main(): void {
 	}
 
 	try {
+		if (options.mode === "completion") {
+			const result = completions(
+				options.file,
+				options.line,
+				options.column,
+				{
+					project: options.project,
+				},
+			);
+			if (options.json) {
+				console.log(JSON.stringify(completionSuccess(result)));
+			} else {
+				for (const entry of result.entries) console.log(entry.name);
+			}
+			return;
+		}
 		const result =
 			options.mode === "position"
 				? hover(options.file, options.line, options.column, {
@@ -299,7 +346,7 @@ function main(): void {
 	} catch (error) {
 		if (options.json) {
 			const context =
-				options.mode === "position"
+				options.mode === "position" || options.mode === "completion"
 					? {
 							file: path.resolve(options.file),
 							line: options.line,

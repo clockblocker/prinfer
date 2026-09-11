@@ -59,9 +59,11 @@ hover_by_name(file: "src/utils.ts", name: "createHandler")
 hover_by_name(file: "src/utils.ts", name: "createHandler", line: 75)
 
 batch_hover(file: "src/utils.ts", positions: [{line: 75, column: 10}, {line: 100, column: 5}])
+
+completions(file: "src/utils.ts", line: 80, column: 24)
 ```
 
-The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position. The former `hoverByName` MCP tool remains as a deprecated compatibility alias; new integrations should use `hover_by_name`.
+The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position. `completions` returns the entries TypeScript would offer at an editor cursor, including string-literal union values. The former `hoverByName` MCP tool remains as a deprecated compatibility alias; new integrations should use `hover_by_name`.
 
 Line and column values are positive, 1-based integers. `batch_hover` accepts 1-100 positions per request. Batch failures are returned per item with stable error codes, resolved paths, detected project configuration, nearby symbol candidates when available, and recovery suggestions, so one bad position does not discard successful results.
 
@@ -142,6 +144,10 @@ prinfer also works as a standalone CLI:
 # By position (line:column)
 prinfer src/utils.ts:75:10
 prinfer src/utils.ts:75:10 --docs
+
+# Inspect editor autocomplete at a 1-based cursor position
+prinfer complete src/utils.ts:80:24
+prinfer complete src/utils.ts:80:24 --json
 
 # Machine-readable output
 prinfer src/utils.ts:75:10 --json

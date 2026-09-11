@@ -49,6 +49,29 @@ export interface HoverByNameOptions extends HoverOptions {
 	line?: number;
 }
 
+export interface CompletionOptions {
+	/** Optional path to tsconfig.json */
+	project?: string;
+}
+
+export interface CompletionEntry {
+	name: string;
+	kind: string;
+	sortText: string;
+	insertText?: string;
+	source?: string;
+}
+
+export interface CompletionResult {
+	file: string;
+	line: number;
+	column: number;
+	isGlobalCompletion: boolean;
+	isMemberCompletion: boolean;
+	isNewIdentifierLocation: boolean;
+	entries: CompletionEntry[];
+}
+
 /**
  * Position for batch hover lookup
  */

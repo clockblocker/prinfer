@@ -12,6 +12,7 @@ const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
 const jsdocFile = path.join(fixturesDir, "with-jsdoc.ts");
 const typeAliasFile = path.join(fixturesDir, "type-alias.ts");
+const completionsFile = path.join(fixturesDir, "completions.ts");
 
 async function runCli(
 	args: string[],
@@ -27,6 +28,16 @@ async function runCli(
 }
 
 describe("CLI", () => {
+	test("prints autocomplete entries at a cursor", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			"complete",
+			`${completionsFile}:3:33`,
+		]);
+		expect(stdout).toBe("coffee\ntea\n");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+	});
+
 	test("inspects a type with Bun 1.3.14's hoisted TypeScript 7 layout", async () => {
 		const packageRoot = path.join(import.meta.dir, "..", "..");
 		const consumerDir = fs.mkdtempSync(

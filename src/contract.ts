@@ -18,6 +18,24 @@ export const hoverResultSchema = z.object({
 	timing: hoverTimingSchema.optional(),
 });
 
+export const completionResultSchema = z.object({
+	file: z.string(),
+	line: z.number(),
+	column: z.number(),
+	isGlobalCompletion: z.boolean(),
+	isMemberCompletion: z.boolean(),
+	isNewIdentifierLocation: z.boolean(),
+	entries: z.array(
+		z.object({
+			name: z.string(),
+			kind: z.string(),
+			sortText: z.string(),
+			insertText: z.string().optional(),
+			source: z.string().optional(),
+		}),
+	),
+});
+
 export const contractErrorCodeSchema = z.enum([
 	"INVALID_ARGUMENT",
 	"FILE_NOT_FOUND",
@@ -64,6 +82,12 @@ export const batchHoverSuccessSchema = z.object({
 	result: batchHoverResultSchema,
 });
 
+export const completionSuccessSchema = z.object({
+	version: z.literal(CONTRACT_VERSION),
+	ok: z.literal(true),
+	result: completionResultSchema,
+});
+
 export const contractErrorResponseSchema = z.object({
 	version: z.literal(CONTRACT_VERSION),
 	ok: z.literal(false),
@@ -74,6 +98,7 @@ export type ContractErrorCode = z.infer<typeof contractErrorCodeSchema>;
 export type ContractErrorResponse = z.infer<typeof contractErrorResponseSchema>;
 export type HoverSuccess = z.infer<typeof hoverSuccessSchema>;
 export type BatchHoverSuccess = z.infer<typeof batchHoverSuccessSchema>;
+export type CompletionSuccess = z.infer<typeof completionSuccessSchema>;
 
 export function hoverSuccess(result: unknown): HoverSuccess {
 	return hoverSuccessSchema.parse({
@@ -85,6 +110,14 @@ export function hoverSuccess(result: unknown): HoverSuccess {
 
 export function batchHoverSuccess(result: unknown): BatchHoverSuccess {
 	return batchHoverSuccessSchema.parse({
+		version: CONTRACT_VERSION,
+		ok: true,
+		result,
+	});
+}
+
+export function completionSuccess(result: unknown): CompletionSuccess {
+	return completionSuccessSchema.parse({
 		version: CONTRACT_VERSION,
 		ok: true,
 		result,
