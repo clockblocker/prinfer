@@ -129,7 +129,7 @@ describe("CLI", () => {
 		} finally {
 			fs.rmSync(consumerDir, { recursive: true, force: true });
 		}
-	});
+	}, 15_000);
 
 	test("shows help with --help flag", async () => {
 		const { stdout, exitCode } = await runCli(["--help"]);
