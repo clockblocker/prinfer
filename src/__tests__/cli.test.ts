@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
 	contractErrorResponseSchema,
@@ -25,6 +27,102 @@ async function runCli(
 }
 
 describe("CLI", () => {
+	test("inspects a type with Bun 1.3.14's hoisted TypeScript 7 layout", async () => {
+		const packageRoot = path.join(import.meta.dir, "..", "..");
+		const consumerDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "prinfer-typescript-7-"),
+		);
+
+		try {
+			const build = Bun.spawnSync(["bun", "run", "build"], {
+				cwd: packageRoot,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			expect(build.exitCode).toBe(0);
+
+			const pack = Bun.spawnSync(
+				[
+					"bun",
+					"pm",
+					"pack",
+					"--ignore-scripts",
+					"--filename",
+					path.join(consumerDir, "prinfer.tgz"),
+				],
+				{
+					cwd: packageRoot,
+					stdout: "pipe",
+					stderr: "pipe",
+				},
+			);
+			expect(pack.exitCode).toBe(0);
+
+			await Bun.write(
+				path.join(consumerDir, "package.json"),
+				JSON.stringify({
+					private: true,
+					dependencies: {
+						prinfer: "./prinfer.tgz",
+						typescript: "^7.0.2",
+					},
+				}),
+			);
+			const targetFile = path.join(
+				consumerDir,
+				"note-public-interface.ts",
+			);
+			await Bun.write(
+				targetFile,
+				'type ReadingRenderContext<L, E, P> = { language: L; entity: E; partOfSpeech: P };\ntype test = ReadingRenderContext<"de", "Lexeme", "VERB">;\n',
+			);
+
+			const install = Bun.spawnSync(
+				["bun", "install", "--ignore-scripts"],
+				{
+					cwd: consumerDir,
+					stdout: "pipe",
+					stderr: "pipe",
+				},
+			);
+			expect(install.exitCode).toBe(0);
+
+			// Bun 1.3.14 produced this hoisted layout in the reported workspace:
+			// @typescript/old contains the @typescript/typescript6 wrapper itself.
+			const typescriptScope = path.join(
+				consumerDir,
+				"node_modules",
+				"@typescript",
+			);
+			fs.rmSync(path.join(typescriptScope, "old"), {
+				recursive: true,
+				force: true,
+			});
+			fs.cpSync(
+				path.join(typescriptScope, "typescript6"),
+				path.join(typescriptScope, "old"),
+				{ recursive: true },
+			);
+
+			const result = Bun.spawnSync(
+				["bunx", "prinfer", `${targetFile}:test`],
+				{
+					cwd: consumerDir,
+					stdout: "pipe",
+					stderr: "pipe",
+				},
+			);
+
+			expect(result.stderr.toString()).toBe("");
+			expect(result.stdout.toString()).toContain(
+				'type test = { language: "de"; entity: "Lexeme"; partOfSpeech: "VERB"; }',
+			);
+			expect(result.exitCode).toBe(0);
+		} finally {
+			fs.rmSync(consumerDir, { recursive: true, force: true });
+		}
+	});
+
 	test("shows help with --help flag", async () => {
 		const { stdout, exitCode } = await runCli(["--help"]);
 		expect(stdout).toContain("prinfer");
