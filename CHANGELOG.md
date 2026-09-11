@@ -1,5 +1,13 @@
 # prinfer
 
+## 2.1.0
+
+### Minor Changes
+
+- Collapse long hover types by default and add `--full` and the programmatic `full` option for untruncated output.
+
+  Add optional per-symbol type-resolution timing to the MCP, CLI, and programmatic interfaces without including startup, project-loading, or lookup time.
+
 ## 2.0.0
 
 ### Major Changes

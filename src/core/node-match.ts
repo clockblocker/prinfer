@@ -73,7 +73,11 @@ export function isVariableNamed(node: ts.Node, name: string): boolean {
  * Check if a node matches the given name (function-like or variable)
  */
 export function isNamedNode(node: ts.Node, name: string): boolean {
-	return isFunctionLikeNamed(node, name) || isVariableNamed(node, name);
+	return (
+		isFunctionLikeNamed(node, name) ||
+		isVariableNamed(node, name) ||
+		(ts.isTypeAliasDeclaration(node) && node.name.text === name)
+	);
 }
 
 /**

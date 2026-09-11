@@ -17,6 +17,9 @@ describe("contract v1", () => {
 			column: 1,
 			kind: "function",
 			name: "length",
+			timing: {
+				resolution_ms: 1.25,
+			},
 		});
 
 		expect(hoverSuccessSchema.parse(response)).toEqual(response);

@@ -186,6 +186,14 @@ export function findHoverableAncestor(
 				bestMatch = n;
 			}
 		}
+		if (ts.isTypeAliasDeclaration(n)) {
+			if (
+				position >= n.name.getStart(sourceFile) &&
+				position < n.name.getEnd()
+			) {
+				bestMatch = n;
+			}
+		}
 
 		ts.forEachChild(n, visit);
 		return true;

@@ -15,6 +15,7 @@ import type {
 	HoverOptions,
 	HoverPosition,
 	HoverResult,
+	HoverTiming,
 } from "./types.js";
 
 export {
@@ -31,6 +32,7 @@ export {
 	contractErrorSchema,
 	type HoverSuccess,
 	hoverResultSchema,
+	hoverTimingSchema,
 	hoverSuccess,
 	hoverSuccessSchema,
 } from "./contract.js";
@@ -57,6 +59,7 @@ export type {
 	HoverOptions,
 	HoverPosition,
 	HoverResult,
+	HoverTiming,
 };
 
 /**
@@ -144,7 +147,8 @@ function hoverByPositionImpl(
 	column: number,
 	options?: HoverOptions,
 ): HoverResult {
-	const { project, include_docs = false } = options ?? {};
+	const { project, include_docs = false, full = false } = options ?? {};
+	const includeTiming = options?.include_timing ?? false;
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
 
@@ -166,7 +170,13 @@ function hoverByPositionImpl(
 		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
 	}
 
-	return getHoverInfo(program, node, sourceFile, include_docs);
+	const typeResolutionStarted = performance.now();
+	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
+	const typeResolutionMs = performance.now() - typeResolutionStarted;
+	if (includeTiming) {
+		result.timing = { resolution_ms: roundMs(typeResolutionMs) };
+	}
+	return result;
 }
 
 function hoverByNameImpl(
@@ -174,7 +184,8 @@ function hoverByNameImpl(
 	name: string,
 	options?: HoverByNameOptions,
 ): HoverResult {
-	const { project, include_docs = false, line } = options ?? {};
+	const { project, include_docs = false, include_timing = false, full = false, line } =
+		options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
 
@@ -199,7 +210,13 @@ function hoverByNameImpl(
 		);
 	}
 
-	return getHoverInfo(program, node, sourceFile, include_docs);
+	const typeResolutionStarted = performance.now();
+	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
+	const typeResolutionMs = performance.now() - typeResolutionStarted;
+	if (include_timing) {
+		result.timing = { resolution_ms: roundMs(typeResolutionMs) };
+	}
+	return result;
 }
 
 /**
@@ -231,7 +248,7 @@ export function batchHover(
 	positions: HoverPosition[],
 	options?: HoverOptions,
 ): BatchHoverResult {
-	const { project, include_docs = false } = options ?? {};
+	const { project, include_docs = false, include_timing = false, full = false } = options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
 	const resolvedProject = project
@@ -273,12 +290,20 @@ export function batchHover(
 				});
 				continue;
 			}
+			const typeResolutionStarted = performance.now();
 			const result = getHoverInfo(
 				program,
 				node,
 				sourceFile,
 				include_docs,
+				full,
 			);
+			const typeResolutionMs = performance.now() - typeResolutionStarted;
+			if (include_timing) {
+				result.timing = {
+					resolution_ms: roundMs(typeResolutionMs),
+				};
+			}
 			items.push({ position: pos, result });
 		} catch (err) {
 			items.push({
@@ -298,4 +323,8 @@ export function batchHover(
 		successCount: items.filter((i) => i.result).length,
 		errorCount: items.filter((i) => i.error).length,
 	};
+}
+
+function roundMs(value: number): number {
+	return Math.round(value * 1000) / 1000;
 }

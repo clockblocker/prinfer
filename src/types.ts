@@ -6,8 +6,17 @@ export interface HoverOptions {
 	project?: string;
 	/** Include JSDoc/TSDoc documentation */
 	include_docs?: boolean;
+	/** Include the hovered symbol's type-resolution timing */
+	include_timing?: boolean;
+	/** Disable editor-style type truncation */
+	full?: boolean;
 	/** Experimental inference backend. Defaults to PRINFER_BACKEND or typescript7. */
 	backend?: "typescript6" | "typescript7";
+}
+
+export interface HoverTiming {
+	/** Time spent resolving the hovered symbol's type */
+	resolution_ms: number;
 }
 
 /**
@@ -28,6 +37,8 @@ export interface HoverResult {
 	kind: string;
 	/** Symbol name if available */
 	name?: string;
+	/** Present when include_timing is true */
+	timing?: HoverTiming;
 }
 
 /**

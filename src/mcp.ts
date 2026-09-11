@@ -32,9 +32,9 @@ Setup:
   Run 'prinfer setup codex' to configure Codex automatically.
 
 Provided tools:
-  hover(file, line, column, include_docs?, project?)
-  hover_by_name(file, name, line?, include_docs?, project?)
-  batch_hover(file, positions, include_docs?, project?)
+  hover(file, line, column, include_docs?, include_timing?, project?)
+  hover_by_name(file, name, line?, include_docs?, include_timing?, project?)
+  batch_hover(file, positions, include_docs?, include_timing?, project?)
 
 See also:
   prinfer --help    CLI for direct type inspection
@@ -57,6 +57,9 @@ function formatHoverResult(result: HoverResult): string {
 	text += `\nPosition: ${result.line}:${result.column}`;
 	if (result.documentation) {
 		text += `\nDocumentation: ${result.documentation}`;
+	}
+	if (result.timing) {
+		text += `\nType resolution: ${result.timing.resolution_ms} ms`;
 	}
 	return text;
 }
@@ -238,6 +241,10 @@ function createServer(): McpServer {
 					.boolean()
 					.optional()
 					.describe("Include JSDoc/TSDoc documentation"),
+				include_timing: z
+					.boolean()
+					.optional()
+					.describe("Include the hovered symbol's type-resolution time"),
 				project: z
 					.string()
 					.optional()
@@ -246,14 +253,15 @@ function createServer(): McpServer {
 			}),
 			outputSchema: toolOutputSchema,
 		},
-		async ({ file, line, column, include_docs, project, backend }) => {
+		async ({ file, line, column, include_docs, include_timing, project, backend }) => {
 			try {
 				const result = useNative(backend)
 					? await nativeHover(file, line, column, {
 							include_docs,
+							include_timing,
 							project,
 						})
-					: hover(file, line, column, { include_docs, project });
+					: hover(file, line, column, { include_docs, include_timing, project });
 				return {
 					content: [
 						{
@@ -282,6 +290,10 @@ function createServer(): McpServer {
 			.boolean()
 			.optional()
 			.describe("Include JSDoc/TSDoc documentation"),
+		include_timing: z
+			.boolean()
+			.optional()
+			.describe("Include the hovered symbol's type-resolution time"),
 		project: z
 			.string()
 			.optional()
@@ -293,6 +305,7 @@ function createServer(): McpServer {
 		name,
 		line,
 		include_docs,
+		include_timing,
 		project,
 		backend,
 	}: {
@@ -300,6 +313,7 @@ function createServer(): McpServer {
 		name: string;
 		line?: number;
 		include_docs?: boolean;
+		include_timing?: boolean;
 		project?: string;
 		backend?: "typescript6" | "typescript7";
 	}) => {
@@ -307,10 +321,11 @@ function createServer(): McpServer {
 			const result = useNative(backend)
 				? await nativeHoverByName(file, name, {
 						include_docs,
+						include_timing,
 						line,
 						project,
 					})
-				: hover(file, name, { include_docs, line, project });
+				: hover(file, name, { include_docs, include_timing, line, project });
 			return {
 				content: [
 					{ type: "text" as const, text: formatHoverResult(result) },
@@ -374,6 +389,10 @@ function createServer(): McpServer {
 					.boolean()
 					.optional()
 					.describe("Include JSDoc/TSDoc documentation"),
+				include_timing: z
+					.boolean()
+					.optional()
+					.describe("Include type-resolution time on each successful item"),
 				project: z
 					.string()
 					.optional()
@@ -382,14 +401,19 @@ function createServer(): McpServer {
 			}),
 			outputSchema: batchToolOutputSchema,
 		},
-		async ({ file, positions, include_docs, project, backend }) => {
+		async ({ file, positions, include_docs, include_timing, project, backend }) => {
 			try {
 				const result = useNative(backend)
 					? await nativeBatchHover(file, positions, {
 							include_docs,
+							include_timing,
 							project,
 						})
-					: batchHover(file, positions, { include_docs, project });
+					: batchHover(file, positions, {
+							include_docs,
+							include_timing,
+							project,
+						});
 				return {
 					content: [
 						{ type: "text", text: formatBatchHoverResult(result) },

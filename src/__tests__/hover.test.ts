@@ -57,6 +57,17 @@ describe("hover", () => {
 			hover(sampleFile, 1000, 1);
 		}).toThrow();
 	});
+
+	test("optionally reports only TypeScript 6 type-resolution timing", () => {
+		const result = hover(sampleFile, 4, 17, { include_timing: true });
+
+		expect(result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
+		expect(Object.keys(result.timing ?? {})).toEqual(["resolution_ms"]);
+	});
+
+	test("omits timing unless requested", () => {
+		expect(hover(sampleFile, 4, 17).timing).toBeUndefined();
+	});
 });
 
 describe("batchHover", () => {
@@ -76,6 +87,17 @@ describe("batchHover", () => {
 			project: path.join(import.meta.dir, "..", "..", "tsconfig.json"),
 		});
 		expect(result.items[1]?.error?.suggestion).toContain("hover_by_name");
+	});
+
+	test("reports type-resolution timing per item", () => {
+		const result = batchHover(
+			sampleFile,
+			[{ line: 4, column: 17 }, { line: 9, column: 14 }],
+			{ include_timing: true },
+		);
+
+		expect(result.items[0]?.result?.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
+		expect("timing" in result).toBe(false);
 	});
 });
 

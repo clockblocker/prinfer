@@ -53,6 +53,7 @@ Your agent gets tools to check what TypeScript infers:
 ```
 hover(file: "src/utils.ts", line: 75, column: 10)
 hover(file: "src/utils.ts", line: 75, column: 10, include_docs: true)
+hover(file: "src/utils.ts", line: 75, column: 10, include_timing: true)
 
 hover_by_name(file: "src/utils.ts", name: "createHandler")
 hover_by_name(file: "src/utils.ts", name: "createHandler", line: 75)
@@ -63,6 +64,24 @@ batch_hover(file: "src/utils.ts", positions: [{line: 75, column: 10}, {line: 100
 The position-based API matches IDE behavior and returns instantiated generic types at call sites. The name-based API is useful when you know the symbol name but not the exact position. The former `hoverByName` MCP tool remains as a deprecated compatibility alias; new integrations should use `hover_by_name`.
 
 Line and column values are positive, 1-based integers. `batch_hover` accepts 1-100 positions per request. Batch failures are returned per item with stable error codes, resolved paths, detected project configuration, nearby symbol candidates when available, and recovery suggestions, so one bad position does not discard successful results.
+
+### Optional timing
+
+Pass `include_timing: true` to `hover`, `hover_by_name`, or `batch_hover` to
+measure type resolution. Timing is omitted by default:
+
+```json
+{
+  "resolution_ms": 18.42
+}
+```
+
+This intentionally excludes prinfer startup, project loading, cache state, file
+reading, and name/position lookup. TypeScript 6 measures the in-process checker
+operation that produces the hover type. TypeScript 7 measures the native
+language-server hover exchange after the server is ready and the document is
+open. `batch_hover` reports `resolution_ms` independently on every successful
+item and does not expose aggregate wall-clock timing.
 
 ### Experimental TypeScript 7 backend
 
@@ -126,10 +145,14 @@ prinfer src/utils.ts:75:10 --docs
 
 # Machine-readable output
 prinfer src/utils.ts:75:10 --json
+prinfer src/utils.ts:75:10 --timing --json
 
 # By symbol name
 prinfer src/utils.ts:createHandler
 prinfer src/utils.ts:createHandler:75    # with line hint
+
+# Long types use editor-style truncation by default; print everything when needed
+prinfer src/utils.ts:largeType --full
 
 prinfer src/utils.ts:75:10 --project ./tsconfig.json
 ```
@@ -202,6 +225,12 @@ const result4 = hover("./src/utils.ts", 75, 10, { include_docs: true });
 
 // With custom tsconfig
 const result5 = hover("./src/utils.ts", 75, 10, { project: "./tsconfig.json" });
+
+// Disable editor-style truncation for long types
+const full = hover("./src/utils.ts", "largeType", { full: true });
+
+// Include only the hovered symbol's type-resolution timing
+const timed = hover("./src/utils.ts", 75, 10, { include_timing: true });
 
 // Batch mode - multiple positions, single program load
 const batch = batchHover("./src/utils.ts", [

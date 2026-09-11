@@ -9,6 +9,7 @@ const cliPath = path.join(import.meta.dir, "..", "cli.ts");
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
 const jsdocFile = path.join(fixturesDir, "with-jsdoc.ts");
+const typeAliasFile = path.join(fixturesDir, "type-alias.ts");
 
 async function runCli(
 	args: string[],
@@ -69,6 +70,29 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
+	test("gets an unexported type alias by name", async () => {
+		const { stdout, stderr, exitCode } = await runCli([`${typeAliasFile}:test`]);
+
+		expect(stdout).toContain('type test = { readonly language: "de";');
+		expect(stdout).toContain("more ...");
+		expect(stdout).not.toContain("field10");
+		expect(stdout).toContain("name: test");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+	});
+
+	test("prints an untruncated type alias with --full", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			`${typeAliasFile}:test`,
+			"--full",
+		]);
+
+		expect(stdout).not.toContain("more ...");
+		expect(stdout).toContain('readonly finalField: "de";');
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+	});
+
 	test("emits contract v1 JSON for a successful lookup", async () => {
 		const { stdout, stderr, exitCode } = await runCli([
 			`${sampleFile}:4:17`,
@@ -81,6 +105,18 @@ describe("CLI", () => {
 		expect(response.result.name).toBe("add");
 		expect(response.result.returnType).toBe("number");
 		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+	});
+
+	test("includes structured timing when requested", async () => {
+		const { stdout, exitCode } = await runCli([
+			`${sampleFile}:4:17`,
+			"--timing",
+			"--json",
+		]);
+		const response = hoverSuccessSchema.parse(JSON.parse(stdout));
+
+		expect(response.result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
 		expect(exitCode).toBe(0);
 	});
 

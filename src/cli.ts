@@ -12,9 +12,9 @@ const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
-  prinfer <file.ts>:<line>:<column> [--docs] [--json] [--project <tsconfig.json>]
-  prinfer <file.ts>:<name> [--docs] [--json] [--project <tsconfig.json>]
-  prinfer <file.ts>:<name>:<line> [--docs] [--json] [--project <tsconfig.json>]
+  prinfer <file.ts>:<line>:<column> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
+  prinfer <file.ts>:<name> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
+  prinfer <file.ts>:<name>:<line> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer setup codex [--print]
 
 Commands:
@@ -27,6 +27,8 @@ Arguments:
 
 Options:
   --docs, -d           Include JSDoc/TSDoc documentation
+  --timing, -t         Include TypeScript 6 resolution timing
+  --full, -f           Disable editor-style type truncation
   --json               Emit the versioned JSON contract on stdout
   --print              Print setup commands without changing configuration
   --project, -p        Path to tsconfig.json (optional)
@@ -102,6 +104,8 @@ interface CliPositionOptions {
 	line: number;
 	column: number;
 	includeDocs: boolean;
+	includeTiming: boolean;
+	full: boolean;
 	json: boolean;
 	project?: string;
 }
@@ -112,6 +116,8 @@ interface CliNameOptions {
 	name: string;
 	line?: number;
 	includeDocs: boolean;
+	includeTiming: boolean;
+	full: boolean;
 	json: boolean;
 	project?: string;
 }
@@ -189,6 +195,8 @@ function parseArgs(argv: string[]): CliOptions | null {
 
 	// Check for docs flag
 	const includeDocs = args.includes("--docs") || args.includes("-d");
+	const includeTiming = args.includes("--timing") || args.includes("-t");
+	const full = args.includes("--full") || args.includes("-f");
 
 	// Find project option
 	let project: string | undefined;
@@ -211,6 +219,8 @@ function parseArgs(argv: string[]): CliOptions | null {
 			line: parsed.line,
 			column: parsed.column,
 			includeDocs,
+			includeTiming,
+			full,
 			json,
 			project,
 		};
@@ -222,6 +232,8 @@ function parseArgs(argv: string[]): CliOptions | null {
 		name: parsed.name,
 		line: parsed.line,
 		includeDocs,
+		includeTiming,
+		full,
 		json,
 		project,
 	};
@@ -250,10 +262,14 @@ function main(): void {
 			options.mode === "position"
 				? hover(options.file, options.line, options.column, {
 						include_docs: options.includeDocs,
+						include_timing: options.includeTiming,
+						full: options.full,
 						project: options.project,
 					})
 				: hover(options.file, options.name, {
 						include_docs: options.includeDocs,
+						include_timing: options.includeTiming,
+						full: options.full,
 						project: options.project,
 						line: options.line,
 					});
@@ -273,6 +289,9 @@ function main(): void {
 		console.log("kind:", result.kind);
 		if (result.documentation) {
 			console.log("docs:", result.documentation);
+		}
+		if (result.timing) {
+			console.log("type resolution:", `${result.timing.resolution_ms} ms`);
 		}
 	} catch (error) {
 		if (options.json) {

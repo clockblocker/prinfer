@@ -97,6 +97,7 @@ export function getHoverInfo(
 	node: ts.Node,
 	sourceFile: ts.SourceFile,
 	includeDocs: boolean,
+	full = false,
 ): HoverResult {
 	const checker = program.getTypeChecker();
 	const sf = sourceFile;
@@ -105,7 +106,7 @@ export function getHoverInfo(
 	);
 
 	try {
-		return getHoverInfoImpl(checker, node, sourceFile, includeDocs);
+		return getHoverInfoImpl(checker, node, sourceFile, includeDocs, full);
 	} catch (error) {
 		if (error instanceof Error) {
 			throw new TypeScriptInternalError({
@@ -125,12 +126,15 @@ function getHoverInfoImpl(
 	node: ts.Node,
 	sourceFile: ts.SourceFile,
 	includeDocs: boolean,
+	full: boolean,
 ): HoverResult {
 	const sf = sourceFile;
 	const { line, character } = sf.getLineAndCharacterOfPosition(
 		node.getStart(sf),
 	);
-	const flags = ts.TypeFormatFlags.NoTruncation;
+	const flags = full
+		? ts.TypeFormatFlags.NoTruncation
+		: ts.TypeFormatFlags.None;
 
 	const kind = getSymbolKind(node);
 	const name = getNodeName(node);
@@ -157,6 +161,25 @@ function getHoverInfoImpl(
 	const documentation = includeDocs
 		? getDocumentation(checker, symbol)
 		: undefined;
+
+	// Match TypeScript's hover for an alias declaration while disabling the
+	// truncation that makes editor hovers unsuitable for type inspection.
+	if (ts.isTypeAliasDeclaration(node)) {
+		const type = checker.getTypeAtLocation(node.name);
+		const expanded = checker.typeToString(
+			type,
+			undefined,
+			flags | ts.TypeFormatFlags.InTypeAlias,
+		);
+		return {
+			signature: `type ${node.name.text} = ${expanded}`,
+			line: line + 1,
+			column: character + 1,
+			documentation,
+			kind,
+			name,
+		};
+	}
 
 	// Handle call expressions - get instantiated signature
 	if (ts.isCallExpression(node)) {

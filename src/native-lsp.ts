@@ -82,17 +82,22 @@ class NativeLspClient {
 	async hover(
 		file: string,
 		position: HoverPosition,
-	): Promise<LspHover | null> {
+	): Promise<{ result: LspHover | null; resolutionMs: number }> {
 		await this.ready;
 		const uri = pathToFileURL(file).href;
 		this.openOrUpdate(uri, file);
-		return (await this.request("textDocument/hover", {
+		const resolutionStarted = performance.now();
+		const result = (await this.request("textDocument/hover", {
 			textDocument: { uri },
 			position: {
 				line: position.line - 1,
 				character: position.column - 1,
 			},
 		})) as LspHover | null;
+		return {
+			result,
+			resolutionMs: roundMs(performance.now() - resolutionStarted),
+		};
 	}
 
 	close(): void {
@@ -210,10 +215,17 @@ export async function nativeHover(
 		client = new NativeLspClient(root);
 		sessions.set(root, client);
 	}
-	const hover = await client.hover(entryFileAbs, { line, column });
+	const { result: hover, resolutionMs } = await client.hover(entryFileAbs, {
+		line,
+		column,
+	});
 	if (!hover)
 		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
-	return toHoverResult(hover, line, column, options?.include_docs ?? false);
+	const result = toHoverResult(hover, line, column, options?.include_docs ?? false);
+	if (options?.include_timing) {
+		result.timing = { resolution_ms: resolutionMs };
+	}
+	return result;
 }
 
 export async function nativeHoverByName(
@@ -328,4 +340,8 @@ function hoverContents(contents: LspHover["contents"]): string {
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function roundMs(value: number): number {
+	return Math.round(value * 1000) / 1000;
 }

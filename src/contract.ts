@@ -3,6 +3,10 @@ import { TypeScriptInternalError } from "./errors.js";
 
 export const CONTRACT_VERSION = 1 as const;
 
+export const hoverTimingSchema = z.object({
+	resolution_ms: z.number().nonnegative(),
+});
+
 export const hoverResultSchema = z.object({
 	signature: z.string(),
 	returnType: z.string().optional(),
@@ -11,6 +15,7 @@ export const hoverResultSchema = z.object({
 	documentation: z.string().optional(),
 	kind: z.string(),
 	name: z.string().optional(),
+	timing: hoverTimingSchema.optional(),
 });
 
 export const contractErrorCodeSchema = z.enum([
