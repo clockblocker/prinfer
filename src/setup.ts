@@ -27,9 +27,10 @@ Options:
   --file <path>    Instructions file for agents-md, e.g. CLAUDE.md
   --print          Show the command or file change without applying it
 
-The server command is 'prinfer-mcp' when it is on PATH, otherwise
-'npx -y prinfer mcp'. Use --npx if the client cannot find prinfer-mcp
-(editors started outside a shell may miss nvm, fnm, or volta paths).
+The server command is 'prinfer-mcp' when prinfer is installed globally,
+otherwise 'npx -y prinfer mcp'. Use --npx if the client cannot find
+prinfer-mcp (editors started outside a shell may miss nvm, fnm, or volta
+paths).
 Re-running setup replaces the existing prinfer entry.
 `.trim();
 
@@ -164,8 +165,8 @@ export const AGENTS_BLOCK = `${AGENTS_START}
 The prinfer MCP server reports what the TypeScript compiler infers. Reach for it when:
 - Adding a type annotation: check the inferred type first with \`hover_by_name(file, name)\` or \`hover(file, line, text)\` (pass the token text instead of counting columns); annotate only when inference is wrong or too wide.
 - Choosing a value for a typed slot (union member, option key, overload): \`completions(file, line, column)\` lists what TypeScript accepts there.
-- Finishing an edit to a .ts/.tsx file: \`diagnostics(file)\` lists its type errors.
-- Working without MCP: run \`npx prinfer path/to/file.ts:symbolName --json\`.
+- Finishing an edit to a .ts/.tsx file: \`diagnostics(file)\` lists its type errors; the edit is done when it reports none.
+- Working without MCP: \`npx prinfer path/to/file.ts:symbolName --json\` for a type, \`npx prinfer check path/to/file.ts --json\` for type errors.
 ${AGENTS_END}`;
 
 class SetupError extends Error {}
@@ -273,19 +274,34 @@ function resolveClient(name: string, scope: Scope | undefined): Client {
 	return client;
 }
 
-/** The command an MCP client should launch, without absolute paths. */
+/**
+ * The command an MCP client should launch, without absolute paths. A
+ * prinfer-mcp found only in a node_modules/.bin directory (the npx or bunx
+ * cache, or a project-local install) is not on the client's PATH, so it falls
+ * back to npx.
+ */
 export function serverCommand(forceNpx: boolean): string[] {
-	if (!forceNpx && findOnPath("prinfer-mcp")) return ["prinfer-mcp"];
+	if (!forceNpx && findOnPath("prinfer-mcp", { skipPackageBins: true })) {
+		return ["prinfer-mcp"];
+	}
 	return [...NPX_COMMAND];
 }
 
-function findOnPath(name: string): string | undefined {
+function isPackageBin(dir: string): boolean {
+	const parts = path.resolve(dir).split(path.sep);
+	return parts.at(-1) === ".bin" && parts.at(-2) === "node_modules";
+}
+
+function findOnPath(
+	name: string,
+	{ skipPackageBins = false } = {},
+): string | undefined {
 	const extensions =
 		process.platform === "win32"
 			? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
 			: [""];
 	for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
-		if (!dir) continue;
+		if (!dir || (skipPackageBins && isPackageBin(dir))) continue;
 		for (const extension of extensions) {
 			const candidate = path.join(dir, name + extension);
 			try {

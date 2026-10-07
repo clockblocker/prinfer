@@ -6,9 +6,11 @@ import {
 	type ContractErrorCode,
 	completionSuccess,
 	contractError,
+	diagnosticsSuccess,
 	hoverSuccess,
 } from "./contract.js";
-import { completions, hover } from "./index.js";
+import { formatDiagnostics } from "./core/index.js";
+import { completions, diagnostics, hover } from "./index.js";
 import { runSetup } from "./setup.js";
 
 const HELP = `
@@ -19,12 +21,14 @@ Usage:
   prinfer <file.ts>:<name>:<line> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<line>:<column> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer complete <file.ts>:<line>:<column> [--json] [--project <tsconfig.json>]
+  prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>]
   prinfer mcp
   prinfer setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
   prinfer setup agents-md [--file <path>] [--print]
 
 Commands:
   complete             Show TypeScript autocomplete entries at a cursor
+  check                Report type errors in one file; exits 1 when it has errors
   mcp                  Start the MCP server on stdio (same as prinfer-mcp)
   setup <client>       Register the MCP server with an agent client
   setup agents-md      Add prinfer usage instructions to AGENTS.md or CLAUDE.md
@@ -38,6 +42,7 @@ Options:
   --docs, -d           Include JSDoc/TSDoc documentation
   --timing, -t         Include TypeScript 6 resolution timing
   --full, -f           Disable editor-style type truncation
+  --suggestions        check: also report suggestions such as unused variables
   --json               Emit the versioned JSON contract on stdout
   --project, -p        Path to tsconfig.json (optional)
   --help, -h           Show this help message (prinfer setup --help for setup options)
@@ -47,6 +52,7 @@ Examples:
   prinfer src/utils.ts:createHandler:75
   prinfer src/utils.ts:75:10 --docs
   prinfer complete src/utils.ts:75:10
+  prinfer check src/utils.ts --json
   prinfer setup claude
   prinfer setup cursor --scope project --print
   prinfer setup agents-md --file CLAUDE.md
@@ -243,6 +249,65 @@ function failJson(
 	process.exit(1);
 }
 
+/**
+ * Runs `prinfer check <file>` (args exclude "check") and returns an exit code:
+ * 0 when the file has no type errors, 1 when it has errors or the check fails.
+ */
+function runCheck(args: string[]): number {
+	const json = args.includes("--json");
+	const fail = (message: string): number => {
+		if (json) failJson(message, "INVALID_ARGUMENT");
+		console.error(`Error: ${message}\n`);
+		console.log(HELP);
+		return 1;
+	};
+
+	let file: string | undefined;
+	let project: string | undefined;
+	let includeSuggestions = false;
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === "--json") continue;
+		if (arg === "--suggestions") {
+			includeSuggestions = true;
+		} else if (arg === "--project" || arg === "-p") {
+			project = args[++index];
+			if (!project) return fail("--project requires a path argument.");
+		} else if (arg.startsWith("-")) {
+			return fail(`Unknown check option ${arg}.`);
+		} else if (file === undefined) {
+			file = arg;
+		} else {
+			return fail(`Unexpected argument "${arg}".`);
+		}
+	}
+	if (!file) return fail("check requires a file: prinfer check <file.ts>");
+
+	try {
+		const result = diagnostics(file, {
+			project,
+			include_suggestions: includeSuggestions,
+		});
+		console.log(
+			json
+				? JSON.stringify(diagnosticsSuccess(result))
+				: formatDiagnostics(result, file),
+		);
+		return result.errorCount > 0 ? 1 : 0;
+	} catch (error) {
+		if (json) {
+			console.log(
+				JSON.stringify(
+					contractError(error, { file: path.resolve(file) }),
+				),
+			);
+			return 1;
+		}
+		console.error((error as Error).message);
+		return 1;
+	}
+}
+
 function main(): void {
 	const command = process.argv[2];
 	if (command === "mcp") {
@@ -256,6 +321,14 @@ function main(): void {
 	}
 	if (command === "setup") {
 		process.exit(runSetup(process.argv.slice(3)));
+	}
+	if (command === "check") {
+		const args = process.argv.slice(3);
+		if (args.includes("--help") || args.includes("-h")) {
+			console.log(HELP);
+			process.exit(0);
+		}
+		process.exit(runCheck(args));
 	}
 
 	const options = parseArgs(process.argv);

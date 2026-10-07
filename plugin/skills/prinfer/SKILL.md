@@ -39,4 +39,5 @@ When the prinfer tools are not connected, run the CLI. Output is a JSON object w
 npx prinfer src/file.ts:symbolName --json
 npx prinfer src/file.ts:symbolName:75 --json   # line hint for repeated names
 npx prinfer complete src/file.ts:80:24 --json  # file:line:column
+npx prinfer check src/file.ts --json           # type errors; exits 1 when there are any
 ```

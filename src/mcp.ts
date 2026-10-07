@@ -60,11 +60,11 @@ Provided tools:
   diagnostics(file, include_suggestions?, project?, backend?)
 
 Environment:
-  PRINFER_BACKEND=typescript6   Default hover backend (default typescript7)
-  PRINFER_INCLUDE_TIMING=1      Add type-resolution timing to hover results
+  PRINFER_BACKEND=typescript6   Backend for hover and diagnostics tools (default typescript7)
+  PRINFER_INCLUDE_TIMING=1      Add type-resolution timing to every hover result
 
 See also:
-  prinfer --help    CLI for direct type inspection
+  prinfer --help    CLI: type lookups, completions, and prinfer check
 `.trim();
 
 type Backend = "typescript6" | "typescript7";

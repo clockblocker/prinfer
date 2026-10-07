@@ -122,7 +122,11 @@ class NativeLspClient {
 		this.ready = this.request("initialize", {
 			processId: process.pid,
 			rootUri: pathToFileURL(root).href,
-			capabilities: {},
+			capabilities: {
+				textDocument: {
+					hover: { contentFormat: ["markdown", "plaintext"] },
+				},
+			},
 			workspaceFolders: null,
 		}).then((result) => {
 			this.supportsPullDiagnostics = Boolean(

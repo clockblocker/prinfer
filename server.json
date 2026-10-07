@@ -29,14 +29,14 @@
 			"environmentVariables": [
 				{
 					"name": "PRINFER_BACKEND",
-					"description": "Default TypeScript backend. Use typescript6 if the native TypeScript 7 backend fails in your project.",
+					"description": "Backend for the hover and diagnostics tools. Use typescript6 if the native TypeScript 7 backend fails in your project.",
 					"format": "string",
 					"default": "typescript7",
 					"choices": ["typescript7", "typescript6"]
 				},
 				{
 					"name": "PRINFER_INCLUDE_TIMING",
-					"description": "Set to true to include type-resolution timing in hover results by default.",
+					"description": "Set to 1 or true to add type-resolution timing to every hover result.",
 					"format": "boolean",
 					"default": "false"
 				}

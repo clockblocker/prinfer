@@ -7,6 +7,7 @@ import {
 } from "../native-lsp.js";
 
 const fixture = path.join(import.meta.dir, "fixtures", "sample.ts");
+const jsdocFixture = path.join(import.meta.dir, "fixtures", "with-jsdoc.ts");
 
 afterAll(closeNativeSessions);
 
@@ -29,5 +30,22 @@ describe("TypeScript 7 native LSP", () => {
 		expect(result.name).toBe("multiply");
 		expect(result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
 		expect(Object.keys(result.timing ?? {})).toEqual(["resolution_ms"]);
+	});
+
+	test("keeps documentation out of the signature", async () => {
+		const plain = await nativeHoverByName(jsdocFixture, "add");
+		expect(plain.signature).toBe(
+			"function add(a: number, b: number): number",
+		);
+		expect(plain.returnType).toBe("number");
+		expect(plain.documentation).toBeUndefined();
+
+		const documented = await nativeHoverByName(jsdocFixture, "add", {
+			include_docs: true,
+		});
+		expect(documented.signature).toBe(plain.signature);
+		expect(documented.documentation).toContain(
+			"Adds two numbers together.",
+		);
 	});
 });

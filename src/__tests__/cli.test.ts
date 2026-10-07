@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
 	contractErrorResponseSchema,
+	diagnosticsSuccessSchema,
 	hoverSuccessSchema,
 } from "../contract.js";
 
@@ -13,6 +14,9 @@ const sampleFile = path.join(fixturesDir, "sample.ts");
 const jsdocFile = path.join(fixturesDir, "with-jsdoc.ts");
 const typeAliasFile = path.join(fixturesDir, "type-alias.ts");
 const completionsFile = path.join(fixturesDir, "completions.ts");
+const diagnosticsDir = path.join(fixturesDir, "diagnostics");
+const errorsFile = path.join(diagnosticsDir, "errors.ts");
+const cleanFile = path.join(diagnosticsDir, "clean.ts");
 
 interface RunOptions {
 	cwd?: string;
@@ -336,6 +340,107 @@ describe("CLI", () => {
 	});
 });
 
+describe("prinfer check", () => {
+	test("prints tsc-style errors and exits 1 when the file has errors", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			"check",
+			errorsFile,
+		]);
+		expect(stdout).toContain(
+			`${errorsFile}:3:14 error TS2322: Type 'string' is not assignable to type 'number'.`,
+		);
+		expect(stdout).toContain("3 errors, 0 warnings.");
+		expect(stdout).not.toContain("TS6133");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(1);
+	});
+
+	test("reports a clean file and exits 0", async () => {
+		const { stdout, stderr, exitCode } = await runCli(["check", cleanFile]);
+		expect(stdout).toBe("No type errors.\n");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+	});
+
+	test("emits the diagnostics contract with --json", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			"check",
+			errorsFile,
+			"--json",
+		]);
+		const response = diagnosticsSuccessSchema.parse(JSON.parse(stdout));
+		expect(response.result.file).toBe(errorsFile);
+		expect(response.result.errorCount).toBe(3);
+		expect(response.result.diagnostics[0]).toMatchObject({
+			line: 3,
+			column: 14,
+			code: 2322,
+			category: "error",
+		});
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(1);
+	});
+
+	test("includes suggestions with --suggestions", async () => {
+		const { stdout } = await runCli([
+			"check",
+			errorsFile,
+			"--suggestions",
+			"--json",
+		]);
+		const response = diagnosticsSuccessSchema.parse(JSON.parse(stdout));
+		expect(
+			response.result.diagnostics.find((d) => d.code === 6133),
+		).toMatchObject({ line: 17, category: "suggestion" });
+	});
+
+	test("accepts --project", async () => {
+		const { stdout, exitCode } = await runCli([
+			"check",
+			cleanFile,
+			"--project",
+			path.join(diagnosticsDir, "tsconfig.json"),
+		]);
+		expect(stdout).toBe("No type errors.\n");
+		expect(exitCode).toBe(0);
+	});
+
+	test("emits a JSON contract error for a missing file", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			"check",
+			"/nonexistent/file.ts",
+			"--json",
+		]);
+		const response = contractErrorResponseSchema.parse(JSON.parse(stdout));
+		expect(response.error.code).toBe("FILE_NOT_FOUND");
+		expect(response.error.file).toBe("/nonexistent/file.ts");
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(1);
+	});
+
+	test("rejects a missing file argument", async () => {
+		const { stdout, exitCode } = await runCli(["check", "--json"]);
+		const response = contractErrorResponseSchema.parse(JSON.parse(stdout));
+		expect(response.error.code).toBe("INVALID_ARGUMENT");
+		expect(exitCode).toBe(1);
+	});
+
+	test("rejects unknown options", async () => {
+		const { stderr, exitCode } = await runCli([
+			"check",
+			cleanFile,
+			"--bogus",
+		]);
+		expect(stderr).toContain("Unknown check option --bogus");
+		expect(exitCode).toBe(1);
+	});
+
+	test("is listed in --help", async () => {
+		const { stdout } = await runCli(["--help"]);
+		expect(stdout).toContain("prinfer check <file.ts>");
+	});
+});
+
 const packageRoot = path.join(import.meta.dir, "..", "..");
 const NPX_SERVER = ["npx", "-y", "prinfer", "mcp"];
 const FAKE_CLIENTS = ["codex", "claude", "code", "gemini"];
@@ -469,6 +574,30 @@ describe("prinfer setup", () => {
 			"--print",
 		]);
 		expect(stdout.trim()).toBe("codex mcp add prinfer -- prinfer-mcp");
+		expect(exitCode).toBe(0);
+	});
+
+	test("ignores prinfer-mcp from npx or a project's node_modules/.bin", async () => {
+		const npxBin = path.join(
+			sandbox.root,
+			"_npx",
+			"abc123",
+			"node_modules",
+			".bin",
+		);
+		fs.mkdirSync(npxBin, { recursive: true });
+		const fake = path.join(npxBin, "prinfer-mcp");
+		fs.writeFileSync(fake, "#!/bin/sh\n");
+		fs.chmodSync(fake, 0o755);
+		const { stdout, exitCode } = await sandbox.run(
+			["setup", "codex", "--print"],
+			{
+				PATH: `${npxBin}${path.delimiter}${path.join(sandbox.root, "bin")}`,
+			},
+		);
+		expect(stdout.trim()).toBe(
+			"codex mcp add prinfer -- npx -y prinfer mcp",
+		);
 		expect(exitCode).toBe(0);
 	});
 
@@ -874,7 +1003,7 @@ describe("prinfer mcp", () => {
 			{ stdout: "pipe", stderr: "pipe" },
 		);
 		const stdout = await new Response(proc.stdout).text();
-		expect(stdout).toContain("prinfer-mcp - MCP server");
+		expect(stdout).toMatch(/^prinfer-mcp \S+ - MCP server/);
 		expect(stdout).toContain("prinfer setup");
 		expect(await proc.exited).toBe(0);
 	});
@@ -886,8 +1015,8 @@ describe("prinfer mcp", () => {
 			stdout: "pipe",
 			stderr: "pipe",
 		});
-		expect(await new Response(proc.stdout).text()).toContain(
-			"prinfer-mcp - MCP server",
+		expect(await new Response(proc.stdout).text()).toMatch(
+			/^prinfer-mcp \S+ - MCP server/,
 		);
 		expect(await new Response(proc.stderr).text()).toBe("");
 		expect(await proc.exited).toBe(0);
