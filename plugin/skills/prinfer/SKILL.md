@@ -1,6 +1,6 @@
 ---
 name: prinfer
-description: TypeScript inferred types, completions and type errors from the real compiler. Use when writing, refactoring or debugging TypeScript and you are about to add a type annotation, are unsure what a variable, generic or call infers, need the valid values at a cursor, or want to check a file for type errors after editing.
+description: TypeScript inferred types, completions and type errors from the real compiler. Use when writing, refactoring or debugging TypeScript and you are about to add a type annotation, are unsure what a variable, generic or call infers, need the valid values at a cursor, want to check a file for type errors after editing, or are writing type tests that lock what an API infers.
 ---
 
 # prinfer
@@ -26,6 +26,24 @@ All tools accept `project` (path to a `tsconfig.json`) for files outside the nea
 Lines and columns are 1-based. For `hover`, pass `text`: the token exactly as it appears on the line, such as `useQuery` or `config`. Prinfer finds the column, so you never count characters.
 
 `completions` needs a column: the cursor sits before the character at that column. For a string-literal union, put it just inside the opening quote.
+
+## Lock inferred types in tests
+
+When inferred types must not drift (public API inference, a refactor that should keep types, a request for type tests), snapshot them with `prinfer/testing` (dev dependency `prinfer`):
+
+```ts
+import { expect, test } from "vitest"; // or "bun:test"
+import { inferredType } from "prinfer/testing";
+
+test("groupBy keys by the callback's return type", () => {
+  expect(inferredType(import.meta.url, { name: "byRole" })).toMatchInlineSnapshot();
+});
+```
+
+- Leave the matcher empty; the runner writes the type. After an intended change, rerun with the runner's snapshot update (`vitest -u`, `bun test --update-snapshots`).
+- Unlike `expectTypeOf` or `tsd`, there is no hand-written expected type: the snapshot is the type as the editor displays it, so any change fails.
+- Another module: `new URL("../src/users.ts", import.meta.url)` as the file. Targets: `{ name }`, `{ line, text }`, `{ line, column }`.
+- Synchronous on TypeScript 6; `backend: "typescript7"` returns a promise. `inferredCompletions(file, { line, text })` resolves to completion names, cursor right after `text`.
 
 ## Backend
 

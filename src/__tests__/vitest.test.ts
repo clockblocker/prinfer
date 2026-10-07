@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
 	closeTestingSessions,
 	inferredCompletions,
@@ -10,8 +10,6 @@ import { inferredType as inferredTypeFromVitestAlias } from "../vitest.js";
 const genericResult = <const T extends string>(value: T) => ({ value });
 // biome-ignore lint/correctness/noUnusedVariables: looked up by name from this source file
 const capturedGenericResult = genericResult("preserved-literal");
-
-afterAll(closeTestingSessions);
 
 describe("test-runner snapshot integration", () => {
 	test("captures a declaration by name from import.meta.url", () => {

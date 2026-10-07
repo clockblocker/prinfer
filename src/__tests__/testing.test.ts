@@ -1,0 +1,284 @@
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { PrinferError } from "../errors.js";
+import {
+	inferredCompletions,
+	inferredType,
+	inferredTypeInfo,
+} from "../testing.js";
+
+// The first lookup per backend loads a compiler program.
+setDefaultTimeout(30_000);
+
+const packageRoot = path.resolve(import.meta.dir, "..", "..");
+const targets = new URL("./fixtures/testing/targets.ts", import.meta.url);
+const targetsPath = path.join(
+	import.meta.dir,
+	"fixtures",
+	"testing",
+	"targets.ts",
+);
+
+async function rejection(promise: Promise<unknown>): Promise<PrinferError> {
+	try {
+		await promise;
+	} catch (error) {
+		expect(error).toBeInstanceOf(PrinferError);
+		return error as PrinferError;
+	}
+	throw new Error("Expected the promise to reject");
+}
+
+function thrown(run: () => unknown): PrinferError {
+	try {
+		run();
+	} catch (error) {
+		expect(error).toBeInstanceOf(PrinferError);
+		return error as PrinferError;
+	}
+	throw new Error("Expected the call to throw");
+}
+
+describe("inferredCompletions backend", () => {
+	test("defaults to TypeScript 7", async () => {
+		await expect(
+			inferredCompletions(targets, { line: 5, column: 29 }),
+		).resolves.toEqual(["coffee", "tea"]);
+	});
+
+	test("still accepts an explicit typescript7 backend", async () => {
+		await expect(
+			inferredCompletions(targets, {
+				line: 5,
+				column: 29,
+				backend: "typescript7",
+			}),
+		).resolves.toEqual(["coffee", "tea"]);
+	});
+
+	test("rejects other backends with the fix", async () => {
+		const error = await rejection(
+			inferredCompletions(targets, {
+				line: 5,
+				column: 29,
+				backend: "typescript6" as "typescript7",
+			}),
+		);
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain("Omit backend");
+	});
+});
+
+describe("text targets", () => {
+	test("inferredType reads the type where the text starts", async () => {
+		expect(inferredType(targets, { line: 4, text: "latte" })).toBe(
+			'{ drink: Drink; size: "large"; }',
+		);
+		await expect(
+			inferredType(targets, {
+				line: 4,
+				text: "latte",
+				backend: "typescript7",
+			}),
+		).resolves.toBe('{ drink: Drink; size: "large"; }');
+	});
+
+	test("inferredTypeInfo reports the resolved column", async () => {
+		const result = await inferredTypeInfo(targets, {
+			line: 3,
+			text: "order",
+			backend: "typescript7",
+		});
+		expect(result.signature).toBe(
+			'(drink: Drink) => { drink: Drink; size: "large"; }',
+		);
+		expect(result.column).toBe(22);
+	});
+
+	test("occurrence picks a later match", () => {
+		expect(
+			inferredType(targets, { line: 2, text: "drink", occurrence: 2 }),
+		).toBe("Drink");
+	});
+
+	test("completions put the cursor after the text by default", async () => {
+		await expect(
+			inferredCompletions(targets, { line: 4, text: "latte." }),
+		).resolves.toEqual(["drink", "size"]);
+		await expect(
+			inferredCompletions(targets, { line: 5, text: '"' }),
+		).resolves.toEqual(["coffee", "tea"]);
+	});
+
+	test('completions accept cursor: "start"', async () => {
+		await expect(
+			inferredCompletions(targets, {
+				line: 5,
+				text: "tea",
+				cursor: "start",
+			}),
+		).resolves.toEqual(["coffee", "tea"]);
+	});
+
+	test("text missing from the line quotes the line", () => {
+		const error = thrown(() =>
+			inferredType(targets, { line: 4, text: "espresso" }),
+		);
+		expect(error.code).toBe("SYMBOL_NOT_FOUND");
+		expect(error.message).toContain(
+			'Line 4 reads: "export const size = latte.size;"',
+		);
+	});
+});
+
+describe("other modules", () => {
+	test("accepts a URL relative to the test file", () => {
+		expect(inferredType(targets, { name: "pick" })).toBe("Drink");
+	});
+
+	test("resolves relative path strings against process.cwd()", () => {
+		const relative = path.relative(process.cwd(), targetsPath);
+		expect(inferredType(relative, { name: "pick" })).toBe("Drink");
+	});
+
+	test("a missing relative path suggests import.meta.url", () => {
+		const error = thrown(() =>
+			inferredType("fixtures/testing/targets.ts", { name: "pick" }),
+		);
+		expect(error.code).toBe("FILE_NOT_FOUND");
+		expect(error.message).toContain(
+			`Relative paths resolve against process.cwd() (${process.cwd()})`,
+		);
+		expect(error.message).toContain(
+			'new URL("./fixtures/testing/targets.ts", import.meta.url)',
+		);
+	});
+});
+
+describe("setup errors", () => {
+	test("an unknown name lists the closest declarations", async () => {
+		const sync = thrown(() => inferredType(targets, { name: "lattes" }));
+		expect(sync.code).toBe("SYMBOL_NOT_FOUND");
+		expect(sync.message).toContain(
+			'Declarations in targets.ts closest to "lattes": latte,',
+		);
+
+		const native = await rejection(
+			inferredType(targets, { name: "lattes", backend: "typescript7" }),
+		);
+		expect(native.code).toBe("SYMBOL_NOT_FOUND");
+		expect(native.message).toContain('closest to "lattes": latte,');
+	});
+
+	test("a wrong line hint points at the declaration line", () => {
+		const error = thrown(() =>
+			inferredType(targets, { name: "latte", line: 5 }),
+		);
+		expect(error.message).toContain(
+			'"latte" is declared on line 3; fix line or omit it.',
+		);
+	});
+
+	test("an unknown backend names the valid ones", () => {
+		const error = thrown(() =>
+			inferredType(targets, {
+				name: "latte",
+				backend: "ts7" as "typescript7",
+			}),
+		);
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain('Use backend: "typescript7"');
+	});
+
+	test("a selector with column and text lists the valid shapes", () => {
+		const error = thrown(() =>
+			inferredType(targets, {
+				line: 4,
+				text: "latte",
+				column: 21,
+			} as unknown as { name: string }),
+		);
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain("{ line, text, occurrence? }");
+	});
+
+	test("a cursor past the line end gives the last valid column", async () => {
+		const error = await rejection(
+			inferredCompletions(targets, { line: 4, column: 99 }),
+		);
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain("the last cursor column is 32");
+	});
+
+	test("TypeScript 7 helpers reject instead of throwing", async () => {
+		const pending = inferredType(targets, {
+			line: 0,
+			column: 1,
+			backend: "typescript7",
+		});
+		expect(pending).toBeInstanceOf(Promise);
+		const error = await rejection(pending);
+		expect(error.message).toContain("line as a positive 1-based integer");
+	});
+});
+
+describe("teardown", () => {
+	const script = (entry: string) =>
+		[
+			`import { inferredCompletions, inferredType } from ${JSON.stringify(entry)};`,
+			`const file = ${JSON.stringify(targetsPath)};`,
+			'console.log(await inferredType(file, { name: "pick", backend: "typescript7" }));',
+			'console.log((await inferredCompletions(file, { line: 4, text: "latte." })).join(","));',
+		].join("\n");
+
+	async function exitsWithoutTeardown(command: string[]): Promise<void> {
+		const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+		const timer = setTimeout(() => proc.kill(), 20_000);
+		const exitCode = await proc.exited;
+		clearTimeout(timer);
+		expect(await new Response(proc.stdout).text()).toBe(
+			"Drink\ndrink,size\n",
+		);
+		expect(exitCode).toBe(0);
+	}
+
+	function writeScript(name: string, entry: string): string {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-teardown-"));
+		const file = path.join(dir, name);
+		fs.writeFileSync(file, script(entry));
+		return file;
+	}
+
+	test("a Bun process exits after TypeScript 7 calls without closeTestingSessions", async () => {
+		const file = writeScript(
+			"script.ts",
+			path.join(packageRoot, "src", "testing.ts"),
+		);
+		await exitsWithoutTeardown([process.execPath, file]);
+	}, 30_000);
+
+	test("a Node process exits after TypeScript 7 calls without closeTestingSessions", async () => {
+		const dist = path.join(packageRoot, "dist", "testing.js");
+		const sources = [
+			path.join(packageRoot, "src", "testing.ts"),
+			path.join(packageRoot, "src", "native-api.ts"),
+		];
+		const stale =
+			!fs.existsSync(dist) ||
+			sources.some(
+				(source) =>
+					fs.statSync(source).mtimeMs > fs.statSync(dist).mtimeMs,
+			);
+		if (stale) {
+			const build = Bun.spawnSync(["bun", "run", "build"], {
+				cwd: packageRoot,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			expect(build.exitCode).toBe(0);
+		}
+		await exitsWithoutTeardown(["node", writeScript("script.mjs", dist)]);
+	}, 60_000);
+});

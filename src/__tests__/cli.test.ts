@@ -900,6 +900,7 @@ describe("prinfer setup agents-md", () => {
 			"completions",
 			"diagnostics",
 			"npx prinfer",
+			"prinfer/testing",
 		]) {
 			expect(text).toContain(hint);
 		}

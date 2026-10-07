@@ -210,6 +210,60 @@ src/utils.ts:16:14 error TS2322: Type 'string' is not assignable to type 'number
 
 A clean file returns `No type errors.`. Errors and warnings are reported by default. `include_suggestions` adds suggestion diagnostics such as TS6133 (declared but never read).
 
+## Type regression tests
+
+`prinfer/testing` returns an inferred type as a string, so a test can pin it with an ordinary snapshot matcher in Vitest, Jest, Bun, or any compatible runner. Use it to lock the types your public API infers: a refactor that changes one fails the test. The example is `test/users.test.ts`, next to a `src/users.ts` that exports `groupBy`, `Role`, and `User`.
+
+```typescript
+import { expect, test } from "vitest"; // or "bun:test"
+import { inferredCompletions, inferredType } from "prinfer/testing";
+import { groupBy, type Role, type User } from "../src/users";
+
+const users: User[] = [{ name: "Ada", role: "admin" }];
+const byRole = groupBy(users, (user) => user.role);
+const fallback: Role = "member";
+
+test("groupBy keys the result by the callback's return type", () => {
+  expect(inferredType(import.meta.url, { name: "byRole" }))
+    .toMatchInlineSnapshot(`"Record<Role, User[]>"`);
+});
+
+test("groupBy keeps its public signature", () => {
+  expect(inferredType(new URL("../src/users.ts", import.meta.url), { name: "groupBy" }))
+    .toMatchInlineSnapshot(`"<T, K extends PropertyKey>(items: readonly T[], key: (item: T) => K): Record<K, T[]>"`);
+});
+
+test("Role offers its members", async () => {
+  await expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
+    .resolves.toMatchInlineSnapshot(`
+    [
+      "admin",
+      "member",
+    ]
+  `);
+});
+```
+
+Write the matcher empty (`toMatchInlineSnapshot()`) and the runner fills it in; after an intended type change, update it with the runner's snapshot update (`vitest -u`, `bun test --update-snapshots`). Unlike `expectTypeOf` or `tsd`, you never write the expected type by hand: the snapshot is the type as the editor displays it, so any change shows up, including a literal union widening to `string`.
+
+The first argument is the file to inspect: `import.meta.url` for the test file itself, or `new URL("../src/users.ts", import.meta.url)` for another module. Plain string paths resolve against `process.cwd()`, not the test file. The source is read through its nearest `tsconfig.json`, or `project` when given.
+
+The second argument picks the target:
+
+- `{ name, line? }`: a declaration by name; `line` picks among repeats.
+- `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
+- `{ line, column }`: a 1-based position.
+
+`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. `full: true` disables truncation, and `include_docs` adds JSDoc to `inferredTypeInfo`.
+
+`inferredCompletions` uses TypeScript 7 and resolves to the completion names. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
+
+TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early.
+
+Failed lookups throw (or reject) with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
+
+`prinfer/vitest` remains as a deprecated alias for `prinfer/testing`.
+
 ## Backends and environment
 
 `hover_by_name`, `hover`, `batch_hover`, and `diagnostics` take `backend: "typescript7" | "typescript6"`.
@@ -354,68 +408,6 @@ const result = diagnostics("./src/utils.ts", { include_suggestions: false });
 ```
 
 Unlike the MCP server, the library throws on failure (`batchHover` reports bad positions per item and throws only when the file can't be loaded). Pass a caught error to `contractError(error)` to get the contract shape.
-
-## Inferred type snapshots
-
-Use the runner-neutral `prinfer/testing` entry point with ordinary snapshot
-matchers in Vitest, Bun, Jest, and compatible test runners. Passing
-`import.meta.url` keeps the lookup stable
-when the test file moves; selecting a uniquely named declaration avoids brittle
-line and column literals.
-
-```typescript
-import { afterAll, expect, test } from "vitest";
-import {
-  closeTestingSessions,
-  inferredCompletions,
-  inferredType,
-} from "prinfer/testing";
-
-afterAll(closeTestingSessions);
-
-const result = createRouter({ users: usersRoute });
-type Drink = "coffee" | "tea";
-const selected: Drink = "coffee";
-
-test("preserves the public inferred type", () => {
-  expect(inferredType(import.meta.url, { name: "result" }))
-    .toMatchInlineSnapshot(`"Router<{ users: UserRoute; }>"`);
-});
-
-test("checks the public inferred type with TypeScript 7", async () => {
-  await expect(inferredType(import.meta.url, {
-    name: "result",
-    backend: "typescript7",
-  })).resolves.toMatchInlineSnapshot(`"Router<{ users: UserRoute; }>"`);
-});
-
-test("preserves contextual completions", async () => {
-  await expect(inferredCompletions(import.meta.url, {
-    line: 12,
-    column: 26,
-    backend: "typescript7",
-  })).resolves.toMatchInlineSnapshot(`
-    [
-      "coffee",
-      "tea",
-    ]
-  `);
-});
-```
-
-Update snapshots with the test runner's normal update command. TypeScript types
-are erased at runtime, so the helper inspects the test source through the
-nearest `tsconfig.json` rather than inspecting the runtime value. Completion
-snapshots explicitly opt into the asynchronous TypeScript 7 native compiler
-API and return only the suggested names. Passing `backend: "typescript7"` does
-the same for inferred-type snapshots; those calls return promises. `full: true`
-disables truncation and expands type aliases and indexed accesses when
-capturing named type aliases. Native requests share one compiler session per
-project, so call the async `closeTestingSessions` function from the runner's
-teardown hook. Calls without a backend remain synchronous and use the
-TypeScript 6 compatibility implementation.
-The former `prinfer/vitest` entry point remains as a deprecated compatibility
-alias.
 
 ## Requirements
 
