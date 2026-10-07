@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { Node, SourceFile } from "@typescript/native/unstable/ast";
@@ -26,6 +27,7 @@ import {
 	type Snapshot,
 	type Type,
 } from "@typescript/native/unstable/async";
+import { PrinferError } from "./errors.js";
 import type { CompletionOptions, HoverOptions, HoverResult } from "./types.js";
 
 const sessions = new Map<string, NativeApiSession>();
@@ -36,6 +38,7 @@ class NativeApiSession {
 	private snapshot: Snapshot | undefined;
 	private readonly documents = new Map<string, string>();
 	private tail: Promise<void> = Promise.resolve();
+	private pending = 0;
 
 	constructor(root: string, projectFile?: string) {
 		this.api = new API({ cwd: root });
@@ -46,12 +49,39 @@ class NativeApiSession {
 		file: string,
 		operation: (project: Project, sourceFile: SourceFile) => Promise<T>,
 	): Promise<T> {
+		this.pending += 1;
+		this.keepAlive(true);
 		const result = this.tail.then(() => this.runNow(file, operation));
 		this.tail = result.then(
 			() => undefined,
 			() => undefined,
 		);
+		void this.tail.then(() => {
+			this.pending -= 1;
+			if (this.pending === 0) this.keepAlive(false);
+		});
 		return result;
+	}
+
+	/**
+	 * Hold the event loop open only while a request is in flight, so a test
+	 * process exits without teardown. The idle compiler process sees its
+	 * stdin close when the parent exits and shuts down on its own.
+	 *
+	 * The TypeScript 7 API does not expose its child process, so this reaches
+	 * into the client. If that shape changes, sessions stay referenced and
+	 * `closeNativeApiSessions` is required again.
+	 */
+	private keepAlive(active: boolean): void {
+		const child = (
+			this.api as unknown as { client?: { process?: ChildProcess } }
+		).client?.process;
+		if (!child) return;
+		const method = active ? "ref" : "unref";
+		child[method]?.();
+		for (const stream of [child.stdin, child.stdout]) {
+			(stream as { ref?(): void; unref?(): void } | null)?.[method]?.();
+		}
 	}
 
 	async close(): Promise<void> {
@@ -89,14 +119,20 @@ class NativeApiSession {
 			? snapshot.getProject(this.projectFile)
 			: await snapshot.getDefaultProjectForFile(file);
 		if (!project) {
-			throw new Error(
+			throw new PrinferError(
+				"TYPESCRIPT_ERROR",
 				`Could not load source file into a TypeScript 7 project: ${file}`,
+				"Check that the nearest tsconfig.json includes the file, or pass project.",
 			);
 		}
 		const sourceFile = await project.program.getSourceFile(file);
 		if (!sourceFile) {
-			throw new Error(
+			throw new PrinferError(
+				"TYPESCRIPT_ERROR",
 				`Could not load source file into the TypeScript 7 program: ${file}`,
+				this.projectFile
+					? `Check that ${this.projectFile} includes the file.`
+					: "Check that the nearest tsconfig.json includes the file, or pass project.",
 			);
 		}
 		return operation(project, sourceFile);
@@ -142,7 +178,8 @@ export async function nativeApiTypeInfo(
 				position,
 			);
 			if (!type) {
-				throw new Error(
+				throw new PrinferError(
+					"SYMBOL_NOT_FOUND",
 					`No symbol found at ${entryFileAbs}:${line}:${column}`,
 				);
 			}
@@ -178,7 +215,8 @@ export async function nativeApiTypeInfoByName(
 				const lineInfo = options?.line
 					? ` at line ${options.line}`
 					: "";
-				throw new Error(
+				throw new PrinferError(
+					"SYMBOL_NOT_FOUND",
 					`No symbol named "${name}"${lineInfo} found in ${entryFileAbs}`,
 				);
 			}
@@ -186,7 +224,8 @@ export async function nativeApiTypeInfoByName(
 			const resolutionStarted = performance.now();
 			const type = await project.checker.getTypeAtLocation(location);
 			if (!type) {
-				throw new Error(
+				throw new PrinferError(
+					"SYMBOL_NOT_FOUND",
 					`No type found for "${name}" in ${entryFileAbs}`,
 				);
 			}
@@ -290,7 +329,7 @@ function getSession(file: string, project?: string): NativeApiSession {
 function resolveFile(file: string): string {
 	const resolved = path.resolve(process.cwd(), file);
 	if (!fs.existsSync(resolved))
-		throw new Error(`File not found: ${resolved}`);
+		throw new PrinferError("FILE_NOT_FOUND", `File not found: ${resolved}`);
 	return resolved;
 }
 
@@ -307,7 +346,11 @@ function resolveProject(
 		? path.join(resolved, "tsconfig.json")
 		: resolved;
 	if (!fs.existsSync(projectFile)) {
-		throw new Error(`TypeScript project not found: ${projectFile}`);
+		throw new PrinferError(
+			"FILE_NOT_FOUND",
+			`TypeScript project not found: ${projectFile}`,
+			"Pass project as a tsconfig.json path or its directory.",
+		);
 	}
 	return {
 		key: projectFile,
@@ -338,13 +381,20 @@ function sourcePosition(
 		line < 1 ||
 		column < 1
 	) {
-		throw new Error("Line and column must be positive integers.");
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
+			"Line and column must be positive integers.",
+		);
 	}
 	let lineStart = 0;
 	for (let current = 1; current < line; current += 1) {
 		const newline = text.indexOf("\n", lineStart);
 		if (newline < 0)
-			throw new Error(`No cursor position at ${file}:${line}:${column}`);
+			throw new PrinferError(
+				"INVALID_ARGUMENT",
+				`No cursor position at ${file}:${line}:${column}`,
+				`The file has ${current} lines.`,
+			);
 		lineStart = newline + 1;
 	}
 	const newline = text.indexOf("\n", lineStart);
@@ -352,7 +402,11 @@ function sourcePosition(
 	const lineEnd = text[rawLineEnd - 1] === "\r" ? rawLineEnd - 1 : rawLineEnd;
 	const position = lineStart + column - 1;
 	if (position > lineEnd) {
-		throw new Error(`No cursor position at ${file}:${line}:${column}`);
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
+			`No cursor position at ${file}:${line}:${column}`,
+			`Line ${line} has ${lineEnd - lineStart} characters, so the last cursor column is ${lineEnd - lineStart + 1}.`,
+		);
 	}
 	return position;
 }

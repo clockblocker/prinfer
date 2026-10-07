@@ -78,7 +78,11 @@
 		"hover",
 		"lsp",
 		"inspection",
-		"cli"
+		"cli",
+		"testing",
+		"type-testing",
+		"snapshot",
+		"type-tests"
 	],
 	"author": "",
 	"license": "MIT",

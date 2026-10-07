@@ -633,7 +633,8 @@ const INSTRUCTIONS = `prinfer shows the types TypeScript infers, as an editor ho
 - batch_hover: several lookups, across files, in one call.
 - completions: valid values at a cursor, e.g. string-literal union members.
 - diagnostics: check a file for type errors after editing.
-Lines and columns are 1-based. If a lookup fails or looks wrong on the default TypeScript 7 backend, retry it with backend "typescript6".`;
+Lines and columns are 1-based. If a lookup fails or looks wrong on the default TypeScript 7 backend, retry it with backend "typescript6".
+Writing type tests: expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot(), with inferredType from prinfer/testing.`;
 
 function createServer(): McpServer {
 	const server = new McpServer(
