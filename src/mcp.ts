@@ -22,6 +22,7 @@ import {
 } from "./core/index.js";
 import { formatErrorText, reportError } from "./error-report.js";
 import { assertSourceFile, PrinferError } from "./errors.js";
+import { DEFAULT_MAX_CHARS, formatHoverText } from "./hover-format.js";
 import { batchHover, diagnostics, hover } from "./index.js";
 import {
 	batchHoverOutputSchema,
@@ -55,9 +56,9 @@ Setup:
   server with a client. Without a global install: npx -y prinfer mcp
 
 Provided tools:
-  hover_by_name(file, name, line?, include_docs?, project?, backend?)
-  hover(file, line, text? | column?, occurrence?, include_docs?, project?, backend?)
-  batch_hover(positions, file?, include_docs?, project?, backend?)
+  hover_by_name(file, name, line?, include_docs?, full?, max_chars?, project?, backend?)
+  hover(file, line, text? | column?, occurrence?, include_docs?, full?, max_chars?, project?, backend?)
+  batch_hover(positions, file?, include_docs?, full?, max_chars?, project?, backend?)
   completions(file, line, column, prefix?, limit?, project?)
   diagnostics(file, include_suggestions?, project?, backend?)
 
@@ -83,19 +84,23 @@ interface FailureContext {
 	strict?: boolean;
 }
 
-function formatHoverResult(result: HoverResult): string {
-	let text = `Type: ${result.signature}`;
-	if (result.returnType) text += `\nReturns: ${result.returnType}`;
-	if (result.name) text += `\nName: ${result.name}`;
-	text += `\nKind: ${result.kind}`;
-	text += `\nPosition: ${result.line}:${result.column}`;
-	if (result.documentation) {
-		text += `\nDocumentation: ${result.documentation}`;
-	}
-	if (result.timing) {
-		text += `\nType resolution: ${result.timing.resolution_ms} ms`;
-	}
-	return text;
+/** How much of each hover's text to print, from the full and max_chars args. */
+interface TextOptions {
+	full?: boolean;
+	max_chars?: number;
+}
+
+function formatHoverResult(
+	result: HoverResult,
+	options: TextOptions,
+	target?: { text: string; line: number; column: number },
+): string {
+	return formatHoverText(result, {
+		surface: "mcp",
+		full: options.full,
+		maxChars: options.max_chars,
+		target,
+	});
 }
 
 function displayPath(file: string): string {
@@ -118,14 +123,17 @@ function itemLabel(item: BatchItem): string {
 	return `${file}${item.position.line}:${item.position.column}${text}`;
 }
 
-function formatBatchHoverResult(result: BatchHoverSuccess["result"]): string {
+function formatBatchHoverResult(
+	result: BatchHoverSuccess["result"],
+	options: TextOptions,
+): string {
 	let text = `Batch hover results: ${result.successCount} succeeded, ${result.errorCount} failed\n`;
 	for (const item of result.items) {
 		text += `\n--- ${itemLabel(item)} ---\n`;
 		if (item.error) {
 			text += `${formatErrorText(item.error, { strict: item.name !== undefined })}\n`;
 		} else if (item.result) {
-			text += `${formatHoverResult(item.result as HoverResult)}\n`;
+			text += `${formatHoverResult(item.result as HoverResult, options)}\n`;
 		}
 	}
 	return text;
@@ -572,6 +580,20 @@ const nameSchema = z
 	.string()
 	.min(1)
 	.describe('Symbol name, e.g. "createHandler"');
+/** Output-size options shared by the hover tools. */
+const hoverTextShape = {
+	full: z
+		.boolean()
+		.optional()
+		.describe('Untruncated types (no "... 12 more ..."), all overloads'),
+	max_chars: z
+		.int()
+		.min(0)
+		.optional()
+		.describe(
+			`Text cap per type (default ${DEFAULT_MAX_CHARS} chars; 0: none)`,
+		),
+};
 
 const INSTRUCTIONS = `prinfer shows the types TypeScript infers, as an editor hover would. Look a type up instead of guessing it, reading .d.ts files, or writing an annotation to find out.
 - hover_by_name: you know the symbol's name. Start here.
@@ -603,27 +625,45 @@ function createServer(): McpServer {
 							"1-based line of the one you mean, when the name repeats",
 						),
 					include_docs: includeDocsSchema,
+					...hoverTextShape,
 					project: projectSchema,
 					backend: backendSchema,
 				}),
 			),
 			outputSchema: hoverOutputSchema,
 		},
-		async ({ file, name, line, include_docs, project, backend }) => {
+		async ({
+			file,
+			name,
+			line,
+			include_docs,
+			full,
+			max_chars,
+			project,
+			backend,
+		}) => {
 			try {
 				assertSourceFile(file);
 				const result = await hoverNamed(
 					file,
 					name,
 					line,
-					{ include_docs, include_timing: timingEnabled(), project },
+					{
+						include_docs,
+						include_timing: timingEnabled(),
+						full,
+						project,
+					},
 					backend,
 				);
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: formatHoverResult(result),
+							text: formatHoverResult(result, {
+								full,
+								max_chars,
+							}),
 						},
 					],
 					structuredContent: hoverSuccess(result),
@@ -653,6 +693,7 @@ function createServer(): McpServer {
 					occurrence: occurrenceSchema,
 					column: columnSchema.optional(),
 					include_docs: includeDocsSchema,
+					...hoverTextShape,
 					project: projectSchema,
 					backend: backendSchema,
 				}),
@@ -666,6 +707,8 @@ function createServer(): McpServer {
 			occurrence,
 			column,
 			include_docs,
+			full,
+			max_chars,
 			project,
 			backend,
 		}) => {
@@ -683,13 +726,21 @@ function createServer(): McpServer {
 					file,
 					line,
 					resolvedColumn,
-					{ include_docs, include_timing: timingEnabled(), project },
+					{
+						include_docs,
+						include_timing: timingEnabled(),
+						full,
+						project,
+					},
 					backend,
 				);
-				let output = formatHoverResult(result);
-				if (text !== undefined) {
-					output += `\nTarget: ${JSON.stringify(text)} at ${line}:${resolvedColumn}`;
-				}
+				const output = formatHoverResult(
+					result,
+					{ full, max_chars },
+					text !== undefined
+						? { text, line, column: resolvedColumn }
+						: undefined,
+				);
 				return {
 					content: [{ type: "text" as const, text: output }],
 					structuredContent: hoverSuccess({
@@ -744,22 +795,42 @@ function createServer(): McpServer {
 						.max(MAX_BATCH_POSITIONS)
 						.describe(`1-${MAX_BATCH_POSITIONS} lookups`),
 					include_docs: includeDocsSchema,
+					...hoverTextShape,
 					project: projectSchema,
 					backend: backendSchema,
 				}),
 			),
 			outputSchema: batchHoverOutputSchema,
 		},
-		async ({ file, positions, include_docs, project, backend }) => {
+		async ({
+			file,
+			positions,
+			include_docs,
+			full,
+			max_chars,
+			project,
+			backend,
+		}) => {
 			try {
 				const result = await runBatchHover(
 					positions,
 					{ file, project, backend },
-					{ include_docs, include_timing: timingEnabled(), project },
+					{
+						include_docs,
+						include_timing: timingEnabled(),
+						full,
+						project,
+					},
 				);
 				return {
 					content: [
-						{ type: "text", text: formatBatchHoverResult(result) },
+						{
+							type: "text",
+							text: formatBatchHoverResult(result, {
+								full,
+								max_chars,
+							}),
+						},
 					],
 					structuredContent: batchHoverSuccess(result),
 				};

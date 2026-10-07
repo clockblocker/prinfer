@@ -297,18 +297,18 @@ function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
 				case "check":
 					return "Usage: prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>].";
 				case "complete":
-					return "Usage: prinfer complete <file.ts>:<line>:<column> [--prefix <text>] [--limit <n>] with a 1-based line and column.";
+					return "Usage: prinfer complete <file.ts>:<line>:<text|column> [--prefix <text>] [--limit <n>] with a 1-based line; text puts the cursor right after it.";
 				default:
-					return "Use <file>:<name>, <file>:<name>:<line>, or <file>:<line>:<column> with 1-based numbers; run prinfer --help for options.";
+					return "Use <file>:<name>, <file>:<name>:<line>, <file>:<line>:<text>, or <file>:<line>:<column> with 1-based numbers; run prinfer --help for options.";
 			}
 		case "FILE_NOT_FOUND":
 			return `Check the path. Relative paths resolve against the current directory (${process.cwd()}).`;
 		case "SYMBOL_NOT_FOUND":
 			switch (command) {
 				case "name":
-					return "Check the spelling against candidates, add a line hint (<file>:<name>:<line>), or target the token with <file>:<line>:<column>.";
+					return "Check the spelling against candidates, add a line hint (<file>:<name>:<line>), or target the token with <file>:<line>:<text>.";
 				default:
-					return "Check that the 1-based line and column point at an identifier, or look the symbol up by name with <file>:<name>.";
+					return "Point at an identifier with <file>:<line>:<text> (text copied from the line) instead of counting columns, or look the symbol up by name with <file>:<name>.";
 			}
 		case "TYPESCRIPT_ERROR":
 			return `Check the selected tsconfig (--project) and the source syntax${retry}.`;

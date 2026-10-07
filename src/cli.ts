@@ -2,9 +2,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { type ParsedTarget, parseTargetArg, shellHint } from "./cli-args.js";
 import {
 	type CliCommand,
-	type ContractErrorCode,
 	completionSuccess,
 	contractError,
 	diagnosticsSuccess,
@@ -14,9 +14,11 @@ import {
 	formatCompletions,
 	formatDiagnostics,
 	getCompletions,
+	resolveTextColumn,
 } from "./core/index.js";
 import { formatErrorText, reportError } from "./error-report.js";
-import { assertSourceFile } from "./errors.js";
+import { assertSourceFile, PrinferError } from "./errors.js";
+import { DEFAULT_MAX_CHARS, formatHoverText } from "./hover-format.js";
 import { diagnostics, hover } from "./index.js";
 import { runSetup } from "./setup.js";
 import type { DiagnosticsResult, HoverOptions, HoverResult } from "./types.js";
@@ -25,11 +27,12 @@ const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
-  prinfer <file.ts>:<name> [options]
-  prinfer <file.ts>:<name>:<line> [options]
-  prinfer <file.ts>:<line>:<column> [options]
-  prinfer complete <file.ts>:<line>:<column> [--prefix <text>] [--limit <n>] [--json] [--project <tsconfig.json>]
-  prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <backend>]
+  prinfer <file>:<name>[:<line>] [options]
+  prinfer <file>:<line>:<text> [options]
+  prinfer <file>:<line> --text <text> [--occurrence <n>] [options]
+  prinfer <file>:<line>:<column> [options]
+  prinfer complete <file>:<line>:<text|column> [--prefix <text>] [--limit <n>] [--json] [--project <tsconfig.json>]
+  prinfer check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]
   prinfer mcp
   prinfer setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
   prinfer setup agents-md [--file <path>] [--print]
@@ -41,30 +44,41 @@ Commands:
   setup <client>       Register the MCP server with an agent client
   setup agents-md      Add prinfer usage instructions to AGENTS.md or CLAUDE.md
 
-Arguments:
-  file.ts:name         Path to TypeScript file with symbol name
-  file.ts:name:line    Path to TypeScript file with symbol name and line hint
-  file.ts:line:column  Path to TypeScript file with 1-based line and column
+Targets (lines and columns are 1-based):
+  <file>:<name>           A declaration by name (any JavaScript identifier)
+  <file>:<name>:<line>    The same, choosing among repeated names by line
+  <file>:<line>:<text>    The token where text starts on that line; whole
+                          identifiers match first ("user" skips "users").
+                          complete puts the cursor right after the text
+  <file>:<line>:<column>  A position; an all-digit text reads as a column,
+                          so pass such text with --text
+  Single-quote targets that contain $ or spaces: 'src/store.ts:$store'
 
 Options:
+  --text <text>        Target text on <file>:<line>, instead of a :<text> suffix
+  --occurrence <n>     Which match of the text on the line (default 1)
   --docs, -d           Include JSDoc/TSDoc documentation
   --timing, -t         Include type-resolution timing
-  --full, -f           Disable editor-style type truncation
+  --full, -f           Disable TypeScript's type truncation ("... 12 more ...")
+  --max-chars <n>      Print at most n characters of type text (default ${DEFAULT_MAX_CHARS};
+                       0 for no limit). Applies to text output; --json is never cut
   --suggestions        check: also report suggestions such as unused variables
   --prefix <text>      complete: keep names starting with text (case-insensitive);
                        default: the partial identifier left of the cursor; "" for all
   --limit <n>          complete: at most n entries (default 50)
   --json               Emit the versioned JSON contract on stdout
-  --project, -p        Path to tsconfig.json (optional)
-  --backend <backend>  typescript6 (default) or typescript7, for type lookups and
-                       check; complete always uses typescript6
+  --project, -p <path> Path to tsconfig.json (default: the nearest one above the file)
+  --backend <name>     typescript6 (default) or typescript7, for type lookups and
+                       check; complete supports only typescript6
   --help, -h           Show this help message (prinfer setup --help for setup options)
 
 Examples:
   prinfer src/utils.ts:createHandler --json
   prinfer src/utils.ts:createHandler:75
-  prinfer src/utils.ts:75:10 --docs
-  prinfer complete src/utils.ts:75:10
+  prinfer src/utils.ts:75:user --docs
+  prinfer src/utils.ts:75 --text user --occurrence 2
+  prinfer src/utils.ts:75:10
+  prinfer complete src/utils.ts:75:user.
   prinfer complete src/utils.ts:75:10 --prefix use --limit 20
   prinfer check src/utils.ts --json
   prinfer src/utils.ts:createHandler --backend typescript7
@@ -91,27 +105,26 @@ async function startMcpServer(): Promise<void> {
 	await import(pathToFileURL(entry).href);
 }
 
-interface CliPositionOptions {
-	mode: "position";
-	file: string;
-	line: number;
-	column: number;
-	includeDocs: boolean;
-	includeTiming: boolean;
-	full: boolean;
-	json: boolean;
-	project?: string;
-	backend: Backend;
-}
+type Backend = "typescript6" | "typescript7";
 
-interface CliNameOptions {
-	mode: "name";
+/** A hover target after flags such as --text are applied. */
+type HoverTarget =
+	| { kind: "position"; line: number; column: number }
+	| { kind: "text"; line: number; text: string; occurrence?: number }
+	| { kind: "name"; name: string; line?: number };
+
+type TextTarget = Extract<HoverTarget, { kind: "text" }>;
+
+interface CliHoverOptions {
+	mode: "hover";
+	/** The target argument as received, echoed in errors. */
+	arg: string;
 	file: string;
-	name: string;
-	line?: number;
+	target: HoverTarget;
 	includeDocs: boolean;
 	includeTiming: boolean;
 	full: boolean;
+	maxChars: number;
 	json: boolean;
 	project?: string;
 	backend: Backend;
@@ -119,235 +132,362 @@ interface CliNameOptions {
 
 interface CliCompletionOptions {
 	mode: "completion";
+	arg: string;
 	file: string;
-	line: number;
-	column: number;
+	target: Exclude<HoverTarget, { kind: "name" }>;
 	prefix?: string;
 	limit: number;
 	json: boolean;
 	project?: string;
 }
 
+type CliOptions = CliHoverOptions | CliCompletionOptions;
+
 const DEFAULT_COMPLETION_LIMIT = 50;
+const HELP_POINTER = "Run prinfer --help for all options.";
+const CHECK_USAGE =
+	"Usage: prinfer check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]";
 
-type CliOptions = CliPositionOptions | CliNameOptions | CliCompletionOptions;
+/** Option name, the key it sets, and whether it takes a value. */
+const FLAGS: Record<string, { key: string; value?: true }> = {
+	"--docs": { key: "docs" },
+	"-d": { key: "docs" },
+	"--timing": { key: "timing" },
+	"-t": { key: "timing" },
+	"--full": { key: "full" },
+	"-f": { key: "full" },
+	"--json": { key: "json" },
+	"--text": { key: "text", value: true },
+	"--occurrence": { key: "occurrence", value: true },
+	"--max-chars": { key: "maxChars", value: true },
+	"--project": { key: "project", value: true },
+	"-p": { key: "project", value: true },
+	"--backend": { key: "backend", value: true },
+	"--prefix": { key: "prefix", value: true },
+	"--limit": { key: "limit", value: true },
+};
 
-type Backend = "typescript6" | "typescript7";
+const HOVER_KEYS = new Set([
+	"docs",
+	"timing",
+	"full",
+	"json",
+	"text",
+	"occurrence",
+	"maxChars",
+	"project",
+	"backend",
+]);
+const COMPLETE_KEYS = new Set([
+	"json",
+	"text",
+	"occurrence",
+	"project",
+	"backend",
+	"prefix",
+	"limit",
+]);
+
+const HOVER_FORMS = [
+	"Accepted forms:",
+	"  <file>:<name>[:<line>]   src/a.ts:createHandler, src/a.ts:createHandler:75",
+	"  <file>:<line>:<text>     src/a.ts:75:user (or src/a.ts:75 --text user)",
+	"  <file>:<line>:<column>   src/a.ts:75:10",
+];
+const HOVER_FORMS_SUGGESTION =
+	"Use <file>:<name>, <file>:<name>:<line>, <file>:<line>:<text>, <file>:<line> --text <text>, or <file>:<line>:<column>.";
+const COMPLETE_FORMS = [
+	"Accepted forms:",
+	"  <file>:<line>:<text>     cursor right after the text: src/a.ts:75:user.",
+	"  <file>:<line> --text <t> the same, for text that is all digits",
+	"  <file>:<line>:<column>   cursor before that column: src/a.ts:75:10",
+];
+const COMPLETE_FORMS_SUGGESTION =
+	"Use <file>:<line>:<text> (cursor after the text), <file>:<line> --text <text>, or <file>:<line>:<column>.";
+
+/**
+ * A malformed command line: the JSON contract on stdout with --json,
+ * otherwise a short message on stderr (never the whole help). Exits 1.
+ */
+function usageError(
+	message: string,
+	options: {
+		command: CliCommand;
+		json: boolean;
+		/** Extra lines for text output, e.g. the accepted forms. */
+		details?: string[];
+		/** The JSON suggestion that stands in for the details. */
+		suggestion?: string;
+		hint?: string;
+	},
+): never {
+	const { command, json, details = [], hint } = options;
+	if (json) {
+		const suggestion = [options.suggestion, hint, HELP_POINTER]
+			.filter(Boolean)
+			.join(" ");
+		console.log(
+			JSON.stringify(
+				contractError(
+					new PrinferError("INVALID_ARGUMENT", message, suggestion),
+					{ surface: { interface: "cli", command } },
+				),
+			),
+		);
+	} else {
+		const lines = [`Error [INVALID_ARGUMENT]: ${message}`, ...details];
+		if (hint) lines.push(`Hint: ${hint}`);
+		lines.push(HELP_POINTER);
+		console.error(lines.join("\n"));
+	}
+	process.exit(1);
+}
+
+/**
+ * Split args into positionals and option values. Value options accept
+ * `--opt value` and `--opt=value`; unknown options are errors.
+ */
+function parseFlags(
+	args: string[],
+	allowed: Set<string>,
+	commandName: string,
+	fail: (message: string) => never,
+): { positionals: string[]; values: Map<string, string | true> } {
+	const positionals: string[] = [];
+	const values = new Map<string, string | true>();
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index] as string;
+		if (!arg.startsWith("-") || arg === "-") {
+			positionals.push(arg);
+			continue;
+		}
+		const eq = arg.startsWith("--") ? arg.indexOf("=") : -1;
+		const name = eq >= 0 ? arg.slice(0, eq) : arg;
+		const flag = FLAGS[name];
+		if (!flag) return fail(`Unknown option ${name}.`);
+		if (!allowed.has(flag.key)) {
+			fail(`${name} is not an option of ${commandName}.`);
+		}
+		if (!flag.value) {
+			if (eq >= 0) fail(`${name} takes no value.`);
+			values.set(flag.key, true);
+			continue;
+		}
+		const value = eq >= 0 ? arg.slice(eq + 1) : args[++index];
+		if (value === undefined) {
+			fail(
+				name === "--prefix"
+					? '--prefix requires text (pass "" to list every entry).'
+					: name === "--project" || name === "-p"
+						? `${name} requires a path argument.`
+						: `${name} requires a value.`,
+			);
+		}
+		values.set(flag.key, value);
+	}
+	return { positionals, values };
+}
+
+function parseInteger(
+	value: string | true | undefined,
+	name: string,
+	min: 0 | 1,
+	fail: (message: string) => never,
+): number | undefined {
+	if (value === undefined) return undefined;
+	const number = Number(value);
+	if (
+		typeof value !== "string" ||
+		value.trim() === "" ||
+		!Number.isInteger(number) ||
+		number < min
+	) {
+		fail(
+			`${name} requires a ${min === 0 ? "non-negative" : "positive"} integer, got ${typeof value === "string" ? JSON.stringify(value) : "nothing"}.`,
+		);
+	}
+	return number;
+}
 
 /** The CLI defaults to TypeScript 6; --backend typescript7 opts in. */
 function parseBackend(
-	args: string[],
-): { backend: Backend } | { error: string } | null {
-	const index = args.indexOf("--backend");
-	if (index === -1) return null;
-	const value = args[index + 1];
-	if (value === "typescript6" || value === "typescript7") {
-		return { backend: value };
-	}
-	return {
-		error: value
+	value: string | true | undefined,
+	fail: (message: string) => never,
+): Backend {
+	if (value === undefined) return "typescript6";
+	if (value === "typescript6" || value === "typescript7") return value;
+	return fail(
+		typeof value === "string" && value !== ""
 			? `Unknown backend "${value}". Use typescript6 or typescript7.`
 			: "--backend requires typescript6 or typescript7.",
-	};
+	);
 }
 
-type ParsedArg =
-	| { mode: "position"; file: string; line: number; column: number }
-	| { mode: "name"; file: string; name: string; line?: number };
-
-/** A JavaScript identifier: Unicode ID_Start/ID_Continue, `$`, and `_`. */
-const IDENTIFIER = "[\\p{ID_Start}$_][\\p{ID_Continue}$\\u200C\\u200D]*";
-const NAME_LINE_ARG = new RegExp(`^(.+):(${IDENTIFIER}):(\\d+)$`, "u");
-const NAME_ARG = new RegExp(`^(.+):(${IDENTIFIER})$`, "u");
-
-function parsePositionArg(arg: string): ParsedArg | null {
-	// Match pattern: file.ts:line:column (position-based)
-	const posMatch = arg.match(/^(.+):(\d+):(\d+)$/);
-	if (posMatch) {
-		return {
-			mode: "position",
-			file: posMatch[1],
-			line: Number.parseInt(posMatch[2], 10),
-			column: Number.parseInt(posMatch[3], 10),
-		};
+/**
+ * Combine the positional target with --text and --occurrence. Reports a
+ * target that is incomplete, or that sets the column or text twice.
+ */
+function applyTextFlags(
+	arg: string,
+	parsed: ParsedTarget,
+	text: string | undefined,
+	occurrence: number | undefined,
+	fail: (message: string, details?: string[]) => never,
+): HoverTarget {
+	const quoted = JSON.stringify(arg);
+	let target: HoverTarget;
+	if (text !== undefined) {
+		if (text === "") fail("--text requires non-empty text.");
+		if (parsed.kind === "name") {
+			fail(`--text needs <file>:<line>, but ${quoted} names a symbol.`);
+		}
+		if (parsed.kind !== "line") {
+			fail(
+				`${quoted} already has a ${parsed.kind === "text" ? "text" : "column"} after the line; pass it or --text, not both.`,
+			);
+		}
+		target = { kind: "text", line: parsed.line, text };
+	} else if (parsed.kind === "line") {
+		const prefix = `${parsed.file}:${parsed.line}`;
+		return fail(`${quoted} has a line but no column or text after it.`, [
+			`Add one: ${prefix}:<text>, ${prefix} --text <text>, or ${prefix}:<column>.`,
+		]);
+	} else {
+		const { file: _file, ...rest } = parsed;
+		target = rest;
 	}
-
-	// Match pattern: file.ts:name:line (name with line hint). The name is any
-	// JavaScript identifier, so it never starts with a digit.
-	const nameLineMatch = arg.match(NAME_LINE_ARG);
-	if (nameLineMatch) {
-		return {
-			mode: "name",
-			file: nameLineMatch[1],
-			name: nameLineMatch[2],
-			line: Number.parseInt(nameLineMatch[3], 10),
-		};
+	if (occurrence !== undefined) {
+		if (target.kind !== "text") {
+			return fail(
+				"--occurrence applies only to text targets (<file>:<line>:<text>).",
+			);
+		}
+		target.occurrence = occurrence;
 	}
-
-	// Match pattern: file.ts:name (name-based)
-	const nameMatch = arg.match(NAME_ARG);
-	if (nameMatch) {
-		return {
-			mode: "name",
-			file: nameMatch[1],
-			name: nameMatch[2],
-		};
-	}
-
-	return null;
+	return target;
 }
 
 function parseArgs(argv: string[]): CliOptions | null {
 	const args = argv.slice(2);
 	const json = args.includes("--json");
 
-	// Check for help flag
 	if (args.includes("--help") || args.includes("-h") || args.length === 0) {
 		console.log(HELP);
 		return null;
 	}
 
 	const completionMode = args[0] === "complete" || args[0] === "completions";
-	const positionArg = completionMode ? args[1] : args[0];
-	const parsed = positionArg ? parsePositionArg(positionArg) : null;
-	const command: CliCommand = completionMode
-		? "complete"
-		: parsed?.mode === "name"
-			? "name"
-			: "position";
+	const command: CliCommand = completionMode ? "complete" : "position";
+	const forms = completionMode ? COMPLETE_FORMS : HOVER_FORMS;
+	const fail = (message: string, details?: string[]): never =>
+		usageError(message, { command, json, details });
+	const { positionals, values } = parseFlags(
+		completionMode ? args.slice(1) : args,
+		completionMode ? COMPLETE_KEYS : HOVER_KEYS,
+		completionMode ? "complete" : "type lookups",
+		fail,
+	);
 
+	const arg = positionals[0];
+	if (arg === undefined) {
+		return fail(
+			completionMode
+				? "complete requires a cursor target."
+				: "Missing the <file>:<target> argument.",
+			forms,
+		);
+	}
+	if (positionals.length > 1) {
+		fail(
+			`Unexpected argument ${JSON.stringify(positionals[1])}; pass one target, and quote text that contains spaces.`,
+		);
+	}
+
+	const parsed = parseTargetArg(arg);
 	if (!parsed) {
-		const message =
-			"Argument must be in format <file>:<line>:<column> or <file>:<name> or <file>:<name>:<line>";
-		if (json) failJson(message, "INVALID_ARGUMENT", command);
-		console.error(`Error: ${message}\n`);
-		console.log(HELP);
-		process.exit(1);
+		return usageError(`Can't parse target ${JSON.stringify(arg)}.`, {
+			command,
+			json,
+			details: forms,
+			suggestion: completionMode
+				? COMPLETE_FORMS_SUGGESTION
+				: HOVER_FORMS_SUGGESTION,
+			hint: shellHint(arg),
+		});
 	}
 
-	const backendArg = parseBackend(args);
-	if (backendArg && "error" in backendArg) {
-		if (json) failJson(backendArg.error, "INVALID_ARGUMENT", command);
-		console.error(`Error: ${backendArg.error}`);
-		process.exit(1);
-	}
-	const backend = backendArg?.backend ?? "typescript6";
-
-	// Check for docs flag
-	const includeDocs = args.includes("--docs") || args.includes("-d");
-	const includeTiming = args.includes("--timing") || args.includes("-t");
-	const full = args.includes("--full") || args.includes("-f");
-
-	// Find project option
-	let project: string | undefined;
-	const projectIdx = args.findIndex((a) => a === "--project" || a === "-p");
-	if (projectIdx >= 0) {
-		project = args[projectIdx + 1];
-		if (!project) {
-			const message = "--project requires a path argument.";
-			if (json) failJson(message, "INVALID_ARGUMENT", command);
-			console.error(`Error: ${message}\n`);
-			console.log(HELP);
-			process.exit(1);
-		}
-	}
+	const text = values.get("text");
+	const target = applyTextFlags(
+		arg,
+		parsed,
+		typeof text === "string" ? text : undefined,
+		parseInteger(values.get("occurrence"), "--occurrence", 1, fail),
+		fail,
+	);
+	const backend = parseBackend(values.get("backend"), fail);
+	const projectValue = values.get("project");
+	const project = typeof projectValue === "string" ? projectValue : undefined;
 
 	if (completionMode) {
-		if (parsed.mode !== "position" || backend === "typescript7") {
-			const message =
-				parsed.mode !== "position"
-					? "complete requires <file>:<line>:<column>"
-					: "complete supports only the typescript6 backend.";
-			if (json) failJson(message, "INVALID_ARGUMENT", command);
-			console.error(`Error: ${message}`);
-			process.exit(1);
+		if (target.kind === "name") {
+			return fail(
+				`complete needs a cursor, but ${JSON.stringify(arg)} names a symbol.`,
+				forms,
+			);
 		}
-		const prefixIndex = args.indexOf("--prefix");
-		const prefix = prefixIndex >= 0 ? args[prefixIndex + 1] : undefined;
-		const limitIndex = args.indexOf("--limit");
-		const limitArg = limitIndex >= 0 ? args[limitIndex + 1] : undefined;
-		const limit =
-			limitIndex >= 0 ? Number(limitArg) : DEFAULT_COMPLETION_LIMIT;
-		const optionError =
-			prefixIndex >= 0 && prefix === undefined
-				? '--prefix requires text (pass "" to list every entry).'
-				: !Number.isInteger(limit) || limit < 1
-					? `--limit requires a positive integer, got ${limitArg === undefined ? "nothing" : JSON.stringify(limitArg)}.`
-					: undefined;
-		if (optionError) {
-			if (json) failJson(optionError, "INVALID_ARGUMENT", command);
-			console.error(`Error: ${optionError}`);
-			process.exit(1);
+		if (backend === "typescript7") {
+			fail("complete supports only the typescript6 backend.");
 		}
+		const prefix = values.get("prefix");
 		return {
 			mode: "completion",
+			arg,
 			file: parsed.file,
-			line: parsed.line,
-			column: parsed.column,
-			prefix,
-			limit,
+			target,
+			prefix: typeof prefix === "string" ? prefix : undefined,
+			limit:
+				parseInteger(values.get("limit"), "--limit", 1, fail) ??
+				DEFAULT_COMPLETION_LIMIT,
 			json,
 			project,
-		};
-	}
-
-	if (parsed.mode === "position") {
-		return {
-			mode: "position",
-			file: parsed.file,
-			line: parsed.line,
-			column: parsed.column,
-			includeDocs,
-			includeTiming,
-			full,
-			json,
-			project,
-			backend,
 		};
 	}
 
 	return {
-		mode: "name",
+		mode: "hover",
+		arg,
 		file: parsed.file,
-		name: parsed.name,
-		line: parsed.line,
-		includeDocs,
-		includeTiming,
-		full,
+		target,
+		includeDocs: values.has("docs"),
+		includeTiming: values.has("timing"),
+		full: values.has("full"),
+		maxChars:
+			parseInteger(values.get("maxChars"), "--max-chars", 0, fail) ??
+			DEFAULT_MAX_CHARS,
 		json,
 		project,
 		backend,
 	};
 }
 
-function failJson(
-	message: string,
-	code: ContractErrorCode,
-	command: CliCommand,
-): never {
-	console.log(
-		JSON.stringify(
-			contractError(new Error(message), {
-				code,
-				surface: { interface: "cli", command },
-			}),
-		),
-	);
-	process.exit(1);
-}
-
 /**
  * Report a failed command: the JSON contract on stdout with --json,
- * otherwise the message, candidates, and suggestion on stderr.
+ * otherwise the message, candidates, and suggestion on stderr. A path the
+ * shell may have mangled gets a quoting hint.
  */
 function reportCliError(
 	error: unknown,
 	command: CliCommand,
 	context: {
+		/** The argument as received, checked for shell mangling. */
+		arg?: string;
 		file: string;
 		line?: number;
 		column?: number;
+		/** A name lookup's name: candidates are spelling fixes. */
 		name?: string;
+		/** A text target's text: ranks nearby candidates. */
+		query?: string;
 		project?: string;
 	},
 	json: boolean,
@@ -358,17 +498,37 @@ function reportCliError(
 		project: context.project,
 		line: context.line,
 		column: context.column,
-		query: context.name,
+		query: context.name ?? context.query,
 		strict,
 		surface: { interface: "cli", command },
 	});
+	const hint =
+		response.error.code === "FILE_NOT_FOUND"
+			? shellHint(context.arg ?? context.file)
+			: undefined;
+	if (hint) {
+		response.error.suggestion = [response.error.suggestion, hint]
+			.filter(Boolean)
+			.join(" ");
+	}
 	if (json) console.log(JSON.stringify(response));
 	else console.error(formatErrorText(response.error, { strict }));
 }
 
+/** The 1-based column where a text target's match starts. */
+function textColumn(file: string, target: TextTarget): number {
+	const resolved = assertSourceFile(file);
+	return resolveTextColumn(
+		fs.readFileSync(resolved, "utf8"),
+		target,
+		resolved,
+	);
+}
+
 /** TypeScript 7 lookups go through the native language server, loaded lazily. */
 async function runHover(
-	options: CliPositionOptions | CliNameOptions,
+	options: CliHoverOptions,
+	target: Exclude<HoverTarget, TextTarget>,
 ): Promise<HoverResult> {
 	assertSourceFile(options.file);
 	const hoverOptions: HoverOptions = {
@@ -380,26 +540,26 @@ async function runHover(
 	if (options.backend === "typescript7") {
 		const native = await import("./native-lsp.js");
 		try {
-			return options.mode === "position"
+			return target.kind === "position"
 				? await native.nativeHover(
 						options.file,
-						options.line,
-						options.column,
+						target.line,
+						target.column,
 						hoverOptions,
 					)
-				: await native.nativeHoverByName(options.file, options.name, {
+				: await native.nativeHoverByName(options.file, target.name, {
 						...hoverOptions,
-						line: options.line,
+						line: target.line,
 					});
 		} finally {
 			native.closeNativeSessions();
 		}
 	}
-	return options.mode === "position"
-		? hover(options.file, options.line, options.column, hoverOptions)
-		: hover(options.file, options.name, {
+	return target.kind === "position"
+		? hover(options.file, target.line, target.column, hoverOptions)
+		: hover(options.file, target.name, {
 				...hoverOptions,
-				line: options.line,
+				line: target.line,
 			});
 }
 
@@ -426,36 +586,36 @@ async function runDiagnostics(
  */
 async function runCheck(args: string[]): Promise<number> {
 	const json = args.includes("--json");
-	const fail = (message: string): number => {
-		if (json) failJson(message, "INVALID_ARGUMENT", "check");
-		console.error(`Error: ${message}\n`);
-		console.log(HELP);
-		return 1;
-	};
+	const fail = (message: string): never =>
+		usageError(message, {
+			command: "check",
+			json,
+			details: [CHECK_USAGE],
+			suggestion: CHECK_USAGE,
+		});
 
 	let file: string | undefined;
 	let project: string | undefined;
 	let backend: Backend = "typescript6";
 	let includeSuggestions = false;
 	for (let index = 0; index < args.length; index++) {
-		const arg = args[index];
+		const arg = args[index] as string;
 		if (arg === "--json") continue;
 		if (arg === "--suggestions") {
 			includeSuggestions = true;
 		} else if (arg === "--project" || arg === "-p") {
 			project = args[++index];
-			if (!project) return fail("--project requires a path argument.");
+			if (!project) fail(`${arg} requires a path argument.`);
 		} else if (arg === "--backend") {
-			const parsed = parseBackend(args.slice(index));
-			if (parsed && "error" in parsed) return fail(parsed.error);
-			backend = parsed?.backend ?? backend;
-			index++;
+			backend = parseBackend(args[++index] ?? "", fail);
 		} else if (arg.startsWith("-")) {
-			return fail(`Unknown check option ${arg}.`);
+			fail(`Unknown check option ${arg}.`);
 		} else if (file === undefined) {
 			file = arg;
 		} else {
-			return fail(`Unexpected argument "${arg}".`);
+			fail(
+				`Unexpected argument ${JSON.stringify(arg)}; check takes one file.`,
+			);
 		}
 	}
 	if (!file) return fail("check requires a file: prinfer check <file.ts>");
@@ -475,6 +635,104 @@ async function runCheck(args: string[]): Promise<number> {
 	} catch (error) {
 		reportCliError(error, "check", { file, project }, json);
 		return 1;
+	}
+}
+
+function runCompletion(options: CliCompletionOptions): void {
+	const { target } = options;
+	let column = target.kind === "position" ? target.column : undefined;
+	try {
+		assertSourceFile(options.file);
+		// A text target puts the cursor right after the match, like
+		// prinfer/testing's default cursor: "end".
+		if (target.kind === "text") {
+			column = textColumn(options.file, target) + target.text.length;
+		}
+		const result = getCompletions(
+			options.file,
+			target.line,
+			column as number,
+			options.project,
+			{ prefix: options.prefix, autoPrefix: true, limit: options.limit },
+		);
+		console.log(
+			options.json
+				? JSON.stringify(completionSuccess(result))
+				: formatCompletions(result, {
+						prefix: "--prefix",
+						limit: "--limit",
+					}),
+		);
+	} catch (error) {
+		reportCliError(
+			error,
+			"complete",
+			{
+				arg: options.arg,
+				file: options.file,
+				line: target.line,
+				column,
+				query: target.kind === "text" ? target.text : undefined,
+				project: options.project,
+			},
+			options.json,
+		);
+		process.exit(1);
+	}
+}
+
+async function runLookup(options: CliHoverOptions): Promise<void> {
+	const { target } = options;
+	let column = target.kind === "position" ? target.column : undefined;
+	try {
+		let resolved: Exclude<HoverTarget, TextTarget>;
+		if (target.kind === "text") {
+			column = textColumn(options.file, target);
+			resolved = { kind: "position", line: target.line, column };
+		} else {
+			resolved = target;
+		}
+		const result = await runHover(options, resolved);
+		// Like the MCP hover tool, a text target reports where it resolved.
+		const position =
+			target.kind === "text" && column !== undefined
+				? { line: target.line, column }
+				: undefined;
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					hoverSuccess(position ? { ...result, position } : result),
+				),
+			);
+			return;
+		}
+		console.log(
+			formatHoverText(result, {
+				surface: "cli",
+				maxChars: options.maxChars,
+				full: options.full,
+				target:
+					target.kind === "text" && position
+						? { text: target.text, ...position }
+						: undefined,
+			}),
+		);
+	} catch (error) {
+		reportCliError(
+			error,
+			target.kind === "name" ? "name" : "position",
+			{
+				arg: options.arg,
+				file: options.file,
+				line: target.line,
+				column,
+				name: target.kind === "name" ? target.name : undefined,
+				query: target.kind === "text" ? target.text : undefined,
+				project: options.project,
+			},
+			options.json,
+		);
+		process.exit(1);
 	}
 }
 
@@ -502,84 +760,9 @@ async function main(): Promise<void> {
 	}
 
 	const options = parseArgs(process.argv);
-
-	if (!options) {
-		process.exit(0);
-	}
-
-	try {
-		if (options.mode === "completion") {
-			assertSourceFile(options.file);
-			const result = getCompletions(
-				options.file,
-				options.line,
-				options.column,
-				options.project,
-				{
-					prefix: options.prefix,
-					autoPrefix: true,
-					limit: options.limit,
-				},
-			);
-			console.log(
-				options.json
-					? JSON.stringify(completionSuccess(result))
-					: formatCompletions(result, {
-							prefix: "--prefix",
-							limit: "--limit",
-						}),
-			);
-			return;
-		}
-		const result = await runHover(options);
-
-		if (options.json) {
-			console.log(JSON.stringify(hoverSuccess(result)));
-			return;
-		}
-
-		console.log(result.signature);
-		if (result.returnType) {
-			console.log("returns:", result.returnType);
-		}
-		if (result.name) {
-			console.log("name:", result.name);
-		}
-		console.log("kind:", result.kind);
-		if (result.documentation) {
-			console.log("docs:", result.documentation);
-		}
-		if (result.timing) {
-			console.log(
-				"type resolution:",
-				`${result.timing.resolution_ms} ms`,
-			);
-		}
-	} catch (error) {
-		reportCliError(
-			error,
-			options.mode === "name"
-				? "name"
-				: options.mode === "completion"
-					? "complete"
-					: "position",
-			options.mode === "name"
-				? {
-						file: options.file,
-						line: options.line,
-						name: options.name,
-						project: options.project,
-					}
-				: {
-						file: options.file,
-						line: options.line,
-						column: options.column,
-						project: options.project,
-					},
-			options.json,
-		);
-		process.exit(1);
-	}
+	if (!options) process.exit(0);
+	if (options.mode === "completion") runCompletion(options);
+	else await runLookup(options);
 }
 
 main();

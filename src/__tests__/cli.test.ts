@@ -65,6 +65,39 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
+	test("puts the completion cursor right after target text", async () => {
+		// Line 3: 'export const selected: Drink = "coffee";'
+		for (const args of [
+			[`${completionsFile}:3:"`],
+			[`${completionsFile}:3`, "--text", '"'],
+		]) {
+			const { stdout, stderr, exitCode } = await runCli([
+				"complete",
+				...args,
+			]);
+			expect(stdout).toBe("coffee\ntea\n");
+			expect(stderr).toBe("");
+			expect(exitCode).toBe(0);
+		}
+		// The text before the cursor still filters: line 10 reads "tea".
+		const typed = await runCli(["complete", `${completionsFile}:10:"t`]);
+		expect(typed.stdout).toBe("tea\n");
+
+		const json = await runCli([
+			"complete",
+			`${completionsFile}:3:"`,
+			"--json",
+		]);
+		expect(JSON.parse(json.stdout).result.column).toBe(33);
+
+		const named = await runCli(["complete", `${completionsFile}:selected`]);
+		expect(named.stderr).toContain(
+			`complete needs a cursor, but ${JSON.stringify(`${completionsFile}:selected`)} names a symbol.`,
+		);
+		expect(named.stderr).toContain("cursor right after the text");
+		expect(named.exitCode).toBe(1);
+	});
+
 	test("limits and filters autocomplete entries", async () => {
 		const global = await runCli(["complete", `${completionsFile}:2:1`]);
 		const lines = global.stdout.trimEnd().split("\n");
@@ -329,16 +362,214 @@ describe("CLI", () => {
 		expect(exitCode).toBe(1);
 	});
 
-	test("shows error for invalid position format", async () => {
-		const { stderr, exitCode } = await runCli([sampleFile]);
-		expect(stderr).toContain("format");
+	test("echoes a malformed target with the accepted forms, not the whole help", async () => {
+		const { stdout, stderr, exitCode } = await runCli([sampleFile]);
+		const lines = stderr.trimEnd().split("\n");
+		expect(lines[0]).toBe(
+			`Error [INVALID_ARGUMENT]: Can't parse target ${JSON.stringify(sampleFile)}.`,
+		);
+		expect(lines[1]).toBe("Accepted forms:");
+		expect(stderr).toContain("<file>:<line>:<text>");
+		expect(lines.at(-1)).toBe("Run prinfer --help for all options.");
+		expect(lines.length).toBeLessThanOrEqual(7);
+		expect(stdout).toBe("");
 		expect(exitCode).toBe(1);
 	});
 
-	test("shows error for invalid position with only file:line", async () => {
+	test("asks for a column or text after a bare line", async () => {
 		const { stderr, exitCode } = await runCli([`${sampleFile}:4`]);
-		expect(stderr).toContain("format");
+		expect(stderr).toBe(
+			[
+				`Error [INVALID_ARGUMENT]: ${JSON.stringify(`${sampleFile}:4`)} has a line but no column or text after it.`,
+				`Add one: ${sampleFile}:4:<text>, ${sampleFile}:4 --text <text>, or ${sampleFile}:4:<column>.`,
+				"Run prinfer --help for all options.",
+				"",
+			].join("\n"),
+		);
 		expect(exitCode).toBe(1);
+	});
+
+	test("hints at shell quoting when the target looks mangled", async () => {
+		// Unquoted, "src/store.ts:$store" reaches prinfer as "src/store.ts:".
+		const dollar = await runCli([`${sampleFile}:`]);
+		expect(dollar.stderr).toContain(
+			"Hint: If the target has a $ (as in $name identifiers), single-quote",
+		);
+
+		// zsh reads "$F:root" as ${F:r}oot: no extension, no target.
+		const modifier = await runCli([sampleFile.replace(/\.ts$/, "oot")]);
+		expect(modifier.stderr).toContain("zsh reads $F:r, :t, :h");
+
+		const missing = contractErrorResponseSchema.parse(
+			JSON.parse(
+				(
+					await runCli([
+						`${sampleFile.replace(/\.ts$/, "")}:4:17`,
+						"--json",
+					])
+				).stdout,
+			),
+		).error;
+		expect(missing.code).toBe("FILE_NOT_FOUND");
+		expect(missing.suggestion).toContain("zsh reads $F:r");
+
+		const plain = await runCli(["/nonexistent/file.ts:1:1"]);
+		expect(plain.stderr).not.toContain("zsh");
+	});
+
+	test("reads file:line:text as a text target, not a file named file:line", async () => {
+		const { stdout, stderr, exitCode } = await runCli([
+			`${sampleFile}:4:b`,
+		]);
+		expect(stdout).toBe(
+			'number\nname: b\nkind: parameter\ntarget: "b" at 4:32\n',
+		);
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+
+		const json = hoverSuccessSchema.parse(
+			JSON.parse((await runCli([`${sampleFile}:4:b`, "--json"])).stdout),
+		);
+		expect(json.result).toMatchObject({
+			name: "b",
+			position: { line: 4, column: 32 },
+		});
+	});
+
+	test("targets text with --text and --occurrence", async () => {
+		const position = async (...args: string[]) =>
+			hoverSuccessSchema.parse(
+				JSON.parse((await runCli([...args, "--json"])).stdout),
+			).result.position;
+		// Line 4: "export function add(a: number, b: number): number {"
+		expect(await position(`${sampleFile}:4`, "--text", "b")).toEqual({
+			line: 4,
+			column: 32,
+		});
+		expect(await position(`${sampleFile}:4`, "--text=b")).toEqual({
+			line: 4,
+			column: 32,
+		});
+		expect(
+			await position(
+				`${sampleFile}:4`,
+				"--text",
+				"number",
+				"--occurrence",
+				"2",
+			),
+		).toEqual({ line: 4, column: 35 });
+		expect(
+			await position(`${sampleFile}:4:number`, "--occurrence", "3"),
+		).toEqual({ line: 4, column: 44 });
+		// Text with spaces and colons works positionally when quoted.
+		expect(await position(`${sampleFile}:4:a: number`)).toEqual({
+			line: 4,
+			column: 21,
+		});
+
+		const missing = await runCli([`${sampleFile}:4:subtract`]);
+		expect(missing.stderr).toContain(
+			'Error [SYMBOL_NOT_FOUND]: Text "subtract" not found on line 4',
+		);
+		expect(missing.stderr).toContain(
+			'Line 4 reads: "export function add(a: number, b: number): number {"',
+		);
+		expect(missing.exitCode).toBe(1);
+	});
+
+	test("rejects conflicting or unknown target options", async () => {
+		for (const [args, message] of [
+			[
+				[`${sampleFile}:4:17`, "--text", "add"],
+				"already has a column after the line",
+			],
+			[
+				[`${sampleFile}:4:add`, "--text", "add"],
+				"already has a text after the line",
+			],
+			[
+				[`${sampleFile}:add`, "--text", "add"],
+				"--text needs <file>:<line>",
+			],
+			[
+				[`${sampleFile}:4:17`, "--occurrence", "2"],
+				"--occurrence applies only to text targets",
+			],
+			[[`${sampleFile}:4:b`, "--colum", "3"], "Unknown option --colum."],
+			[
+				[`${sampleFile}:4:b`, "--prefix", "x"],
+				"--prefix is not an option",
+			],
+			[
+				[`${sampleFile}:4:b`, "--max-chars", "-1"],
+				"--max-chars requires",
+			],
+			[[`${sampleFile}:4:b`, "extra"], 'Unexpected argument "extra"'],
+		] as const) {
+			const { stdout, stderr, exitCode } = await runCli([...args]);
+			expect(stderr).toContain(message);
+			expect(stderr).toEndWith("Run prinfer --help for all options.\n");
+			expect(stdout).toBe("");
+			expect(exitCode).toBe(1);
+		}
+	});
+
+	test("caps long type text with a size trailer", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-cap-"));
+		try {
+			const file = path.join(dir, "big.ts");
+			const members = Array.from(
+				{ length: 600 },
+				(_, i) => `"member_${String(i).padStart(3, "0")}"`,
+			);
+			fs.writeFileSync(
+				file,
+				`export type Big = ${members.join(" | ")};\n`,
+			);
+
+			// TypeScript's own truncation keeps the default output short.
+			const truncated = await runCli([`${file}:Big`]);
+			expect(truncated.stdout).toContain("more ...");
+			expect(truncated.stdout).not.toContain("chars total");
+
+			const full = await runCli([`${file}:Big`, "--full"]);
+			const lines = full.stdout.split("\n");
+			expect(lines[0]?.length).toBeLessThanOrEqual(4000);
+			expect(lines[0]).toStartWith('type Big = "member_000" | ');
+			expect(lines[1]).toMatch(
+				/^… truncated: \d{1,3},\d{3} chars total, union of 600 members\. Pass --max-chars N to see more \(0 for no limit\)\.$/,
+			);
+			expect(lines[2]).toBe("name: Big");
+
+			const small = await runCli([
+				`${file}:Big`,
+				"--full",
+				"--max-chars",
+				"100",
+			]);
+			expect(small.stdout.split("\n")[0]?.length).toBeLessThanOrEqual(
+				100,
+			);
+
+			const all = await runCli([
+				`${file}:Big`,
+				"--full",
+				"--max-chars=0",
+			]);
+			expect(all.stdout).toContain('"member_599"');
+			expect(all.stdout).not.toContain("truncated");
+
+			// --json always carries the whole type.
+			const json = hoverSuccessSchema.parse(
+				JSON.parse(
+					(await runCli([`${file}:Big`, "--full", "--json"])).stdout,
+				),
+			);
+			expect(json.result.signature).toContain('"member_599"');
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	test("accepts --project option", async () => {
@@ -436,10 +667,10 @@ describe("CLI", () => {
 		}
 	});
 
-	test("help shows file:line:column syntax", async () => {
+	test("help shows the line:column and line:text targets", async () => {
 		const { stdout } = await runCli(["--help"]);
-		expect(stdout).toContain(":line:");
-		expect(stdout).toContain(":column");
+		expect(stdout).toContain("<file>:<line>:<column>");
+		expect(stdout).toContain("<file>:<line>:<text>");
 	});
 
 	test("reports a directory as FILE_NOT_FOUND", async () => {
@@ -648,7 +879,7 @@ describe("prinfer check", () => {
 
 	test("is listed in --help", async () => {
 		const { stdout } = await runCli(["--help"]);
-		expect(stdout).toContain("prinfer check <file.ts>");
+		expect(stdout).toContain("prinfer check <file>");
 	});
 
 	test("checks with --backend typescript7", async () => {

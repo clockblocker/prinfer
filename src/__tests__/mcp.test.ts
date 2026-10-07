@@ -293,6 +293,66 @@ describe("MCP server over stdio", () => {
 		expect(outcome).toBe(0);
 	});
 
+	test("caps hover text with max_chars and keeps structuredContent whole", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-mcp-cap-"));
+		try {
+			const file = path.join(dir, "big.ts");
+			const members = Array.from(
+				{ length: 600 },
+				(_, i) => `"member_${String(i).padStart(3, "0")}"`,
+			);
+			fs.writeFileSync(
+				file,
+				`export type Big = ${members.join(" | ")};\n`,
+			);
+			const args = {
+				file,
+				name: "Big",
+				full: true,
+				backend: "typescript6",
+			};
+
+			const capped = await client.call("hover_by_name", args);
+			const [type, trailer] = capped.content[0]?.text.split("\n") ?? [];
+			expect(type).toStartWith('Type: type Big = "member_000" | ');
+			expect(type?.length).toBeLessThanOrEqual(4000 + "Type: ".length);
+			expect(trailer).toMatch(
+				/^… truncated: \d{1,3},\d{3} chars total, union of 600 members\. Pass max_chars: N to see more \(0 for no limit\)\.$/,
+			);
+			expect(
+				hoverSuccessSchema.parse(capped.structuredContent).result
+					.signature,
+			).toContain('"member_599"');
+
+			const all = await client.call("hover_by_name", {
+				...args,
+				max_chars: 0,
+			});
+			expect(all.content[0]?.text).toContain('"member_599"');
+			expect(all.content[0]?.text).not.toContain("truncated");
+
+			// Without full, TypeScript's own truncation keeps the text short.
+			const short = await client.call("hover_by_name", {
+				...args,
+				full: undefined,
+			});
+			expect(short.content[0]?.text).toContain("more ...");
+			expect(short.content[0]?.text).not.toContain("truncated");
+
+			const batch = await client.call("batch_hover", {
+				file,
+				full: true,
+				max_chars: 60,
+				backend: "typescript6",
+				positions: [{ name: "Big" }, { line: 1, text: "Big" }],
+			});
+			const text = batch.content[0]?.text ?? "";
+			expect(text.match(/… truncated: /g)).toHaveLength(2);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	test("hover_by_name returns the named symbol", async () => {
 		const response = await client.call("hover_by_name", {
 			file: "sample.ts",
