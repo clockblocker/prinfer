@@ -31,6 +31,7 @@ import {
 	hoverOutputSchema,
 } from "./mcp-schemas.js";
 import {
+	closeNativeSessions,
 	nativeDiagnostics,
 	nativeHover,
 	nativeHoverByName,
@@ -873,4 +874,14 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 	console.log(HELP);
 } else {
 	serveStdio(createServer);
+	// The warm TypeScript 7 language servers keep the event loop alive, so
+	// exit explicitly once the client disconnects instead of lingering.
+	const shutdown = () => {
+		closeNativeSessions();
+		process.exit(0);
+	};
+	process.stdin.once("end", shutdown);
+	process.stdin.once("close", shutdown);
+	process.once("SIGINT", shutdown);
+	process.once("SIGTERM", shutdown);
 }

@@ -43,6 +43,7 @@ prinfer 3.0 makes the MCP server easier for agents to find, install, and call co
 
 ### Fixes
 
+- The MCP server exits when its client disconnects (stdin closes) or on SIGINT/SIGTERM, shutting down warm TypeScript 7 language servers. Previously each session left a server process running.
 - The TypeScript 7 backend no longer returns stale types or errors after another file in the project (such as an imported module) is edited, created, or deleted on disk.
 - The TypeScript 7 backend keeps JSDoc out of `signature` and `returnType`, and `include_docs` returns it as `documentation`. Multi-line generic signatures get the right `returnType`.
 - Lines and columns follow TypeScript on both backends: CR, LF, CRLF, U+2028, and U+2029 end a line, and a leading BOM is ignored.

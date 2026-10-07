@@ -122,6 +122,15 @@ class StdioMcpClient {
 		this.child.kill();
 	}
 
+	/** Disconnect like a client would: close stdin and wait for the exit code. */
+	disconnect(): Promise<number | null> {
+		const exited = new Promise<number | null>((resolve) =>
+			this.child.once("exit", (code) => resolve(code)),
+		);
+		this.child.stdin?.end();
+		return exited;
+	}
+
 	private async request(
 		method: string,
 		params: unknown,
@@ -265,6 +274,23 @@ describe("MCP server over stdio", () => {
 		const parsed = hoverSuccessSchema.parse(response.structuredContent);
 		expect(parsed.result.name).toBe("add");
 		expect(parsed.result.position).toEqual({ line: 4, column: 17 });
+	});
+
+	test("exits once the client disconnects, even with a warm TypeScript 7 session", async () => {
+		const transient = new StdioMcpClient();
+		await transient.initialize();
+		const result = await transient.call("hover_by_name", {
+			file: sampleFile,
+			name: "add",
+			backend: "typescript7",
+		});
+		expect(result.isError).toBeFalsy();
+		const timeout = new Promise<"timeout">((resolve) =>
+			setTimeout(() => resolve("timeout"), 10_000),
+		);
+		const outcome = await Promise.race([transient.disconnect(), timeout]);
+		if (outcome === "timeout") transient.close();
+		expect(outcome).toBe(0);
 	});
 
 	test("hover_by_name returns the named symbol", async () => {
