@@ -1,6 +1,11 @@
 // Re-export all public functions from core modules
 
 export { getCompletions } from "./completions.js";
+export {
+	formatDiagnostics,
+	getFileDiagnostics,
+	summarizeDiagnostics,
+} from "./diagnostics.js";
 export { getDocumentation, getHoverInfo } from "./hover.js";
 export {
 	findFirstMatch,
@@ -10,6 +15,7 @@ export {
 export { getLineNumber } from "./node-match.js";
 export {
 	clearProgramCache,
+	createProgramLanguageService,
 	findNearestTsconfig,
 	invalidateProgramCache,
 	loadProgram,

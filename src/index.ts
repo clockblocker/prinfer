@@ -6,6 +6,7 @@ import {
 	findNodeAtPosition,
 	findNodeByNameAndLine,
 	getCompletions,
+	getFileDiagnostics,
 	getHoverInfo,
 	loadProgram,
 } from "./core/index.js";
@@ -15,6 +16,10 @@ import type {
 	CompletionEntry,
 	CompletionOptions,
 	CompletionResult,
+	DiagnosticCategory,
+	DiagnosticsOptions,
+	DiagnosticsResult,
+	FileDiagnostic,
 	HoverByNameOptions,
 	HoverOptions,
 	HoverPosition,
@@ -34,6 +39,12 @@ export {
 	contractErrorCodeSchema,
 	contractErrorResponseSchema,
 	contractErrorSchema,
+	type DiagnosticsSuccess,
+	diagnosticCategorySchema,
+	diagnosticsResultSchema,
+	diagnosticsSuccess,
+	diagnosticsSuccessSchema,
+	fileDiagnosticSchema,
 	type HoverSuccess,
 	hoverResultSchema,
 	hoverSuccess,
@@ -63,6 +74,10 @@ export type {
 	CompletionEntry,
 	CompletionOptions,
 	CompletionResult,
+	DiagnosticCategory,
+	DiagnosticsOptions,
+	DiagnosticsResult,
+	FileDiagnostic,
 	HoverByNameOptions,
 	HoverOptions,
 	HoverPosition,
@@ -78,6 +93,32 @@ export function completions(
 	options?: CompletionOptions,
 ): CompletionResult {
 	return getCompletions(file, line, column, options?.project);
+}
+
+/**
+ * Check one file for TypeScript errors without type-checking the whole project.
+ * Returns syntactic and semantic diagnostics for that file (errors and warnings;
+ * set include_suggestions for suggestion diagnostics such as unused variables).
+ *
+ * @example
+ * ```ts
+ * import { diagnostics } from "prinfer";
+ *
+ * const result = diagnostics("./src/utils.ts");
+ * for (const d of result.diagnostics) {
+ *   console.log(`${d.line}:${d.column} TS${d.code}: ${d.message}`);
+ * }
+ * ```
+ */
+export function diagnostics(
+	file: string,
+	options?: DiagnosticsOptions,
+): DiagnosticsResult {
+	return getFileDiagnostics(
+		file,
+		options?.project,
+		options?.include_suggestions ?? false,
+	);
 }
 
 /**
