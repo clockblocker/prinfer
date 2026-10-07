@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import * as ts from "typescript";
 import type { CompletionResult } from "../types.js";
-import { loadProgram } from "./program.js";
+import { createProgramLanguageService, loadProgram } from "./program.js";
 
 /** Return the completion entries TypeScript would offer at a 1-based cursor position. */
 export function getCompletions(
@@ -42,29 +41,7 @@ export function getCompletions(
 		);
 	}
 
-	const versions = new Map(
-		program.getSourceFiles().map((source) => [source.fileName, "0"]),
-	);
-	const host: ts.LanguageServiceHost = {
-		getCompilationSettings: () => program.getCompilerOptions(),
-		getScriptFileNames: () => [...program.getRootFileNames()],
-		getScriptVersion: (fileName) => versions.get(fileName) ?? "0",
-		getScriptSnapshot: (fileName) => {
-			const text = ts.sys.readFile(fileName);
-			return text === undefined
-				? undefined
-				: ts.ScriptSnapshot.fromString(text);
-		},
-		getCurrentDirectory: () => process.cwd(),
-		getDefaultLibFileName: ts.getDefaultLibFilePath,
-		fileExists: ts.sys.fileExists,
-		readFile: ts.sys.readFile,
-		readDirectory: ts.sys.readDirectory,
-		directoryExists: ts.sys.directoryExists,
-		getDirectories: ts.sys.getDirectories,
-		realpath: ts.sys.realpath,
-	};
-	const service = ts.createLanguageService(host);
+	const service = createProgramLanguageService(program);
 	try {
 		const info = service.getCompletionsAtPosition(entryFileAbs, position, {
 			includeCompletionsForModuleExports: true,

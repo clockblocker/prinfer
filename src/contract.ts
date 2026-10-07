@@ -36,6 +36,31 @@ export const completionResultSchema = z.object({
 	),
 });
 
+export const diagnosticCategorySchema = z.enum([
+	"error",
+	"warning",
+	"suggestion",
+	"message",
+]);
+
+export const fileDiagnosticSchema = z.object({
+	line: z.number(),
+	column: z.number(),
+	endLine: z.number(),
+	endColumn: z.number(),
+	code: z.number(),
+	category: diagnosticCategorySchema,
+	message: z.string(),
+	source: z.string().optional(),
+});
+
+export const diagnosticsResultSchema = z.object({
+	file: z.string(),
+	diagnostics: z.array(fileDiagnosticSchema),
+	errorCount: z.number(),
+	warningCount: z.number(),
+});
+
 export const contractErrorCodeSchema = z.enum([
 	"INVALID_ARGUMENT",
 	"FILE_NOT_FOUND",
@@ -88,6 +113,12 @@ export const completionSuccessSchema = z.object({
 	result: completionResultSchema,
 });
 
+export const diagnosticsSuccessSchema = z.object({
+	version: z.literal(CONTRACT_VERSION),
+	ok: z.literal(true),
+	result: diagnosticsResultSchema,
+});
+
 export const contractErrorResponseSchema = z.object({
 	version: z.literal(CONTRACT_VERSION),
 	ok: z.literal(false),
@@ -99,6 +130,7 @@ export type ContractErrorResponse = z.infer<typeof contractErrorResponseSchema>;
 export type HoverSuccess = z.infer<typeof hoverSuccessSchema>;
 export type BatchHoverSuccess = z.infer<typeof batchHoverSuccessSchema>;
 export type CompletionSuccess = z.infer<typeof completionSuccessSchema>;
+export type DiagnosticsSuccess = z.infer<typeof diagnosticsSuccessSchema>;
 
 export function hoverSuccess(result: unknown): HoverSuccess {
 	return hoverSuccessSchema.parse({
@@ -118,6 +150,14 @@ export function batchHoverSuccess(result: unknown): BatchHoverSuccess {
 
 export function completionSuccess(result: unknown): CompletionSuccess {
 	return completionSuccessSchema.parse({
+		version: CONTRACT_VERSION,
+		ok: true,
+		result,
+	});
+}
+
+export function diagnosticsSuccess(result: unknown): DiagnosticsSuccess {
+	return diagnosticsSuccessSchema.parse({
 		version: CONTRACT_VERSION,
 		ok: true,
 		result,

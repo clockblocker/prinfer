@@ -94,6 +94,38 @@ export function loadProgram(
 	return program;
 }
 
+/**
+ * Create a language service over a loaded program's root files and options.
+ * Callers must dispose the service.
+ */
+export function createProgramLanguageService(
+	program: ts.Program,
+): ts.LanguageService {
+	const versions = new Map(
+		program.getSourceFiles().map((source) => [source.fileName, "0"]),
+	);
+	const host: ts.LanguageServiceHost = {
+		getCompilationSettings: () => program.getCompilerOptions(),
+		getScriptFileNames: () => [...program.getRootFileNames()],
+		getScriptVersion: (fileName) => versions.get(fileName) ?? "0",
+		getScriptSnapshot: (fileName) => {
+			const text = ts.sys.readFile(fileName);
+			return text === undefined
+				? undefined
+				: ts.ScriptSnapshot.fromString(text);
+		},
+		getCurrentDirectory: () => process.cwd(),
+		getDefaultLibFileName: ts.getDefaultLibFilePath,
+		fileExists: ts.sys.fileExists,
+		readFile: ts.sys.readFile,
+		readDirectory: ts.sys.readDirectory,
+		directoryExists: ts.sys.directoryExists,
+		getDirectories: ts.sys.getDirectories,
+		realpath: ts.sys.realpath,
+	};
+	return ts.createLanguageService(host);
+}
+
 /** Remove every cached TypeScript program. */
 export function clearProgramCache(): void {
 	programCache.clear();

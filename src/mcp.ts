@@ -11,12 +11,18 @@ import {
 	completionSuccessSchema,
 	contractError,
 	contractErrorResponseSchema,
+	diagnosticsSuccess,
+	diagnosticsSuccessSchema,
 	hoverSuccess,
 	hoverSuccessSchema,
 } from "./contract.js";
-import { findNearestTsconfig } from "./core/index.js";
-import { batchHover, completions, hover } from "./index.js";
-import { nativeHover, nativeHoverByName } from "./native-lsp.js";
+import { findNearestTsconfig, formatDiagnostics } from "./core/index.js";
+import { batchHover, completions, diagnostics, hover } from "./index.js";
+import {
+	nativeDiagnostics,
+	nativeHover,
+	nativeHoverByName,
+} from "./native-lsp.js";
 import type {
 	BatchHoverResult,
 	CompletionResult,
@@ -498,6 +504,51 @@ function createServer(): McpServer {
 						{ type: "text", text: formatBatchHoverResult(result) },
 					],
 					structuredContent: batchHoverSuccess(result),
+				};
+			} catch (error) {
+				return errorResult(error, errorContext(file, project));
+			}
+		},
+	);
+
+	server.registerTool(
+		"diagnostics",
+		{
+			description:
+				'Check one TypeScript file for type errors. Call after editing a file to verify the edit, instead of running tsc on the whole project. Returns `path:line:col error TS2322: message` lines, or "No type errors."',
+			inputSchema: z.object({
+				file: z.string().describe("Path to the TypeScript file"),
+				project: z
+					.string()
+					.optional()
+					.describe("Optional path to tsconfig.json"),
+				include_suggestions: z
+					.boolean()
+					.optional()
+					.describe(
+						"Also report suggestions such as unused variables",
+					),
+				backend: backendSchema,
+			}),
+			outputSchema: z.union([
+				diagnosticsSuccessSchema,
+				contractErrorResponseSchema,
+			]),
+		},
+		async ({ file, project, include_suggestions, backend }) => {
+			try {
+				const options = { project, include_suggestions };
+				const result = useNative(backend)
+					? await nativeDiagnostics(file, options)
+					: diagnostics(file, options);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: formatDiagnostics(result, file),
+						},
+					],
+					structuredContent: diagnosticsSuccess(result),
 				};
 			} catch (error) {
 				return errorResult(error, errorContext(file, project));

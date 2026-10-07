@@ -119,3 +119,41 @@ export interface BatchHoverResult {
 	/** Number of failed lookups */
 	errorCount: number;
 }
+
+export interface DiagnosticsOptions {
+	/** Optional path to tsconfig.json */
+	project?: string;
+	/** Also return suggestion and message diagnostics, such as unused-variable hints */
+	include_suggestions?: boolean;
+}
+
+export type DiagnosticCategory = "error" | "warning" | "suggestion" | "message";
+
+/** A single TypeScript diagnostic reported for a file */
+export interface FileDiagnostic {
+	/** 1-based start line */
+	line: number;
+	/** 1-based start column */
+	column: number;
+	/** 1-based end line */
+	endLine: number;
+	/** 1-based end column (exclusive) */
+	endColumn: number;
+	/** TypeScript diagnostic code, e.g. 2322 for TS2322 */
+	code: number;
+	category: DiagnosticCategory;
+	/** Diagnostic text; message chains are flattened into indented lines */
+	message: string;
+	/** Diagnostic producer, usually "ts" */
+	source?: string;
+}
+
+/** Syntactic and semantic diagnostics for one file */
+export interface DiagnosticsResult {
+	/** Absolute path of the checked file */
+	file: string;
+	/** Diagnostics sorted by position */
+	diagnostics: FileDiagnostic[];
+	errorCount: number;
+	warningCount: number;
+}
