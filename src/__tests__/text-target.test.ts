@@ -24,13 +24,78 @@ describe("resolveTextColumn", () => {
 		expect(resolveTextColumn(source, { line: 1, text: "sum" })).toBe(15);
 	});
 
-	test("counts occurrences left to right", () => {
+	test("counts whole-identifier occurrences left to right", () => {
+		// "items" on the same line is not a match for "item".
+		expect(resolveTextColumn(source, { line: 2, text: "item" })).toBe(30);
 		expect(
 			resolveTextColumn(source, { line: 2, text: "item", occurrence: 2 }),
-		).toBe(30);
-		expect(
-			resolveTextColumn(source, { line: 2, text: "item", occurrence: 3 }),
 		).toBe(39);
+		const error = thrown(() =>
+			resolveTextColumn(source, { line: 2, text: "item", occurrence: 3 }),
+		);
+		expect(error.message).toContain("the line has 2");
+	});
+
+	test("skips the identifier prefix in users.map((user) => ...)", () => {
+		const line = "export const names = users.map((user) => user.name);";
+		expect(resolveTextColumn(line, { line: 1, text: "user" })).toBe(33);
+		expect(
+			resolveTextColumn(line, { line: 1, text: "user", occurrence: 2 }),
+		).toBe(42);
+		expect(resolveTextColumn(line, { line: 1, text: "users" })).toBe(22);
+	});
+
+	test("checks identifier boundaries only on identifier edges", () => {
+		const line = "const $el = $element; const a1 = a; foo.bar(user.id);";
+		expect(resolveTextColumn(line, { line: 1, text: "$el" })).toBe(7);
+		expect(resolveTextColumn(line, { line: 1, text: "a" })).toBe(34);
+		expect(resolveTextColumn(line, { line: 1, text: "user." })).toBe(45);
+		expect(resolveTextColumn(line, { line: 1, text: ".bar(" })).toBe(40);
+		const unicode = "const café = cafés[0]; café;";
+		expect(
+			resolveTextColumn(unicode, {
+				line: 1,
+				text: "café",
+				occurrence: 2,
+			}),
+		).toBe(24);
+	});
+
+	test("falls back to substring matches when no whole match exists", () => {
+		expect(resolveTextColumn(source, { line: 3, text: "port" })).toBe(3);
+		expect(
+			resolveTextColumn(source, { line: 2, text: "ite", occurrence: 3 }),
+		).toBe(39);
+	});
+
+	test("suggests lines with whole matches before partial ones", () => {
+		const text = ["const a = 1;", "const users = [];", "f(user);"].join(
+			"\n",
+		);
+		const error = thrown(() =>
+			resolveTextColumn(text, { line: 1, text: "user" }),
+		);
+		expect(error.suggestion).toEndWith('"user" appears on line 3.');
+		const partial = thrown(() =>
+			resolveTextColumn(text, { line: 1, text: "sers" }),
+		);
+		expect(partial.suggestion).toEndWith('"sers" appears on line 2.');
+	});
+
+	test("counts lines and columns like TypeScript", () => {
+		const text =
+			"\uFEFFconst bom = 1;\rconst cr = 2;\u2028const ls = 3;\u2029const ps = 4;\r\nconst crlf = 5;\nconst lf = 6;";
+		// The BOM is not a column; CR, U+2028, U+2029, CRLF, and LF end lines.
+		expect(resolveTextColumn(text, { line: 1, text: "bom" })).toBe(7);
+		expect(resolveTextColumn(text, { line: 2, text: "cr" })).toBe(7);
+		expect(resolveTextColumn(text, { line: 3, text: "ls" })).toBe(7);
+		expect(resolveTextColumn(text, { line: 4, text: "ps" })).toBe(7);
+		expect(resolveTextColumn(text, { line: 5, text: "crlf" })).toBe(7);
+		expect(resolveTextColumn(text, { line: 6, text: "lf" })).toBe(7);
+		const error = thrown(() =>
+			resolveTextColumn(text, { line: 7, text: "x" }),
+		);
+		expect(error.suggestion).toBe("Use a line between 1 and 6.");
 	});
 
 	test("quotes the line and other matching lines when text is missing", () => {

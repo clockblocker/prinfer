@@ -116,10 +116,10 @@ Position: 11:14
 
 ### hover
 
-Hover a token on a known line. Pass `text` copied from the line and prinfer finds the column, so the agent doesn't have to count characters. `text` is a plain substring match: on `users.map((user) => user.name)`, `text: "user"` first matches inside `users`, so pass `occurrence: 2` for the callback parameter. A `column` still works in place of `text`.
+Hover a token on a known line. Pass `text` copied from the line and prinfer finds the column, so the agent doesn't have to count characters. `text` matches whole identifiers first: on `users.map((user) => user.name)`, `text: "user"` skips `users` and hits the callback parameter, and `occurrence: 2` picks the next `user`. Only when the line has no whole-identifier match is `text` matched as a plain substring. A `column` still works in place of `text`.
 
 ```text
-hover(file: "src/utils.ts", line: 11, text: "user", occurrence: 2)
+hover(file: "src/utils.ts", line: 11, text: "user")
 hover(file: "src/utils.ts", line: 11, column: 33)
 ```
 
@@ -147,7 +147,7 @@ Up to 100 lookups in one call, across any number of files. Each item is `{name, 
 ```text
 batch_hover(file: "src/utils.ts", positions: [
   {name: "users"},
-  {line: 11, text: "user", occurrence: 2},
+  {line: 11, text: "user"},
   {file: "src/missing.ts", line: 1, column: 1}
 ])
 ```
@@ -164,7 +164,7 @@ Name: users
 Kind: const
 Position: 6:14
 
---- src/utils.ts:11:33 text "user" #2 ---
+--- src/utils.ts:11:33 text "user" ---
 Type: (parameter) user: {
     id: number;
     name: string;
@@ -217,7 +217,11 @@ A clean file returns `No type errors.`. Errors and warnings are reported by defa
 - `typescript7` (default) runs the native TypeScript 7 language server. One warm session per project is shared across requests, and its output is closest to what your editor shows.
 - `typescript6` uses the TypeScript 6 compiler API in-process. If a lookup fails or looks wrong on TypeScript 7, retry that call with `typescript6`.
 
-The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. The two backends also format signatures differently. TypeScript 7 returns `const names: string[]`, TypeScript 6 returns `string[]`.
+The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. Both backends pick the same symbol for `hover_by_name`, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
+
+- Signatures are formatted differently. TypeScript 7 returns `const names: string[]` and `(parameter) user: {...}` with object types expanded over several lines; TypeScript 6 returns `string[]` and `{ id: number; name: string; }`.
+- TypeScript 7 always uses the tsconfig.json nearest the file, or a project that tsconfig references. A `project` it would not pick, such as an unreferenced `tsconfig.build.json`, fails with `INVALID_ARGUMENT`; use `typescript6` for it.
+- On TypeScript 7, edits to files reached by relative imports are seen immediately. `diagnostics` also rescans the tsconfig's include directories (bounded, skipping `node_modules`, build output, and dot-directories); any other unopened edit reaches the language server through its file watcher shortly after.
 
 Environment variables on the server process:
 

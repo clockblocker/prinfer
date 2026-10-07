@@ -217,13 +217,59 @@ describe("diagnostics contract and formatting", () => {
 			"errors.ts:6:2 error TS2322: Type 'number' is not assignable to type 'string'.",
 			"errors.ts:9:14 error TS2322: Type '(event: { id: string; }) => void' is not assignable to type '(event: { id: number; }) => void'.",
 		]);
-		expect(text).toContain(
-			"\n      Types of parameters 'event' and 'event' are incompatible.",
-		);
+		// tsc's own layout: the chain is nested two spaces per level.
+		expect(text.split("\n").slice(3, 7)).toEqual([
+			"  Types of parameters 'event' and 'event' are incompatible.",
+			"    Type '{ id: number; }' is not assignable to type '{ id: string; }'.",
+			"      Types of property 'id' are incompatible.",
+			"        Type 'number' is not assignable to type 'string'.",
+		]);
 		expect(text.endsWith("3 errors, 0 warnings.")).toBe(true);
 		expect(formatDiagnostics(diagnostics(cleanFile))).toBe(
 			"No type errors.",
 		);
+	});
+
+	test("formats message chains identically on both backends", async () => {
+		const ts6 = formatDiagnostics(diagnostics(errorsFile), "errors.ts");
+		const ts7 = formatDiagnostics(
+			await nativeDiagnostics(errorsFile),
+			"errors.ts",
+		);
+		expect(ts7).toBe(ts6);
+	});
+
+	test("normalizes continuation indentation to two spaces", () => {
+		const result = (message: string): DiagnosticsResult => ({
+			file: "/tmp/a.ts",
+			diagnostics: [
+				{
+					line: 1,
+					column: 1,
+					endLine: 1,
+					endColumn: 2,
+					code: 2322,
+					category: "error",
+					message,
+				},
+			],
+			errorCount: 1,
+			warningCount: 0,
+		});
+		const expected = [
+			"a.ts:1:1 error TS2322: Head.",
+			"  Level one.",
+			"    Level two.",
+			"1 error, 0 warnings.",
+		].join("\n");
+		for (const message of [
+			"Head.\n  Level one.\n    Level two.",
+			"Head.\n      Level one.\n        Level two.",
+			"Head.\nLevel one.\n  Level two.",
+			"Head.\r\n  Level one.\r\n\n    Level two.",
+		]) {
+			expect(formatDiagnostics(result(message), "a.ts")).toBe(expected);
+		}
 	});
 });
 

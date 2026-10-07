@@ -1,9 +1,11 @@
 import * as ts from "typescript";
 import {
 	getLineNumber,
+	getNameNode,
 	isCallExpressionNamed,
 	isFunctionLikeNamed,
 	isNamedNode,
+	isOtherDeclarationNamed,
 } from "./node-match.js";
 
 /**
@@ -29,38 +31,62 @@ export function findFirstMatch(
 }
 
 /**
- * Find a node by name and optionally by line number
+ * Find a node by name and optionally by line number. Searches in order of
+ * preference, each pass in document order:
+ * 1. functions, variables, type aliases, and calls with that name;
+ * 2. other declarations: parameters, classes, interfaces, enums, members,
+ *    destructured bindings;
+ * 3. any other identifier with that name, such as a property access.
+ * Comments and string literals never match. Both backends use this lookup.
  */
 export function findNodeByNameAndLine(
 	sourceFile: ts.SourceFile,
 	name: string,
 	line?: number,
 ): ts.Node | undefined {
-	let found: ts.Node | undefined;
-
 	const matchesLine = (node: ts.Node): boolean => {
 		if (line === undefined) return true;
-		return getLineNumber(sourceFile, node) === line;
+		return (
+			getLineNumber(sourceFile, node) === line ||
+			getLineNumber(sourceFile, getNameNode(node)) === line
+		);
 	};
+	const preferred =
+		findFirstNode(
+			sourceFile,
+			(node) =>
+				(isNamedNode(node, name) ||
+					isCallExpressionNamed(node, name)) &&
+				matchesLine(node),
+		) ??
+		findFirstNode(
+			sourceFile,
+			(node) => isOtherDeclarationNamed(node, name) && matchesLine(node),
+		);
+	if (preferred) return preferred;
+	const reference = findFirstNode(
+		sourceFile,
+		(node) =>
+			ts.isIdentifier(node) && node.text === name && matchesLine(node),
+	);
+	return reference
+		? findHoverableAncestor(sourceFile, reference.getStart(sourceFile))
+		: undefined;
+}
 
+function findFirstNode(
+	sourceFile: ts.SourceFile,
+	predicate: (node: ts.Node) => boolean,
+): ts.Node | undefined {
+	let found: ts.Node | undefined;
 	const visit = (node: ts.Node) => {
 		if (found) return;
-
-		// Check declarations (existing logic)
-		if (isNamedNode(node, name) && matchesLine(node)) {
+		if (predicate(node)) {
 			found = node;
 			return;
 		}
-
-		// Check call expressions (new)
-		if (isCallExpressionNamed(node, name) && matchesLine(node)) {
-			found = node;
-			return;
-		}
-
 		ts.forEachChild(node, visit);
 	};
-
 	visit(sourceFile);
 	return found;
 }
@@ -217,12 +243,11 @@ export function findNodeAtPosition(
 		return undefined;
 	}
 
-	const lineStart = sourceFile.getLineStarts()[line - 1];
-	const lineEnd =
-		line < lineCount
-			? sourceFile.getLineStarts()[line]
-			: sourceFile.getEnd();
-	const lineLength = lineEnd - lineStart;
+	// Lines follow TypeScript's own line starts (CR, LF, CRLF, U+2028, and
+	// U+2029 break lines). A column may sit on any character of the line or
+	// just past its last one, but not on the line break.
+	const lineStart = sourceFile.getLineStarts()[line - 1] ?? 0;
+	const lineLength = sourceFile.getLineEndOfPosition(lineStart) - lineStart;
 
 	if (column < 1 || column > lineLength + 1) {
 		return undefined;

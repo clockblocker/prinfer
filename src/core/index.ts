@@ -8,6 +8,14 @@ export {
 } from "./diagnostics.js";
 export { getDocumentation, getHoverInfo } from "./hover.js";
 export {
+	fromLspPosition,
+	type LineCharacter,
+	lineStarts,
+	splitLines,
+	stripBom,
+	toLspPosition,
+} from "./lines.js";
+export {
 	findFirstMatch,
 	findNodeAtPosition,
 	findNodeByNameAndLine,

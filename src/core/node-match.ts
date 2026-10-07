@@ -81,6 +81,57 @@ export function isNamedNode(node: ts.Node, name: string): boolean {
 }
 
 /**
+ * Check if a node is a declaration with the given name that isNamedNode
+ * leaves out: parameters, classes, interfaces, enums, members, and
+ * destructured bindings.
+ */
+export function isOtherDeclarationNamed(node: ts.Node, name: string): boolean {
+	if (
+		ts.isParameter(node) ||
+		ts.isBindingElement(node) ||
+		ts.isClassDeclaration(node) ||
+		ts.isInterfaceDeclaration(node) ||
+		ts.isEnumDeclaration(node) ||
+		ts.isEnumMember(node) ||
+		ts.isPropertyDeclaration(node) ||
+		ts.isPropertySignature(node) ||
+		ts.isPropertyAssignment(node) ||
+		ts.isShorthandPropertyAssignment(node) ||
+		ts.isGetAccessorDeclaration(node) ||
+		ts.isSetAccessorDeclaration(node) ||
+		ts.isModuleDeclaration(node)
+	) {
+		const declarationName = node.name;
+		return (
+			declarationName !== undefined &&
+			!ts.isObjectBindingPattern(declarationName) &&
+			!ts.isArrayBindingPattern(declarationName) &&
+			nodeNameText(declarationName) === name
+		);
+	}
+	return false;
+}
+
+/**
+ * The token that names a node: the identifier of a declaration, or the
+ * callee name of a call. Positions are reported at this token, as an editor
+ * hover does, rather than at modifiers such as `export`.
+ */
+export function getNameNode(node: ts.Node): ts.Node {
+	if (ts.isCallExpression(node)) {
+		const expr = node.expression;
+		if (ts.isPropertyAccessExpression(expr)) return expr.name;
+		return expr;
+	}
+	if (ts.isPropertyAccessExpression(node)) return node.name;
+	const name = (node as { name?: unknown }).name;
+	if (name && typeof name === "object" && "kind" in name) {
+		return name as ts.Node;
+	}
+	return node;
+}
+
+/**
  * Check if a node is a call expression with the given name
  */
 export function isCallExpressionNamed(node: ts.Node, name: string): boolean {

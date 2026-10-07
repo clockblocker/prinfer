@@ -1,7 +1,7 @@
 import * as ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
 import type { HoverResult } from "../types.js";
-import { isArrowOrFnExpr } from "./node-match.js";
+import { getNameNode, isArrowOrFnExpr } from "./node-match.js";
 
 /**
  * Get the symbol kind as a string
@@ -30,6 +30,14 @@ export function getSymbolKind(node: ts.Node): string {
 	if (ts.isTypeAliasDeclaration(node)) return "type";
 	if (ts.isInterfaceDeclaration(node)) return "interface";
 	if (ts.isClassDeclaration(node)) return "class";
+	if (ts.isEnumDeclaration(node)) return "enum";
+	if (ts.isEnumMember(node)) return "enum member";
+	if (ts.isBindingElement(node)) return "variable";
+	if (ts.isPropertyAssignment(node)) return "property";
+	if (ts.isShorthandPropertyAssignment(node)) return "property";
+	if (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node))
+		return "accessor";
+	if (ts.isModuleDeclaration(node)) return "namespace";
 	if (ts.isIdentifier(node)) return "identifier";
 	return "unknown";
 }
@@ -71,6 +79,8 @@ export function getNodeName(node: ts.Node): string | undefined {
 	) {
 		return node.name?.text;
 	}
+	const nameNode = getNameNode(node);
+	if (nameNode !== node && ts.isIdentifier(nameNode)) return nameNode.text;
 	return undefined;
 }
 
@@ -130,7 +140,7 @@ function getHoverInfoImpl(
 ): HoverResult {
 	const sf = sourceFile;
 	const { line, character } = sf.getLineAndCharacterOfPosition(
-		node.getStart(sf),
+		getNameNode(node).getStart(sf),
 	);
 	const flags = full
 		? ts.TypeFormatFlags.NoTruncation
