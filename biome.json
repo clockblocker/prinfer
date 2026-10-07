@@ -3,10 +3,14 @@
 	"files": {
 		"includes": [
 			"src/**",
+			"scripts/**",
 			"*.ts",
 			"package.json",
+			"server.json",
 			"biome.json",
-			"tsconfig.json"
+			"tsconfig.json",
+			".claude-plugin/*.json",
+			"plugin/**/*.json"
 		]
 	},
 	"assist": {
@@ -23,7 +27,12 @@
 	"formatter": {
 		"attributePosition": "auto",
 		"enabled": true,
-		"includes": ["**/src/**/*.ts", "**/test/**/*.ts", "./**/*.json"],
+		"includes": [
+			"**/src/**/*.ts",
+			"**/test/**/*.ts",
+			"**/scripts/**/*.mjs",
+			"./**/*.json"
+		],
 		"indentStyle": "tab",
 		"indentWidth": 4,
 		"lineEnding": "lf",
@@ -31,7 +40,7 @@
 	},
 	"linter": {
 		"enabled": true,
-		"includes": ["**/src/**/*.ts"],
+		"includes": ["**/src/**/*.ts", "**/scripts/**/*.mjs"],
 		"rules": {
 			"correctness": {
 				"noUndeclaredDependencies": "off",

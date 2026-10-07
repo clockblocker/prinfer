@@ -1,0 +1,46 @@
+{
+	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+	"name": "io.github.clockblocker/prinfer",
+	"title": "prinfer",
+	"description": "TypeScript inferred types, completions and type errors for AI coding agents",
+	"repository": {
+		"url": "https://github.com/clockblocker/prinfer",
+		"source": "github",
+		"id": "1147042513"
+	},
+	"websiteUrl": "https://github.com/clockblocker/prinfer#readme",
+	"version": "2.3.0",
+	"packages": [
+		{
+			"registryType": "npm",
+			"registryBaseUrl": "https://registry.npmjs.org",
+			"identifier": "prinfer",
+			"version": "2.3.0",
+			"runtimeHint": "npx",
+			"transport": {
+				"type": "stdio"
+			},
+			"packageArguments": [
+				{
+					"type": "positional",
+					"value": "mcp"
+				}
+			],
+			"environmentVariables": [
+				{
+					"name": "PRINFER_BACKEND",
+					"description": "Default TypeScript backend. Use typescript6 if the native TypeScript 7 backend fails in your project.",
+					"format": "string",
+					"default": "typescript7",
+					"choices": ["typescript7", "typescript6"]
+				},
+				{
+					"name": "PRINFER_INCLUDE_TIMING",
+					"description": "Set to true to include type-resolution timing in hover results by default.",
+					"format": "boolean",
+					"default": "false"
+				}
+			]
+		}
+	]
+}

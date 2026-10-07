@@ -15,6 +15,8 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +28,7 @@ jobs:
         run: bun install
 
       - name: Create Release Pull Request or Publish
+        id: changesets
         uses: changesets/action@v1
         with:
           publish: bun run release
@@ -33,3 +36,34 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Separate job so npm publishing never depends on the MCP Registry and the
+  # OIDC permission is scoped to this job only. Runs after a successful npm
+  # publish; server.json was version-synced by `bun run version`.
+  mcp-registry:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server.json to MCP Registry
+        # The registry verifies mcpName against the npm package, which can
+        # take a moment to become visible after `npm publish`.
+        run: |
+          for attempt in 1 2 3 4 5; do
+            ./mcp-publisher publish && exit 0
+            echo "Attempt $attempt failed; retrying in 30s"
+            sleep 30
+          done
+          exit 1

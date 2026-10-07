@@ -1,0 +1,17 @@
+{
+	"name": "prinfer",
+	"description": "Claude Code plugin for prinfer, TypeScript type inspection for AI agents",
+	"owner": {
+		"name": "clockblocker",
+		"url": "https://github.com/clockblocker"
+	},
+	"plugins": [
+		{
+			"name": "prinfer",
+			"source": "./plugin",
+			"description": "TypeScript inferred types, completions and type errors via the prinfer MCP server, plus a skill for when to use them",
+			"category": "development",
+			"tags": ["typescript", "type-inference", "mcp"]
+		}
+	]
+}

@@ -1,0 +1,20 @@
+{
+	"name": "prinfer",
+	"version": "2.3.0",
+	"description": "Lets Claude see TypeScript's inferred types, completions and type errors through the prinfer MCP server",
+	"author": {
+		"name": "clockblocker",
+		"url": "https://github.com/clockblocker"
+	},
+	"homepage": "https://github.com/clockblocker/prinfer#readme",
+	"repository": "https://github.com/clockblocker/prinfer",
+	"license": "MIT",
+	"keywords": [
+		"typescript",
+		"type-inference",
+		"hover",
+		"completions",
+		"diagnostics",
+		"mcp"
+	]
+}

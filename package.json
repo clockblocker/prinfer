@@ -1,7 +1,8 @@
 {
 	"name": "prinfer",
 	"version": "2.3.0",
-	"description": "TypeScript type inference inspection tool",
+	"mcpName": "io.github.clockblocker/prinfer",
+	"description": "MCP server and CLI that shows AI coding agents (Claude Code, Codex, Cursor) TypeScript's inferred types, completions and type errors",
 	"type": "module",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.js",
@@ -52,7 +53,7 @@
 		"test": "bun test",
 		"ci": "bun run typecheck && bun run build && bunx biome check . && bun test",
 		"changeset": "changeset",
-		"version": "changeset version",
+		"version": "changeset version && node scripts/sync-server-json.mjs",
 		"release": "bun run build && changeset publish",
 		"prepublishOnly": "bun run ci",
 		"prepare": "simple-git-hooks"
@@ -61,17 +62,33 @@
 		"pre-commit": "bunx biome check ."
 	},
 	"keywords": [
+		"mcp",
+		"mcp-server",
+		"model-context-protocol",
+		"ai",
+		"agent",
+		"claude",
+		"claude-code",
+		"codex",
+		"cursor",
+		"llm",
 		"typescript",
 		"type-inference",
 		"types",
+		"hover",
+		"lsp",
 		"inspection",
 		"cli"
 	],
 	"author": "",
 	"license": "MIT",
+	"homepage": "https://github.com/clockblocker/prinfer#readme",
+	"bugs": {
+		"url": "https://github.com/clockblocker/prinfer/issues"
+	},
 	"repository": {
 		"type": "git",
-		"url": ""
+		"url": "git+https://github.com/clockblocker/prinfer.git"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.7",

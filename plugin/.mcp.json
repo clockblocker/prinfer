@@ -1,0 +1,8 @@
+{
+	"mcpServers": {
+		"prinfer": {
+			"command": "npx",
+			"args": ["-y", "prinfer", "mcp"]
+		}
+	}
+}
