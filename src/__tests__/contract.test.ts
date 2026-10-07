@@ -63,6 +63,45 @@ describe("contract v1", () => {
 		expect(batchHoverSuccessSchema.parse(response)).toEqual(response);
 	});
 
+	test("validates multi-file batch items and resolved hover positions", () => {
+		const hover = {
+			signature: "(x: number, y: number) => number",
+			line: 9,
+			column: 14,
+			kind: "function",
+			name: "multiply",
+			position: { line: 9, column: 14 },
+		};
+		const response = batchHoverSuccess({
+			items: [
+				{
+					file: "/project/a.ts",
+					name: "multiply",
+					position: { line: 9, column: 14 },
+					result: hover,
+				},
+				{
+					file: "/project/b.ts",
+					text: "missing",
+					occurrence: 1,
+					position: { line: 3, column: 0 },
+					error: {
+						code: "SYMBOL_NOT_FOUND",
+						message: 'Text "missing" not found on line 3',
+					},
+				},
+			],
+			successCount: 1,
+			errorCount: 1,
+		});
+
+		expect(batchHoverSuccessSchema.parse(response)).toEqual(response);
+		expect(hoverSuccess(hover).result.position).toEqual({
+			line: 9,
+			column: 14,
+		});
+	});
+
 	test("classifies public errors", () => {
 		const response = contractError(
 			new Error("No symbol found at file.ts:1:1"),
