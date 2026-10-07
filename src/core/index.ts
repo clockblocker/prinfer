@@ -14,4 +14,5 @@ export {
 	invalidateProgramCache,
 	loadProgram,
 } from "./program.js";
+export { resolveTextColumn, type TextTarget } from "./text-target.js";
 export { getTypeInfo, type InferredTypeResult } from "./type-info.js";

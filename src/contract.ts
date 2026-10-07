@@ -1,10 +1,15 @@
 import * as z from "zod/v4";
-import { TypeScriptInternalError } from "./errors.js";
+import { PrinferError, TypeScriptInternalError } from "./errors.js";
 
 export const CONTRACT_VERSION = 1 as const;
 
 export const hoverTimingSchema = z.object({
 	resolution_ms: z.number().nonnegative(),
+});
+
+export const hoverPositionSchema = z.object({
+	line: z.number(),
+	column: z.number(),
 });
 
 export const hoverResultSchema = z.object({
@@ -16,6 +21,8 @@ export const hoverResultSchema = z.object({
 	kind: z.string(),
 	name: z.string().optional(),
 	timing: hoverTimingSchema.optional(),
+	/** The queried position, after resolving a text target to a column. */
+	position: hoverPositionSchema.optional(),
 });
 
 export const completionResultSchema = z.object({
@@ -58,10 +65,16 @@ export const contractErrorSchema = z.object({
 export const batchHoverResultSchema = z.object({
 	items: z.array(
 		z.object({
-			position: z.object({
-				line: z.number(),
-				column: z.number(),
-			}),
+			/**
+			 * The queried position. Text targets report the resolved column;
+			 * name targets report where the symbol was found. A column of 0
+			 * means the target could not be resolved to a position.
+			 */
+			position: hoverPositionSchema,
+			file: z.string().optional(),
+			name: z.string().optional(),
+			text: z.string().optional(),
+			occurrence: z.number().optional(),
 			result: hoverResultSchema.optional(),
 			error: contractErrorSchema.optional(),
 		}),
@@ -131,6 +144,7 @@ interface ContractErrorContext {
 	column?: number;
 	project?: string;
 	candidates?: string[];
+	suggestion?: string;
 }
 
 export function contractError(
@@ -140,6 +154,7 @@ export function contractError(
 	const source = error instanceof Error ? error : new Error(String(error));
 	const internal =
 		source instanceof TypeScriptInternalError ? source : undefined;
+	const prinfer = source instanceof PrinferError ? source : undefined;
 	const code = context.code ?? classifyError(source);
 
 	return contractErrorResponseSchema.parse({
@@ -153,7 +168,10 @@ export function contractError(
 			column: context.column ?? internal?.column,
 			project: context.project,
 			candidates: context.candidates,
-			suggestion: suggestionFor(code),
+			suggestion:
+				context.suggestion ??
+				prinfer?.suggestion ??
+				suggestionFor(code),
 		},
 	});
 }
@@ -161,11 +179,11 @@ export function contractError(
 function suggestionFor(code: ContractErrorCode): string {
 	switch (code) {
 		case "INVALID_ARGUMENT":
-			return "Use positive, 1-based integer line and column values and no more than 100 batch positions.";
+			return "Use positive 1-based line and column values, give exactly one of column or text, and send at most 100 batch items.";
 		case "FILE_NOT_FOUND":
 			return "Check the resolved file path and the MCP server working directory.";
 		case "SYMBOL_NOT_FOUND":
-			return "Try hover_by_name when you know the symbol name, or move the position onto the symbol token.";
+			return "Try hover_by_name with the symbol name, or hover with text copied from the line instead of a column.";
 		case "TYPESCRIPT_ERROR":
 			return "Check the selected tsconfig and source syntax, or retry with backend typescript6.";
 		case "INTERNAL_ERROR":
@@ -174,6 +192,7 @@ function suggestionFor(code: ContractErrorCode): string {
 }
 
 function classifyError(error: Error): ContractErrorCode {
+	if (error instanceof PrinferError) return error.code;
 	if (error instanceof TypeScriptInternalError) return "TYPESCRIPT_ERROR";
 	if (
 		error.message.startsWith("TypeScript LSP:") ||

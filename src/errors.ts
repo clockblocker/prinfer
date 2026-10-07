@@ -37,3 +37,28 @@ function getSuggestions(error: Error): string {
 	}
 	return "";
 }
+
+/**
+ * Error with a stable contract code and a request-specific recovery
+ * suggestion, so callers can self-correct without parsing the message.
+ */
+export class PrinferError extends Error {
+	readonly code:
+		| "INVALID_ARGUMENT"
+		| "FILE_NOT_FOUND"
+		| "SYMBOL_NOT_FOUND"
+		| "TYPESCRIPT_ERROR"
+		| "INTERNAL_ERROR";
+	readonly suggestion?: string;
+
+	constructor(
+		code: PrinferError["code"],
+		message: string,
+		suggestion?: string,
+	) {
+		super(message);
+		this.name = "PrinferError";
+		this.code = code;
+		this.suggestion = suggestion;
+	}
+}
