@@ -14,7 +14,7 @@ The compiler knows the type; look it up instead of guessing. When the inferred t
 | Type of a named symbol | `hover_by_name(file, name)`; add `line` when the name repeats |
 | Type of a token without a unique name (callback parameter, expression, call site) | `hover(file, line, text)`; add `occurrence` for the nth match on that line |
 | Several types, any files | one `batch_hover` call |
-| Valid values at a cursor (union members, keys, methods) | `completions(file, line, column)` |
+| Valid values at a cursor (union members, keys, methods) | `completions(file, line, column)`; add `prefix` to narrow |
 | Type errors after an edit | `diagnostics(file)` |
 
 An edit is done when `diagnostics` reports no errors for every file you changed.
@@ -25,7 +25,9 @@ All tools accept `project`, a `tsconfig.json` path that defaults to the nearest 
 
 Lines and columns are 1-based. For `hover` and `batch_hover` items, pass `text`: the token exactly as it appears on the line, such as `useQuery` or `config`. prinfer finds the column, so you never count characters.
 
-`completions` needs a column: the cursor sits before the character at that column. For a string-literal union, put it just inside the opening quote.
+`completions` needs a column: the cursor sits before the character at that column. For a string-literal union, put it just inside the opening quote. It returns the top 50 entries (`limit` raises that, up to 500), filtered by the text already typed left of the cursor; `prefix` filters by other text, and `prefix: ""` lists everything.
+
+Errors say what to do next: read the `Did you mean:` and `Suggestion:` lines and retry with them.
 
 ## Lock inferred types in tests
 
@@ -57,6 +59,6 @@ When the prinfer tools are not connected, run the CLI. It defaults to TypeScript
 ```bash
 npx prinfer src/file.ts:symbolName --json
 npx prinfer src/file.ts:symbolName:75 --json   # line hint for repeated names
-npx prinfer complete src/file.ts:80:24 --json  # file:line:column
+npx prinfer complete src/file.ts:80:24 --json  # file:line:column; --prefix, --limit
 npx prinfer check src/file.ts --json           # type errors; exits 1 when there are any
 ```

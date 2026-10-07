@@ -20,6 +20,8 @@ describe("contract v1", () => {
 			isMemberCompletion: false,
 			isNewIdentifierLocation: false,
 			entries: [{ name: "coffee", kind: "string", sortText: "11" }],
+			total: 2,
+			truncated: true,
 		});
 		expect(completionSuccessSchema.parse(response)).toEqual(response);
 	});

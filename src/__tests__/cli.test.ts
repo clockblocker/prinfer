@@ -65,6 +65,60 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
+	test("limits and filters autocomplete entries", async () => {
+		const global = await runCli(["complete", `${completionsFile}:2:1`]);
+		const lines = global.stdout.trimEnd().split("\n");
+		expect(lines).toHaveLength(51);
+		expect(lines[50]).toMatch(
+			/^… \d+ more; pass --prefix to narrow, or raise --limit$/,
+		);
+
+		const limited = await runCli([
+			"complete",
+			`${completionsFile}:2:1`,
+			"--limit",
+			"2",
+			"--json",
+		]);
+		const { result } = JSON.parse(limited.stdout) as {
+			result: { entries: unknown[]; total: number; truncated: boolean };
+		};
+		expect(result.entries).toHaveLength(2);
+		expect(result.truncated).toBe(true);
+		expect(result.total).toBeGreaterThan(50);
+
+		const prefixed = await runCli([
+			"complete",
+			`${completionsFile}:3:33`,
+			"--prefix",
+			"T",
+		]);
+		expect(prefixed.stdout).toBe("tea\n");
+		// Typed text left of the cursor filters by default; "" lists all.
+		expect(
+			(await runCli(["complete", `${completionsFile}:10:33`])).stdout,
+		).toBe("tea\n");
+		expect(
+			(
+				await runCli([
+					"complete",
+					`${completionsFile}:10:33`,
+					"--prefix",
+					"",
+				])
+			).stdout,
+		).toBe("coffee\ntea\n");
+
+		const bad = await runCli([
+			"complete",
+			`${completionsFile}:3:33`,
+			"--limit",
+			"0",
+		]);
+		expect(bad.stderr).toContain("--limit requires a positive integer");
+		expect(bad.exitCode).toBe(1);
+	});
+
 	test("inspects a type with Bun 1.3.14's hoisted TypeScript 7 layout", async () => {
 		const consumerDir = fs.mkdtempSync(
 			path.join(os.tmpdir(), "prinfer-typescript-7-"),
@@ -336,10 +390,50 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
-	test("shows error for invalid position", async () => {
+	test("rejects a position outside the file with the valid range", async () => {
 		const { stderr, exitCode } = await runCli([`${sampleFile}:1000:1`]);
-		expect(stderr).toContain("No symbol found");
+		expect(stderr).toBe(
+			`Error [INVALID_ARGUMENT]: Line 1000 is outside ${sampleFile}, which has 45 lines\nSuggestion: Use a line between 1 and 45.\n`,
+		);
 		expect(exitCode).toBe(1);
+
+		const column = await runCli([`${sampleFile}:4:90`, "--json"]);
+		expect(
+			contractErrorResponseSchema.parse(JSON.parse(column.stdout)).error,
+		).toMatchObject({
+			code: "INVALID_ARGUMENT",
+			suggestion:
+				"Line 4 has 51 characters; use a column between 1 and 52.",
+		});
+	});
+
+	test("accepts any JavaScript identifier as a name", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-names-"));
+		try {
+			const file = path.join(dir, "names.ts");
+			fs.writeFileSync(
+				file,
+				"export const $store = 1;\nexport const café = 2;\nexport const _ü$ = 3;\n",
+			);
+			for (const [name, line] of [
+				["$store", 1],
+				["café", 2],
+				["_ü$", 3],
+			] as const) {
+				for (const arg of [
+					`${file}:${name}`,
+					`${file}:${name}:${line}`,
+				]) {
+					const { stdout, exitCode } = await runCli([arg, "--json"]);
+					expect(
+						hoverSuccessSchema.parse(JSON.parse(stdout)).result,
+					).toMatchObject({ name, line, kind: "const" });
+					expect(exitCode).toBe(0);
+				}
+			}
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	test("help shows file:line:column syntax", async () => {
@@ -367,9 +461,20 @@ describe("CLI", () => {
 		const { error } = contractErrorResponseSchema.parse(JSON.parse(stdout));
 		expect(error.code).toBe("SYMBOL_NOT_FOUND");
 		expect(error.candidates).toEqual(["format"]);
+		expect(error.project).toBe(path.join(packageRoot, "tsconfig.json"));
 		expect(error.suggestion).toContain("<file>:<name>:<line>");
 		expect(error.suggestion).not.toContain("hover_by_name");
 		expect(exitCode).toBe(1);
+
+		const text = await runCli([`${sampleFile}:formt`]);
+		const lines = text.stderr.trimEnd().split("\n");
+		expect(lines[0]).toStartWith(
+			'Error [SYMBOL_NOT_FOUND]: No symbol named "formt"',
+		);
+		expect(lines[1]).toBe("Did you mean: format?");
+		expect(lines[2]).toStartWith("Suggestion: Check the spelling");
+		expect(lines).toHaveLength(3);
+		expect(text.stdout).toBe("");
 	});
 
 	test("words error suggestions for the CLI, not the MCP server", async () => {

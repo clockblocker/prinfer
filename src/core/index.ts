@@ -1,6 +1,11 @@
 // Re-export all public functions from core modules
 
-export { getCompletions } from "./completions.js";
+export {
+	type CompletionRefinement,
+	formatCompletions,
+	getCompletions,
+	rankCompletions,
+} from "./completions.js";
 export {
 	formatDiagnostics,
 	getFileDiagnostics,
@@ -8,6 +13,7 @@ export {
 } from "./diagnostics.js";
 export { getDocumentation, getHoverInfo } from "./hover.js";
 export {
+	assertCursorPosition,
 	fromLspPosition,
 	type LineCharacter,
 	lineStarts,

@@ -10,6 +10,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as z from "zod/v4";
 import { nearbyCandidates } from "../candidates.js";
 import {
 	batchHoverSuccessSchema,
@@ -29,6 +30,7 @@ const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
 const genericMethodFile = path.join(fixturesDir, "generic-method.ts");
 const diagnosticsDir = path.join(fixturesDir, "diagnostics");
+const completionsFile = path.join(fixturesDir, "completions.ts");
 const packageVersion = (
 	JSON.parse(
 		fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
@@ -99,6 +101,7 @@ class StdioMcpClient {
 				properties: Record<string, unknown>;
 				required?: string[];
 			};
+			outputSchema?: Record<string, unknown>;
 		}>
 	> {
 		const result = await this.request("tools/list", {});
@@ -419,8 +422,8 @@ describe("MCP server over stdio", () => {
 	test("hover misses suggest text targeting or hover_by_name", async () => {
 		const response = await client.call("hover", {
 			file: sampleFile,
-			line: 1000,
-			column: 1,
+			line: 1,
+			column: 5,
 			backend: "typescript6",
 		});
 		const { error } = contractErrorResponseSchema.parse(
@@ -429,6 +432,165 @@ describe("MCP server over stdio", () => {
 		expect(error.code).toBe("SYMBOL_NOT_FOUND");
 		expect(error.suggestion).toContain("text copied from the line");
 		expect(error.suggestion).toContain("hover_by_name");
+	});
+
+	for (const backend of ["typescript6", "typescript7"] as const) {
+		test(`hover rejects positions outside the file with the valid range (${backend})`, async () => {
+			for (const [args, suggestion] of [
+				[{ line: 1000, column: 1 }, "Use a line between 1 and 45."],
+				[
+					{ line: 4, column: 90 },
+					"Line 4 has 51 characters; use a column between 1 and 52.",
+				],
+			] as const) {
+				const response = await client.call("hover", {
+					file: sampleFile,
+					...args,
+					backend,
+				});
+				expect(response.isError).toBe(true);
+				const { error } = contractErrorResponseSchema.parse(
+					response.structuredContent,
+				);
+				expect(error).toMatchObject({
+					code: "INVALID_ARGUMENT",
+					suggestion,
+				});
+				expect(response.content[0]?.text).toContain(
+					`Suggestion: ${suggestion}`,
+				);
+			}
+		});
+	}
+
+	test("error text repeats candidates and the suggestion", async () => {
+		const response = await client.call("hover_by_name", {
+			file: sampleFile,
+			name: "formt",
+			backend: "typescript6",
+		});
+		const lines = response.content[0]?.text.split("\n") ?? [];
+		expect(lines[0]).toStartWith(
+			'Error [SYMBOL_NOT_FOUND]: No symbol named "formt"',
+		);
+		expect(lines[1]).toBe("Did you mean: format?");
+		expect(lines[2]).toStartWith("Suggestion: Check the spelling");
+		expect(lines).toHaveLength(3);
+
+		const batch = await client.call("batch_hover", {
+			file: sampleFile,
+			positions: [{ name: "formt" }, { line: 3, column: 5 }],
+			backend: "typescript6",
+		});
+		const text = batch.content[0]?.text ?? "";
+		expect(text).toContain("Did you mean: format?");
+		expect(text).toContain("Nearby identifiers:");
+	});
+
+	test("completions returns the top entries and says how many were cut", async () => {
+		const response = await client.call("completions", {
+			file: completionsFile,
+			line: 2,
+			column: 1,
+		});
+		expect(response.isError).toBeUndefined();
+		const { result } = z
+			.object({
+				result: z.object({
+					entries: z.array(z.object({ name: z.string() })),
+					total: z.number(),
+					truncated: z.boolean(),
+				}),
+			})
+			.parse(response.structuredContent);
+		expect(result.entries).toHaveLength(50);
+		expect(result.truncated).toBe(true);
+		expect(result.total).toBeGreaterThan(50);
+		const lines = response.content[0]?.text.split("\n") ?? [];
+		expect(lines).toHaveLength(51);
+		expect(lines[50]).toBe(
+			`… ${result.total - 50} more; pass prefix to narrow, or raise limit`,
+		);
+
+		const limited = await client.call("completions", {
+			file: completionsFile,
+			line: 2,
+			column: 1,
+			limit: 3,
+		});
+		expect(limited.content[0]?.text.split("\n")).toHaveLength(4);
+	});
+
+	test("completions filters by prefix, given or typed left of the cursor", async () => {
+		const names = async (args: Record<string, unknown>) =>
+			(
+				await client.call("completions", {
+					file: completionsFile,
+					...args,
+				})
+			).content[0]?.text.split("\n");
+		expect(await names({ line: 3, column: 33, prefix: "TE" })).toEqual([
+			"tea",
+		]);
+		// Typed "t" inside the string, and "sel" of an identifier.
+		expect(await names({ line: 10, column: 33 })).toEqual(["tea"]);
+		expect((await names({ line: 11, column: 25 }))?.[0]).toBe("selected");
+		// An empty prefix turns the typed-text filter off.
+		expect(await names({ line: 10, column: 33, prefix: "" })).toEqual([
+			"coffee",
+			"tea",
+		]);
+		expect(await names({ line: 3, column: 33, prefix: "zz" })).toEqual([
+			'No completion entries matching prefix "zz". Pass prefix "" to list every entry.',
+		]);
+	});
+
+	test("advertises compact schemas that accept both outcomes", async () => {
+		const tools = await client.listTools();
+		const listed = JSON.stringify(tools);
+		for (const noise of [
+			String(Number.MAX_SAFE_INTEGER),
+			"exclusiveMinimum",
+			"$schema",
+			"additionalProperties",
+		]) {
+			expect(listed).not.toContain(noise);
+		}
+		// tools/list was ~15K characters before the schemas were compacted.
+		expect(listed.length).toBeLessThan(12_500);
+
+		const outputSchema = (name: string) => {
+			const tool = tools.find((candidate) => candidate.name === name);
+			return z.fromJSONSchema(tool?.outputSchema as never);
+		};
+		const outcomes = [
+			["hover_by_name", { file: sampleFile, name: "add" }],
+			["hover_by_name", { file: sampleFile, name: "formt" }],
+			["hover", { file: sampleFile, line: 1000, column: 1 }],
+			[
+				"batch_hover",
+				{
+					file: sampleFile,
+					positions: [{ name: "add" }, { name: "formt" }],
+				},
+			],
+			["batch_hover", { positions: [{ line: 1, column: 1 }] }],
+			["completions", { file: completionsFile, line: 3, column: 33 }],
+			["completions", { file: "missing.ts", line: 1, column: 1 }],
+			["diagnostics", { file: sampleFile, backend: "typescript6" }],
+			["diagnostics", { file: "missing.ts" }],
+		] as const;
+		for (const [name, args] of outcomes) {
+			const response = await client.call(name, args);
+			const parsed = outputSchema(name).safeParse(
+				response.structuredContent,
+			);
+			expect({ name, args, success: parsed.success }).toEqual({
+				name,
+				args,
+				success: true,
+			});
+		}
 	});
 
 	test("file errors name the server's working directory", async () => {

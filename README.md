@@ -138,7 +138,7 @@ Target: "user" at 11:33
 Generic calls show their instantiated types, the same as an editor hover. If the text isn't on the line, the error quotes the line so the agent can correct itself:
 
 ```text
-Error: Text "nope" not found on line 11 of /project/src/utils.ts
+Error [SYMBOL_NOT_FOUND]: Text "nope" not found on line 11 of /project/src/utils.ts
 Suggestion: Line 11 reads: "export const names = users.map((user) => user.name);". Copy text exactly from it, or pass column instead.
 ```
 
@@ -179,7 +179,7 @@ Error [FILE_NOT_FOUND]: File not found: /project/src/missing.ts
 Suggestion: Check the path. Relative paths resolve against the MCP server's working directory (/project); pass an absolute path to be sure.
 ```
 
-Failures stay per item, including a missing file, so one bad lookup doesn't throw away the rest.
+Failures stay per item, including a missing file, so one bad lookup doesn't throw away the rest. A line or column outside the file is an `INVALID_ARGUMENT` error that gives the valid range, for `hover` and `batch_hover` items alike.
 
 ### completions
 
@@ -187,12 +187,17 @@ The entries TypeScript offers at a cursor, including string-literal union member
 
 ```text
 completions(file: "src/utils.ts", line: 14, column: 30)
+completions(file: "src/utils.ts", line: 20, column: 1, prefix: "use", limit: 20)
 ```
 
 ```text
 coffee
 tea
 ```
+
+Entries come in TypeScript's ranking: locals, members, and literal values first, then globals, with keywords after other entries of the same rank, then auto-imports. At most `limit` entries are returned (default 50, up to 500). When more match, the text ends with a line such as `… 947 more; pass prefix to narrow, or raise limit`, and the structured result has `total` (all matches) and `truncated: true`.
+
+`prefix` keeps names that start with it, ignoring case. Without `prefix`, the text already typed left of the cursor filters the list, as in an editor: with the cursor after `use` in `useSt`, only names starting with `use` come back, and inside `"co"` only literals starting with `co`. Pass `prefix: ""` to turn that off.
 
 `completions` always runs on the TypeScript 6 backend and takes no `backend` argument.
 
@@ -258,7 +263,7 @@ The second argument picks the target:
 
 `inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. `full: true` disables truncation, and `include_docs` adds JSDoc to `inferredTypeInfo`.
 
-`inferredCompletions` uses TypeScript 7 and resolves to the completion names. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
+`inferredCompletions` uses TypeScript 7 and resolves to every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
 
 TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early.
 
@@ -292,7 +297,15 @@ Timing appears as `Type resolution: 82.06 ms` in text and `timing: { resolution_
 
 ## Error contract
 
-Every tool returns readable text plus versioned structured content. Successes are `{ version: 1, ok: true, result }`. Failures look like this:
+Every tool returns readable text plus versioned structured content. Successes are `{ version: 1, ok: true, result }`. A failure's text gives the code, the message, and the recovery hints, because many MCP clients show the model only the text:
+
+```text
+Error [SYMBOL_NOT_FOUND]: No symbol named "nmes" at line 11 found in src/utils.ts
+Did you mean: names, name?
+Suggestion: Check the spelling against candidates, pass line to pick the match on a known line, or call hover with that line and text copied from it.
+```
+
+Its structured content looks like this:
 
 ```json
 {
@@ -310,7 +323,9 @@ Every tool returns readable text plus versioned structured content. Successes ar
 }
 ```
 
-The error codes are `INVALID_ARGUMENT`, `FILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`, `TYPESCRIPT_ERROR`, and `INTERNAL_ERROR`. For `SYMBOL_NOT_FOUND`, `candidates` lists identifiers from the file that are close to the requested name (keywords and words in comments or strings are skipped), or the identifiers near the requested line. `suggestion` is specific to the tool or CLI command that failed. The CLI's `--json` output and the exported zod schemas (`hoverSuccessSchema`, `diagnosticsSuccessSchema`, `contractErrorResponseSchema`, and the rest) use the same contract.
+The error codes are `INVALID_ARGUMENT`, `FILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`, `TYPESCRIPT_ERROR`, and `INTERNAL_ERROR`. For `SYMBOL_NOT_FOUND`, `candidates` lists identifiers from the file that are close to the requested name (keywords and words in comments or strings are skipped), or the identifiers near the requested line; the text shows them as `Did you mean: …?` for a name lookup and `Nearby identifiers: …` otherwise. `suggestion` is specific to the tool or CLI command that failed. The CLI's `--json` output and the exported zod schemas (`hoverSuccessSchema`, `diagnosticsSuccessSchema`, `contractErrorResponseSchema`, and the rest) use the same contract.
+
+Each tool's `outputSchema` describes both outcomes in one envelope (`version`, `ok`, and `result` or `error`), because MCP clients may validate error results against it too. It lists the error fields an agent recovers with (`code`, `message`, `candidates`, `suggestion`); the others are still sent.
 
 ## CLI
 
@@ -320,6 +335,7 @@ The CLI uses the TypeScript 6 backend by default. Pass `--backend typescript7` t
 # Type by name, optionally with a line hint for repeated names
 prinfer src/utils.ts:format
 prinfer src/utils.ts:names:11
+prinfer 'src/store.ts:$store'          # any JavaScript identifier, including $ and non-ASCII names
 
 # Type at a position
 prinfer src/utils.ts:11:33
@@ -329,8 +345,9 @@ prinfer src/utils.ts:largeType --full   # turn off editor-style truncation
 prinfer src/utils.ts:format --timing    # type-resolution timing
 prinfer src/utils.ts:format -p ./tsconfig.json
 
-# Completions at a cursor
+# Completions at a cursor: the top 50, filtered by the text typed left of the cursor
 prinfer complete src/utils.ts:14:30
+prinfer complete src/utils.ts:20:1 --prefix use --limit 20
 
 # Type errors in one file
 prinfer check src/utils.ts
@@ -350,6 +367,8 @@ src/utils.ts:16:14 error TS2322: Type 'string' is not assignable to type 'number
 1 error, 0 warnings.
 ```
 
+Failures print the error, `Did you mean: …?` candidates, and a suggestion on stderr, and exit 1.
+
 `prinfer check` exits 0 when the file has no type errors (warnings and suggestions don't count) and 1 when it has errors, so scripts and agents can branch on the exit code alone.
 
 ### JSON output
@@ -358,13 +377,13 @@ src/utils.ts:16:14 error TS2322: Type 'string' is not assignable to type 'number
 
 ```bash
 $ prinfer src/utils.ts:names --json
-{"version":1,"ok":true,"result":{"signature":"string[]","line":11,"column":14,"kind":"variable","name":"names"}}
+{"version":1,"ok":true,"result":{"signature":"string[]","line":11,"column":14,"kind":"const","name":"names"}}
 
 $ prinfer check src/utils.ts --json
 {"version":1,"ok":true,"result":{"file":"/project/src/utils.ts","diagnostics":[{"line":16,"column":14,"endLine":16,"endColumn":19,"code":2322,"category":"error","message":"Type 'string' is not assignable to type 'number'.","source":"ts"}],"errorCount":1,"warningCount":0}}
 ```
 
-Failures print `{"version":1,"ok":false,"error":{...}}` and exit 1. `check` also exits 1 when it succeeds but finds errors; check `ok` to tell a failed run from a file with type errors.
+Failures print `{"version":1,"ok":false,"error":{...}}`, with the same `project` and `candidates` fields as the MCP server, and exit 1. `check` also exits 1 when it succeeds but finds errors; check `ok` to tell a failed run from a file with type errors.
 
 ### Other commands
 
@@ -391,7 +410,7 @@ hover("./src/utils.ts", "names", { line: 11 });
 
 // By position (line, column)
 hover("./src/utils.ts", 11, 33);
-// => { signature: "{ id: number; name: string; }", line: 11, column: 33, kind: "identifier", name: "user", ... }
+// => { signature: "{ id: number; name: string; }", line: 11, column: 33, kind: "parameter", name: "user", ... }
 
 // Options: include_docs, full (no truncation), include_timing, project
 hover("./src/utils.ts", "format", { include_docs: true }).documentation;
@@ -404,9 +423,11 @@ const batch = batchHover("./src/utils.ts", [
 ]);
 // => { items: [...], successCount: 2, errorCount: 0 }
 
-// Completions at a cursor
+// Completions at a cursor, ranked; prefix and limit are optional
 completions("./src/utils.ts", 14, 30).entries.map((entry) => entry.name);
 // => ["coffee", "tea"]
+completions("./src/utils.ts", 20, 1, { prefix: "use", limit: 20 });
+// => { entries: [...], total: 3, truncated: false, prefix: "use", ... }
 
 // Type errors for one file
 const result = diagnostics("./src/utils.ts", { include_suggestions: false });

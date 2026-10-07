@@ -4,7 +4,10 @@ import type { HoverResult } from "../types.js";
 import { getNameNode, isArrowOrFnExpr } from "./node-match.js";
 
 /**
- * Get the symbol kind as a string
+ * Get the symbol kind as a string. Kinds follow the labels an editor hover
+ * shows (and the TypeScript 7 backend reports): `const`, `let`, `var`,
+ * `parameter`, `property`, `method`, and so on. A variable initialized with
+ * a function is `function`.
  */
 export function getSymbolKind(node: ts.Node): string {
 	if (ts.isFunctionDeclaration(node)) return "function";
@@ -20,7 +23,7 @@ export function getSymbolKind(node: ts.Node): string {
 		) {
 			return "function";
 		}
-		return "variable";
+		return variableKind(node);
 	}
 	if (ts.isParameter(node)) return "parameter";
 	if (ts.isPropertyDeclaration(node)) return "property";
@@ -32,7 +35,11 @@ export function getSymbolKind(node: ts.Node): string {
 	if (ts.isClassDeclaration(node)) return "class";
 	if (ts.isEnumDeclaration(node)) return "enum";
 	if (ts.isEnumMember(node)) return "enum member";
-	if (ts.isBindingElement(node)) return "variable";
+	if (ts.isBindingElement(node)) {
+		const root = ts.walkUpBindingElementsAndPatterns(node);
+		return ts.isParameter(root) ? "parameter" : variableKind(root);
+	}
+	if (ts.isTypeParameterDeclaration(node)) return "type parameter";
 	if (ts.isPropertyAssignment(node)) return "property";
 	if (ts.isShorthandPropertyAssignment(node)) return "property";
 	if (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node))
@@ -40,6 +47,48 @@ export function getSymbolKind(node: ts.Node): string {
 	if (ts.isModuleDeclaration(node)) return "namespace";
 	if (ts.isIdentifier(node)) return "identifier";
 	return "unknown";
+}
+
+/** `const`, `let`, `using`, `await using`, or `var`, from the declaration list. */
+function variableKind(node: ts.VariableDeclaration): string {
+	switch (ts.getCombinedNodeFlags(node) & ts.NodeFlags.BlockScoped) {
+		case ts.NodeFlags.Const:
+			return "const";
+		case ts.NodeFlags.Let:
+			return "let";
+		case ts.NodeFlags.Using:
+			return "using";
+		case ts.NodeFlags.AwaitUsing:
+			return "await using";
+		default:
+			return "var";
+	}
+}
+
+/**
+ * The kind of a bare identifier or property access, from the declaration of
+ * the symbol it refers to: a reference to a parameter is `parameter`, to a
+ * const is `const`, `obj.fn` is `method`. Falls back to `fallback` when the
+ * symbol has no declaration prinfer can classify.
+ */
+function referenceKind(
+	checker: ts.TypeChecker,
+	node: ts.Node,
+	fallback: string,
+): string {
+	const target = ts.isPropertyAccessExpression(node) ? node.name : node;
+	let symbol = checker.getSymbolAtLocation(target);
+	if (symbol && symbol.flags & ts.SymbolFlags.Alias) {
+		try {
+			symbol = checker.getAliasedSymbol(symbol);
+		} catch {
+			// Unresolvable alias: classify the import itself.
+		}
+	}
+	const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+	if (!declaration) return fallback;
+	const kind = getSymbolKind(declaration);
+	return kind === "unknown" || kind === "identifier" ? fallback : kind;
 }
 
 /**
@@ -146,7 +195,10 @@ function getHoverInfoImpl(
 		? ts.TypeFormatFlags.NoTruncation
 		: ts.TypeFormatFlags.None;
 
-	const kind = getSymbolKind(node);
+	let kind = getSymbolKind(node);
+	if (kind === "identifier" || ts.isPropertyAccessExpression(node)) {
+		kind = referenceKind(checker, node, kind);
+	}
 	const name = getNodeName(node);
 
 	// Get symbol for documentation

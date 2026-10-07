@@ -34,6 +34,43 @@ describe("completions", () => {
 		]);
 	});
 
+	test("filters by a case-insensitive prefix and reports the total", () => {
+		const result = completions(completionsFile, 3, 33, { prefix: "COF" });
+		expect(result.entries.map((entry) => entry.name)).toEqual(["coffee"]);
+		expect(result).toMatchObject({
+			prefix: "COF",
+			total: 1,
+			truncated: false,
+		});
+	});
+
+	test("truncates to limit and ranks keywords after other globals", () => {
+		const all = completions(completionsFile, 2, 1);
+		expect(all.truncated).toBe(false);
+		expect(all.total).toBe(all.entries.length);
+		expect(all.total).toBeGreaterThan(100);
+
+		const limited = completions(completionsFile, 2, 1, { limit: 5 });
+		expect(limited.entries).toHaveLength(5);
+		expect(limited).toMatchObject({ total: all.total, truncated: true });
+		expect(limited.entries).toEqual(all.entries.slice(0, 5));
+		// Locals rank first.
+		expect(limited.entries[0]?.sortText).toBe("11");
+
+		const sortTexts = all.entries.map((entry) => entry.sortText);
+		expect(sortTexts).toEqual([...sortTexts].sort());
+		const globals = all.entries.filter((entry) => entry.sortText === "15");
+		const firstKeyword = globals.findIndex(
+			(entry) => entry.kind === "keyword",
+		);
+		expect(firstKeyword).toBeGreaterThan(0);
+		expect(
+			globals
+				.slice(firstKeyword)
+				.every((entry) => entry.kind === "keyword"),
+		).toBe(true);
+	});
+
 	test("preserves suggestions from a loose-autocomplete union", () => {
 		const result = completions(completionsFile, 8, 41);
 		expect(result.entries.map((entry) => entry.name)).toEqual([
@@ -44,6 +81,47 @@ describe("completions", () => {
 });
 
 describe("hover", () => {
+	test("rejects lines and columns outside the file with the valid range", () => {
+		for (const [line, column, message, suggestion] of [
+			[1000, 1, "Line 1000 is outside", "Use a line between 1 and 45."],
+			[
+				4,
+				90,
+				"Column 90 is outside line 4",
+				"Line 4 has 51 characters; use a column between 1 and 52.",
+			],
+		] as const) {
+			expect(() => hover(sampleFile, line, column)).toThrow(message);
+			try {
+				hover(sampleFile, line, column);
+			} catch (error) {
+				expect(error).toMatchObject({
+					code: "INVALID_ARGUMENT",
+					suggestion,
+				});
+			}
+		}
+	});
+
+	test("reports editor kinds for references, not identifier", () => {
+		const kindsFile = path.join(fixturesDir, "hover-kinds.ts");
+		for (const [line, column, kind] of [
+			[13, 44, "parameter"], // name.length: the callback parameter
+			[13, 49, "property"], // .length
+			[34, 6, "parameter"], // person.id
+			[38, 26, "const"], // user
+			[38, 31, "property"], // .name
+			[12, 14, "const"], // const names declaration
+			[2, 9, "parameter"], // a + b
+		] as const) {
+			expect({
+				line,
+				column,
+				kind: hover(kindsFile, line, column).kind,
+			}).toEqual({ line, column, kind });
+		}
+	});
+
 	test("gets type at function declaration", () => {
 		// "add" function starts at line 4, column 17 is on the function name
 		const result = hover(sampleFile, 4, 17);
@@ -110,19 +188,25 @@ describe("batchHover", () => {
 	test("returns structured, actionable errors per failed position", () => {
 		const result = batchHover(sampleFile, [
 			{ line: 4, column: 17 },
+			{ line: 1, column: 5 },
 			{ line: 1000, column: 1 },
 		]);
 
 		expect(result.successCount).toBe(1);
-		expect(result.errorCount).toBe(1);
+		expect(result.errorCount).toBe(2);
 		expect(result.items[1]?.error).toMatchObject({
 			code: "SYMBOL_NOT_FOUND",
 			file: sampleFile,
-			line: 1000,
-			column: 1,
+			line: 1,
+			column: 5,
 			project: path.join(import.meta.dir, "..", "..", "tsconfig.json"),
 		});
 		expect(result.items[1]?.error?.suggestion).toContain("hover_by_name");
+		expect(result.items[2]?.error).toMatchObject({
+			code: "INVALID_ARGUMENT",
+			line: 1000,
+			suggestion: "Use a line between 1 and 45.",
+		});
 	});
 
 	test("reports type-resolution timing per item", () => {

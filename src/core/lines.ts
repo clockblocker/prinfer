@@ -9,6 +9,8 @@
  * {@link fromLspPosition}.
  */
 
+import { PrinferError } from "../errors.js";
+
 /** A 0-based line and UTF-16 character offset, as in LSP and TypeScript. */
 export interface LineCharacter {
 	line: number;
@@ -91,4 +93,34 @@ export function fromLspPosition(
 		lineStarts(text),
 		offsetAt(lineStarts(text, true), position),
 	);
+}
+
+/**
+ * Throw INVALID_ARGUMENT unless the 1-based `line` and `column` address a
+ * cursor position in `text` (BOM already stripped): a line of the file, and
+ * a column on that line or just past its last character. The error gives the
+ * valid range so callers can correct the request.
+ */
+export function assertCursorPosition(
+	text: string,
+	line: number,
+	column: number,
+	file: string,
+): void {
+	const lines = splitLines(text);
+	if (!Number.isInteger(line) || line < 1 || line > lines.length) {
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
+			`Line ${line} is outside ${file}, which has ${lines.length} line${lines.length === 1 ? "" : "s"}`,
+			`Use a line between 1 and ${lines.length}.`,
+		);
+	}
+	const length = (lines[line - 1] ?? "").length;
+	if (!Number.isInteger(column) || column < 1 || column > length + 1) {
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
+			`Column ${column} is outside line ${line} of ${file}`,
+			`Line ${line} has ${length} character${length === 1 ? "" : "s"}; use a column between 1 and ${length + 1}.`,
+		);
+	}
 }

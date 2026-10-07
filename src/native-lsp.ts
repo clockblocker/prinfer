@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import * as ts from "typescript";
 import { summarizeDiagnostics } from "./core/diagnostics.js";
 import {
+	assertCursorPosition,
 	fromLspPosition,
 	type LineCharacter,
 	stripBom,
@@ -160,6 +161,12 @@ class NativeLspClient {
 		const uri = pathToFileURL(file).href;
 		this.reportChanges(this.workspace.checkImports(file));
 		const document = this.openOrUpdate(uri, file);
+		assertCursorPosition(
+			document.text,
+			position.line,
+			position.column,
+			file,
+		);
 		if (project) await this.assertProject(uri, file, project);
 		const resolutionStarted = performance.now();
 		const result = (await this.request("textDocument/hover", {

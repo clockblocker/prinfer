@@ -32,6 +32,7 @@ export const completionResultSchema = z.object({
 	isGlobalCompletion: z.boolean(),
 	isMemberCompletion: z.boolean(),
 	isNewIdentifierLocation: z.boolean(),
+	prefix: z.string().optional(),
 	entries: z.array(
 		z.object({
 			name: z.string(),
@@ -41,6 +42,8 @@ export const completionResultSchema = z.object({
 			source: z.string().optional(),
 		}),
 	),
+	total: z.number(),
+	truncated: z.boolean(),
 });
 
 export const diagnosticCategorySchema = z.enum([
@@ -87,23 +90,23 @@ export const contractErrorSchema = z.object({
 	suggestion: z.string().optional(),
 });
 
+export const batchHoverItemSchema = z.object({
+	/**
+	 * The queried position. Text targets report the resolved column;
+	 * name targets report where the symbol was found. A column of 0
+	 * means the target could not be resolved to a position.
+	 */
+	position: hoverPositionSchema,
+	file: z.string().optional(),
+	name: z.string().optional(),
+	text: z.string().optional(),
+	occurrence: z.number().optional(),
+	result: hoverResultSchema.optional(),
+	error: contractErrorSchema.optional(),
+});
+
 export const batchHoverResultSchema = z.object({
-	items: z.array(
-		z.object({
-			/**
-			 * The queried position. Text targets report the resolved column;
-			 * name targets report where the symbol was found. A column of 0
-			 * means the target could not be resolved to a position.
-			 */
-			position: hoverPositionSchema,
-			file: z.string().optional(),
-			name: z.string().optional(),
-			text: z.string().optional(),
-			occurrence: z.number().optional(),
-			result: hoverResultSchema.optional(),
-			error: contractErrorSchema.optional(),
-		}),
-	),
+	items: z.array(batchHoverItemSchema),
 	successCount: z.number(),
 	errorCount: z.number(),
 });
@@ -259,7 +262,7 @@ function mcpSuggestion(code: ContractErrorCode, tool?: McpTool): string {
 				case "batch_hover":
 					return "Make each item {name, line?}, {line, text, occurrence?}, or {line, column} with 1-based numbers, and send at most 100 items.";
 				case "completions":
-					return "Pass a positive 1-based line and column for the cursor.";
+					return "Pass a positive 1-based line and column for the cursor, and a limit between 1 and 500.";
 				case "diagnostics":
 					return "Pass the path of one TypeScript or JavaScript file.";
 				default:
@@ -273,8 +276,6 @@ function mcpSuggestion(code: ContractErrorCode, tool?: McpTool): string {
 					return "Check the spelling against candidates, pass line to pick the match on a known line, or call hover with that line and text copied from it.";
 				case "batch_hover":
 					return "Check name items against candidates, or target the token with {line, text} copied from the line.";
-				case "completions":
-					return "Move the column onto the cursor position, e.g. just inside an opening quote or after a dot.";
 				default:
 					return "Point at an identifier: pass text copied from the line rather than counting columns, or call hover_by_name with the symbol name.";
 			}
@@ -296,7 +297,7 @@ function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
 				case "check":
 					return "Usage: prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>].";
 				case "complete":
-					return "Usage: prinfer complete <file.ts>:<line>:<column> with a 1-based line and column.";
+					return "Usage: prinfer complete <file.ts>:<line>:<column> [--prefix <text>] [--limit <n>] with a 1-based line and column.";
 				default:
 					return "Use <file>:<name>, <file>:<name>:<line>, or <file>:<line>:<column> with 1-based numbers; run prinfer --help for options.";
 			}
@@ -306,8 +307,6 @@ function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
 			switch (command) {
 				case "name":
 					return "Check the spelling against candidates, add a line hint (<file>:<name>:<line>), or target the token with <file>:<line>:<column>.";
-				case "complete":
-					return "Move the column onto the cursor position, e.g. just inside an opening quote or after a dot.";
 				default:
 					return "Check that the 1-based line and column point at an identifier, or look the symbol up by name with <file>:<name>.";
 			}

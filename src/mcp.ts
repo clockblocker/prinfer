@@ -8,36 +8,34 @@ import { nearbyCandidates } from "./candidates.js";
 import {
 	type BatchHoverSuccess,
 	batchHoverSuccess,
-	batchHoverSuccessSchema,
 	type ContractErrorResponse,
 	completionSuccess,
-	completionSuccessSchema,
-	contractError,
-	contractErrorResponseSchema,
 	diagnosticsSuccess,
-	diagnosticsSuccessSchema,
 	hoverSuccess,
-	hoverSuccessSchema,
 	type McpTool,
 } from "./contract.js";
 import {
-	findNearestTsconfig,
+	formatCompletions,
 	formatDiagnostics,
+	getCompletions,
 	resolveTextColumn,
 } from "./core/index.js";
+import { formatErrorText, reportError } from "./error-report.js";
 import { assertSourceFile, PrinferError } from "./errors.js";
-import { batchHover, completions, diagnostics, hover } from "./index.js";
+import { batchHover, diagnostics, hover } from "./index.js";
+import {
+	batchHoverOutputSchema,
+	compact,
+	completionsOutputSchema,
+	diagnosticsOutputSchema,
+	hoverOutputSchema,
+} from "./mcp-schemas.js";
 import {
 	nativeDiagnostics,
 	nativeHover,
 	nativeHoverByName,
 } from "./native-lsp.js";
-import type {
-	CompletionResult,
-	HoverOptions,
-	HoverPosition,
-	HoverResult,
-} from "./types.js";
+import type { HoverOptions, HoverPosition, HoverResult } from "./types.js";
 
 declare const __PRINFER_VERSION__: string | undefined;
 
@@ -59,7 +57,7 @@ Provided tools:
   hover_by_name(file, name, line?, include_docs?, project?, backend?)
   hover(file, line, text? | column?, occurrence?, include_docs?, project?, backend?)
   batch_hover(positions, file?, include_docs?, project?, backend?)
-  completions(file, line, column, project?)
+  completions(file, line, column, prefix?, limit?, project?)
   diagnostics(file, include_suggestions?, project?, backend?)
 
 Environment:
@@ -82,18 +80,6 @@ interface FailureContext {
 	query?: string;
 	/** Only suggest names close to query (name lookups). */
 	strict?: boolean;
-}
-
-function formatError(error: unknown): string {
-	const err = error as Error;
-	let text = `Error: ${err.message}`;
-	if (err.cause instanceof Error) {
-		text += `\n\nOriginal: ${err.cause.message}`;
-	}
-	if (err instanceof PrinferError && err.suggestion) {
-		text += `\nSuggestion: ${err.suggestion}`;
-	}
-	return text;
 }
 
 function formatHoverResult(result: HoverResult): string {
@@ -136,9 +122,7 @@ function formatBatchHoverResult(result: BatchHoverSuccess["result"]): string {
 	for (const item of result.items) {
 		text += `\n--- ${itemLabel(item)} ---\n`;
 		if (item.error) {
-			text += `Error [${item.error.code}]: ${item.error.message}\n`;
-			if (item.error.suggestion)
-				text += `Suggestion: ${item.error.suggestion}\n`;
+			text += `${formatErrorText(item.error, { strict: item.name !== undefined })}\n`;
 		} else if (item.result) {
 			text += `${formatHoverResult(item.result as HoverResult)}\n`;
 		}
@@ -146,11 +130,10 @@ function formatBatchHoverResult(result: BatchHoverSuccess["result"]): string {
 	return text;
 }
 
-function formatCompletionResult(result: CompletionResult): string {
-	if (result.entries.length === 0) return "No completion entries.";
-	return result.entries.map((entry) => entry.name).join("\n");
-}
-
+/**
+ * A failed tool call. The text repeats the candidates and suggestion from
+ * structuredContent, because many clients show the model only the text.
+ */
 function errorResult(
 	error: unknown,
 	tool: McpTool,
@@ -158,58 +141,29 @@ function errorResult(
 ) {
 	const response = toolError(error, tool, context);
 	return {
-		content: [{ type: "text" as const, text: formatError(error) }],
+		content: [
+			{
+				type: "text" as const,
+				text: formatErrorText(response.error, {
+					strict: context.strict,
+				}),
+			},
+		],
 		structuredContent: response,
 		isError: true,
 	};
 }
 
-/**
- * The contract error for a failed tool call, with tool-specific advice and,
- * for SYMBOL_NOT_FOUND, nearby names. Never throws: it runs on error paths,
- * where the file may be missing, a directory, or unreadable.
- */
+/** The contract error for a failed tool call, with tool-specific advice. */
 function toolError(
 	error: unknown,
 	tool: McpTool,
 	context: FailureContext = {},
 ): ContractErrorResponse {
-	const file = context.file
-		? path.resolve(process.cwd(), context.file)
-		: undefined;
-	const response = contractError(error, {
-		file,
-		line: context.line,
-		column: context.column,
-		project: projectFor(file, context.project),
+	return reportError(error, {
+		...context,
 		surface: { interface: "mcp", tool },
 	});
-	if (
-		file &&
-		response.error.code === "SYMBOL_NOT_FOUND" &&
-		!response.error.candidates
-	) {
-		const candidates = nearbyCandidates(file, {
-			line: context.line || undefined,
-			query: context.query,
-			strict: context.strict,
-		});
-		if (candidates) response.error.candidates = candidates;
-	}
-	return response;
-}
-
-function projectFor(
-	file: string | undefined,
-	project: string | undefined,
-): string | undefined {
-	if (project) return path.resolve(process.cwd(), project);
-	if (!file) return undefined;
-	try {
-		return findNearestTsconfig(path.dirname(file));
-	} catch {
-		return undefined;
-	}
 }
 
 function useNative(backend?: Backend): boolean {
@@ -574,23 +528,10 @@ function positionOf(target: BatchTarget): HoverPosition {
 	return { line: target.line ?? 0, column: 0 };
 }
 
-const toolOutputSchema = z.union([
-	hoverSuccessSchema,
-	contractErrorResponseSchema,
-]);
-
-const batchToolOutputSchema = z.union([
-	batchHoverSuccessSchema,
-	contractErrorResponseSchema,
-]);
-
-const completionToolOutputSchema = z.union([
-	completionSuccessSchema,
-	contractErrorResponseSchema,
-]);
-
-const positiveInteger = z.number().int().positive();
+const positiveInteger = z.int().min(1);
 const MAX_BATCH_POSITIONS = 100;
+const DEFAULT_COMPLETION_LIMIT = 50;
+const MAX_COMPLETION_LIMIT = 500;
 
 const fileSchema = z
 	.string()
@@ -651,19 +592,21 @@ function createServer(): McpServer {
 		{
 			description:
 				"Show the type TypeScript infers for a named variable, function, call, parameter, property, or type. Use before writing a type annotation, when unsure what a generic or call resolves to, or instead of reading .d.ts files. Declarations win over other uses of the name; pass line to pick among repeats.",
-			inputSchema: z.object({
-				file: fileSchema,
-				name: nameSchema,
-				line: positiveInteger
-					.optional()
-					.describe(
-						"1-based line of the one you mean, when the name repeats",
-					),
-				include_docs: includeDocsSchema,
-				project: projectSchema,
-				backend: backendSchema,
-			}),
-			outputSchema: toolOutputSchema,
+			inputSchema: compact(
+				z.object({
+					file: fileSchema,
+					name: nameSchema,
+					line: positiveInteger
+						.optional()
+						.describe(
+							"1-based line of the one you mean, when the name repeats",
+						),
+					include_docs: includeDocsSchema,
+					project: projectSchema,
+					backend: backendSchema,
+				}),
+			),
+			outputSchema: hoverOutputSchema,
 		},
 		async ({ file, name, line, include_docs, project, backend }) => {
 			try {
@@ -701,17 +644,19 @@ function createServer(): McpServer {
 		{
 			description:
 				"Show the type TypeScript infers at a token on a line, like an editor hover; generic calls show their instantiated types. Use when hover_by_name can't name the token: callback parameters, expressions, repeated names. Target it with text copied from the line (or a column).",
-			inputSchema: z.object({
-				file: fileSchema,
-				line: lineSchema,
-				text: textSchema.optional(),
-				occurrence: occurrenceSchema,
-				column: columnSchema.optional(),
-				include_docs: includeDocsSchema,
-				project: projectSchema,
-				backend: backendSchema,
-			}),
-			outputSchema: toolOutputSchema,
+			inputSchema: compact(
+				z.object({
+					file: fileSchema,
+					line: lineSchema,
+					text: textSchema.optional(),
+					occurrence: occurrenceSchema,
+					column: columnSchema.optional(),
+					include_docs: includeDocsSchema,
+					project: projectSchema,
+					backend: backendSchema,
+				}),
+			),
+			outputSchema: hoverOutputSchema,
 		},
 		async ({
 			file,
@@ -767,38 +712,42 @@ function createServer(): McpServer {
 		"batch_hover",
 		{
 			description: `Run up to ${MAX_BATCH_POSITIONS} hovers in one call, e.g. to check several inferred types after an edit. Each item is {name, line?}, {line, text, occurrence?}, or {line, column}, in its own file or the shared file. Failures are reported per item.`,
-			inputSchema: z.object({
-				file: fileSchema
-					.optional()
-					.describe("Default file for items without their own file"),
-				positions: z
-					.array(
-						z.object({
-							file: z
-								.string()
-								.optional()
-								.describe(
-									"This item's file, overriding the shared file",
-								),
-							name: nameSchema.optional(),
-							line: positiveInteger
-								.optional()
-								.describe(
-									"1-based line; required unless name is given",
-								),
-							text: textSchema.optional(),
-							occurrence: occurrenceSchema,
-							column: columnSchema.optional(),
-						}),
-					)
-					.min(1)
-					.max(MAX_BATCH_POSITIONS)
-					.describe(`1-${MAX_BATCH_POSITIONS} lookups`),
-				include_docs: includeDocsSchema,
-				project: projectSchema,
-				backend: backendSchema,
-			}),
-			outputSchema: batchToolOutputSchema,
+			inputSchema: compact(
+				z.object({
+					file: fileSchema
+						.optional()
+						.describe(
+							"Default file for items without their own file",
+						),
+					positions: z
+						.array(
+							z.object({
+								file: z
+									.string()
+									.optional()
+									.describe(
+										"This item's file, overriding the shared file",
+									),
+								name: nameSchema.optional(),
+								line: positiveInteger
+									.optional()
+									.describe(
+										"1-based line; required unless name is given",
+									),
+								text: textSchema.optional(),
+								occurrence: occurrenceSchema,
+								column: columnSchema.optional(),
+							}),
+						)
+						.min(1)
+						.max(MAX_BATCH_POSITIONS)
+						.describe(`1-${MAX_BATCH_POSITIONS} lookups`),
+					include_docs: includeDocsSchema,
+					project: projectSchema,
+					backend: backendSchema,
+				}),
+			),
+			outputSchema: batchHoverOutputSchema,
 		},
 		async ({ file, positions, include_docs, project, backend }) => {
 			try {
@@ -822,27 +771,44 @@ function createServer(): McpServer {
 	server.registerTool(
 		"completions",
 		{
-			description:
-				"List the completions TypeScript offers at a cursor, including string-literal union members. Use to find valid values for an argument, property key, or import before writing it.",
-			inputSchema: z.object({
-				file: fileSchema,
-				line: lineSchema,
-				column: positiveInteger.describe(
-					"1-based cursor column; the cursor sits before this character, e.g. just inside an opening quote",
-				),
-				project: z.string().optional().describe(PROJECT_DEFAULT),
-			}),
-			outputSchema: completionToolOutputSchema,
+			description: `List the completions TypeScript offers at a cursor, including string-literal union members. Use to find valid values for an argument, property key, or import before writing it. Returns the best ${DEFAULT_COMPLETION_LIMIT} by default; pass prefix to narrow.`,
+			inputSchema: compact(
+				z.object({
+					file: fileSchema,
+					line: lineSchema,
+					column: positiveInteger.describe(
+						"1-based cursor column; the cursor sits before this character, e.g. just inside an opening quote",
+					),
+					prefix: z
+						.string()
+						.optional()
+						.describe(
+							'Keep names starting with this (case-insensitive). Default: the partial identifier or string text left of the cursor; "" lists all',
+						),
+					limit: positiveInteger
+						.max(MAX_COMPLETION_LIMIT)
+						.optional()
+						.describe(
+							`Max entries (default ${DEFAULT_COMPLETION_LIMIT}); locals and members rank first`,
+						),
+					project: z.string().optional().describe(PROJECT_DEFAULT),
+				}),
+			),
+			outputSchema: completionsOutputSchema,
 		},
-		async ({ file, line, column, project }) => {
+		async ({ file, line, column, prefix, limit, project }) => {
 			try {
 				assertSourceFile(file);
-				const result = completions(file, line, column, { project });
+				const result = getCompletions(file, line, column, project, {
+					prefix,
+					autoPrefix: true,
+					limit: limit ?? DEFAULT_COMPLETION_LIMIT,
+				});
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: formatCompletionResult(result),
+							text: formatCompletions(result),
 						},
 					],
 					structuredContent: completionSuccess(result),
@@ -863,21 +829,20 @@ function createServer(): McpServer {
 		{
 			description:
 				"Check one TypeScript file for type errors, instead of running tsc on the whole project. Call it on each file you edit; the edit is done when none of them reports an error.",
-			inputSchema: z.object({
-				file: fileSchema,
-				project: projectSchema,
-				include_suggestions: z
-					.boolean()
-					.optional()
-					.describe(
-						"Also report suggestions such as unused variables",
-					),
-				backend: backendSchema,
-			}),
-			outputSchema: z.union([
-				diagnosticsSuccessSchema,
-				contractErrorResponseSchema,
-			]),
+			inputSchema: compact(
+				z.object({
+					file: fileSchema,
+					project: projectSchema,
+					include_suggestions: z
+						.boolean()
+						.optional()
+						.describe(
+							"Also report suggestions such as unused variables",
+						),
+					backend: backendSchema,
+				}),
+			),
+			outputSchema: diagnosticsOutputSchema,
 		},
 		async ({ file, project, include_suggestions, backend }) => {
 			try {

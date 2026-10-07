@@ -24,7 +24,7 @@ describe("test-runner snapshot integration", () => {
 		});
 
 		expect(result.name).toBe("capturedGenericResult");
-		expect(result.kind).toBe("variable");
+		expect(result.kind).toBe("const");
 	});
 
 	test("captures TypeScript 7 completion names", async () => {

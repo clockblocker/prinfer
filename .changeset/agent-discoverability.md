@@ -11,11 +11,20 @@ prinfer 3.0 makes the MCP server easier for agents to find, install, and call co
 - `batch_hover` reports a missing, unreadable, or directory `file` as a per-item `FILE_NOT_FOUND` error instead of failing the whole call, because items can now come from different files. `file` is optional when every item names its own.
 - Lookups by name report the position of the name token on both backends. On TypeScript 6 this used to be the start of the declaration (for example `export`).
 - Name lookups prefer declarations (functions, variables, types, calls, then parameters, members, and other declarations) and never match comments or strings. Both backends pick the same node, which can differ from what earlier versions returned for a repeated name.
+- The `completions` MCP tool and `prinfer complete` return at most 50 entries by default, and filter by the text already typed left of the cursor (an identifier's start, or a string literal's contents), as an editor does. Pass `prefix` (`--prefix`) to filter by other text or `""` to turn filtering off, and `limit` (`--limit`, up to 500 on MCP) for more entries. The text output ends with `… N more; pass prefix to narrow, or raise limit` when entries were cut.
+- Completion entries are ranked by TypeScript's sortText with keywords after other entries of the same rank, in the library `completions()` too.
+- TypeScript 6 hover kinds match the editor and the TypeScript 7 backend more closely: variables are `const`, `let`, or `var` instead of `variable`, and a bare reference reports the kind of what it refers to (`parameter`, `property`, `method`, `const`, ...) instead of `identifier`. This affects the library, the CLI, `prinfer/testing`'s `inferredTypeInfo`, and the `typescript6` MCP backend.
+- A hover line or column outside the file is an `INVALID_ARGUMENT` error that gives the valid range, on both backends and in the CLI, instead of `SYMBOL_NOT_FOUND`.
+- Error text starts with the code (`Error [SYMBOL_NOT_FOUND]: …`) and adds `Did you mean: …?` (or `Nearby identifiers: …`) and `Suggestion: …` lines, on MCP tools, `batch_hover` items, and CLI stderr. Many MCP clients show the model only text content, so the recovery hints used to be invisible there.
+- MCP `outputSchema`s are one compact envelope per tool (`version`, `ok`, and `result` or `error`) instead of a union, and list only the error fields an agent recovers with. Structured content is unchanged. Together with dropping zod's safe-integer bounds and `$schema` from input schemas, `tools/list` is about a fifth smaller.
 - On the TypeScript 7 backend, a `project` its language server would not use for the file (anything other than the nearest `tsconfig.json` or a project it references) fails with `INVALID_ARGUMENT` instead of silently using another tsconfig. Use the `typescript6` backend for such projects.
 
 ### Features
 
 - `hover` and `batch_hover` items can target a token with `text` copied from the line (plus `occurrence` for the nth match) instead of a column. Whole-identifier matches count first, so `"user"` skips `users`. A miss quotes the line back so the agent can retry.
+- The completion result adds `total` (matches before the limit), `truncated`, and `prefix` (the filter applied); the library `completions()` accepts `prefix` and `limit` options. `inferredCompletions` in `prinfer/testing` still returns every name, unfiltered, so snapshots stay exhaustive.
+- CLI name targets accept any JavaScript identifier, such as `prinfer 'src/store.ts:$store'` or non-ASCII names.
+- CLI `--json` errors include `project`, like the MCP server's.
 - `batch_hover` accepts up to 100 items across any number of files, mixing `{name, line?}`, `{line, text, occurrence?}`, and `{line, column}` targets.
 - New `diagnostics` MCP tool, `diagnostics(file, options)` library function, and `prinfer check <file> [--json] [--suggestions]` command report one file's type errors without checking the whole project. `prinfer check` exits 1 when the file has errors.
 - The CLI accepts `--backend typescript6|typescript7` for type lookups and `prinfer check`. It still defaults to `typescript6`, and `prinfer complete` stays TypeScript 6 only.
@@ -30,7 +39,7 @@ prinfer 3.0 makes the MCP server easier for agents to find, install, and call co
   - `inferredCompletions` uses TypeScript 7 without `backend: "typescript7"` (still accepted).
   - Teardown is optional: idle TypeScript 7 sessions no longer keep the test process alive. `closeTestingSessions` still shuts them down early.
   - Lookup failures throw `PrinferError` with the fix in the message: the closest declaration names for an unknown name, the line text for missing text, the valid backends and target shapes, and how to resolve a relative path against the test file.
-- Errors are easier to recover from. `SYMBOL_NOT_FOUND` `candidates` are real identifiers close to the requested name (no keywords, or words from comments and strings). Suggestions are specific to the MCP tool or CLI command that failed. Out-of-range `completions` positions are `INVALID_ARGUMENT` errors that give the valid range.
+- Errors are easier to recover from. `SYMBOL_NOT_FOUND` `candidates` are real identifiers close to the requested name (no keywords, or words from comments and strings). Suggestions are specific to the MCP tool or CLI command that failed. Out-of-range `completions` and hover positions are `INVALID_ARGUMENT` errors that give the valid range.
 
 ### Fixes
 

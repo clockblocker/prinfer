@@ -2,7 +2,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { nearbyCandidates } from "./candidates.js";
 import {
 	type CliCommand,
 	type ContractErrorCode,
@@ -11,9 +10,14 @@ import {
 	diagnosticsSuccess,
 	hoverSuccess,
 } from "./contract.js";
-import { formatDiagnostics } from "./core/index.js";
+import {
+	formatCompletions,
+	formatDiagnostics,
+	getCompletions,
+} from "./core/index.js";
+import { formatErrorText, reportError } from "./error-report.js";
 import { assertSourceFile } from "./errors.js";
-import { completions, diagnostics, hover } from "./index.js";
+import { diagnostics, hover } from "./index.js";
 import { runSetup } from "./setup.js";
 import type { DiagnosticsResult, HoverOptions, HoverResult } from "./types.js";
 
@@ -24,7 +28,7 @@ Usage:
   prinfer <file.ts>:<name> [options]
   prinfer <file.ts>:<name>:<line> [options]
   prinfer <file.ts>:<line>:<column> [options]
-  prinfer complete <file.ts>:<line>:<column> [--json] [--project <tsconfig.json>]
+  prinfer complete <file.ts>:<line>:<column> [--prefix <text>] [--limit <n>] [--json] [--project <tsconfig.json>]
   prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <backend>]
   prinfer mcp
   prinfer setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
@@ -47,6 +51,9 @@ Options:
   --timing, -t         Include type-resolution timing
   --full, -f           Disable editor-style type truncation
   --suggestions        check: also report suggestions such as unused variables
+  --prefix <text>      complete: keep names starting with text (case-insensitive);
+                       default: the partial identifier left of the cursor; "" for all
+  --limit <n>          complete: at most n entries (default 50)
   --json               Emit the versioned JSON contract on stdout
   --project, -p        Path to tsconfig.json (optional)
   --backend <backend>  typescript6 (default) or typescript7, for type lookups and
@@ -58,6 +65,7 @@ Examples:
   prinfer src/utils.ts:createHandler:75
   prinfer src/utils.ts:75:10 --docs
   prinfer complete src/utils.ts:75:10
+  prinfer complete src/utils.ts:75:10 --prefix use --limit 20
   prinfer check src/utils.ts --json
   prinfer src/utils.ts:createHandler --backend typescript7
   prinfer setup claude
@@ -114,9 +122,13 @@ interface CliCompletionOptions {
 	file: string;
 	line: number;
 	column: number;
+	prefix?: string;
+	limit: number;
 	json: boolean;
 	project?: string;
 }
+
+const DEFAULT_COMPLETION_LIMIT = 50;
 
 type CliOptions = CliPositionOptions | CliNameOptions | CliCompletionOptions;
 
@@ -143,6 +155,11 @@ type ParsedArg =
 	| { mode: "position"; file: string; line: number; column: number }
 	| { mode: "name"; file: string; name: string; line?: number };
 
+/** A JavaScript identifier: Unicode ID_Start/ID_Continue, `$`, and `_`. */
+const IDENTIFIER = "[\\p{ID_Start}$_][\\p{ID_Continue}$\\u200C\\u200D]*";
+const NAME_LINE_ARG = new RegExp(`^(.+):(${IDENTIFIER}):(\\d+)$`, "u");
+const NAME_ARG = new RegExp(`^(.+):(${IDENTIFIER})$`, "u");
+
 function parsePositionArg(arg: string): ParsedArg | null {
 	// Match pattern: file.ts:line:column (position-based)
 	const posMatch = arg.match(/^(.+):(\d+):(\d+)$/);
@@ -155,9 +172,9 @@ function parsePositionArg(arg: string): ParsedArg | null {
 		};
 	}
 
-	// Match pattern: file.ts:name:line (name with line hint)
-	// Name must start with a letter or underscore and not be all digits
-	const nameLineMatch = arg.match(/^(.+):([a-zA-Z_][a-zA-Z0-9_]*):(\d+)$/);
+	// Match pattern: file.ts:name:line (name with line hint). The name is any
+	// JavaScript identifier, so it never starts with a digit.
+	const nameLineMatch = arg.match(NAME_LINE_ARG);
 	if (nameLineMatch) {
 		return {
 			mode: "name",
@@ -168,7 +185,7 @@ function parsePositionArg(arg: string): ParsedArg | null {
 	}
 
 	// Match pattern: file.ts:name (name-based)
-	const nameMatch = arg.match(/^(.+):([a-zA-Z_][a-zA-Z0-9_]*)$/);
+	const nameMatch = arg.match(NAME_ARG);
 	if (nameMatch) {
 		return {
 			mode: "name",
@@ -245,11 +262,30 @@ function parseArgs(argv: string[]): CliOptions | null {
 			console.error(`Error: ${message}`);
 			process.exit(1);
 		}
+		const prefixIndex = args.indexOf("--prefix");
+		const prefix = prefixIndex >= 0 ? args[prefixIndex + 1] : undefined;
+		const limitIndex = args.indexOf("--limit");
+		const limitArg = limitIndex >= 0 ? args[limitIndex + 1] : undefined;
+		const limit =
+			limitIndex >= 0 ? Number(limitArg) : DEFAULT_COMPLETION_LIMIT;
+		const optionError =
+			prefixIndex >= 0 && prefix === undefined
+				? '--prefix requires text (pass "" to list every entry).'
+				: !Number.isInteger(limit) || limit < 1
+					? `--limit requires a positive integer, got ${limitArg === undefined ? "nothing" : JSON.stringify(limitArg)}.`
+					: undefined;
+		if (optionError) {
+			if (json) failJson(optionError, "INVALID_ARGUMENT", command);
+			console.error(`Error: ${optionError}`);
+			process.exit(1);
+		}
 		return {
 			mode: "completion",
 			file: parsed.file,
 			line: parsed.line,
 			column: parsed.column,
+			prefix,
+			limit,
 			json,
 			project,
 		};
@@ -300,28 +336,34 @@ function failJson(
 	process.exit(1);
 }
 
-/** The JSON contract error for a failed command, with CLI-specific advice. */
-function cliError(
+/**
+ * Report a failed command: the JSON contract on stdout with --json,
+ * otherwise the message, candidates, and suggestion on stderr.
+ */
+function reportCliError(
 	error: unknown,
 	command: CliCommand,
-	context: { file: string; line?: number; column?: number; name?: string },
-): string {
-	const file = path.resolve(context.file);
-	const response = contractError(error, {
-		file,
+	context: {
+		file: string;
+		line?: number;
+		column?: number;
+		name?: string;
+		project?: string;
+	},
+	json: boolean,
+): void {
+	const strict = context.name !== undefined;
+	const response = reportError(error, {
+		file: context.file,
+		project: context.project,
 		line: context.line,
 		column: context.column,
+		query: context.name,
+		strict,
 		surface: { interface: "cli", command },
 	});
-	if (response.error.code === "SYMBOL_NOT_FOUND" && command !== "complete") {
-		const candidates = nearbyCandidates(file, {
-			line: context.line,
-			query: context.name,
-			strict: context.name !== undefined,
-		});
-		if (candidates) response.error.candidates = candidates;
-	}
-	return JSON.stringify(response);
+	if (json) console.log(JSON.stringify(response));
+	else console.error(formatErrorText(response.error, { strict }));
 }
 
 /** TypeScript 7 lookups go through the native language server, loaded lazily. */
@@ -431,11 +473,7 @@ async function runCheck(args: string[]): Promise<number> {
 		);
 		return result.errorCount > 0 ? 1 : 0;
 	} catch (error) {
-		if (json) {
-			console.log(cliError(error, "check", { file }));
-			return 1;
-		}
-		console.error((error as Error).message);
+		reportCliError(error, "check", { file, project }, json);
 		return 1;
 	}
 }
@@ -472,19 +510,25 @@ async function main(): Promise<void> {
 	try {
 		if (options.mode === "completion") {
 			assertSourceFile(options.file);
-			const result = completions(
+			const result = getCompletions(
 				options.file,
 				options.line,
 				options.column,
+				options.project,
 				{
-					project: options.project,
+					prefix: options.prefix,
+					autoPrefix: true,
+					limit: options.limit,
 				},
 			);
-			if (options.json) {
-				console.log(JSON.stringify(completionSuccess(result)));
-			} else {
-				for (const entry of result.entries) console.log(entry.name);
-			}
+			console.log(
+				options.json
+					? JSON.stringify(completionSuccess(result))
+					: formatCompletions(result, {
+							prefix: "--prefix",
+							limit: "--limit",
+						}),
+			);
 			return;
 		}
 		const result = await runHover(options);
@@ -512,29 +556,28 @@ async function main(): Promise<void> {
 			);
 		}
 	} catch (error) {
-		if (options.json) {
-			console.log(
-				options.mode === "name"
-					? cliError(error, "name", {
-							file: options.file,
-							line: options.line,
-							name: options.name,
-						})
-					: cliError(
-							error,
-							options.mode === "completion"
-								? "complete"
-								: "position",
-							{
-								file: options.file,
-								line: options.line,
-								column: options.column,
-							},
-						),
-			);
-			process.exit(1);
-		}
-		console.error((error as Error).message);
+		reportCliError(
+			error,
+			options.mode === "name"
+				? "name"
+				: options.mode === "completion"
+					? "complete"
+					: "position",
+			options.mode === "name"
+				? {
+						file: options.file,
+						line: options.line,
+						name: options.name,
+						project: options.project,
+					}
+				: {
+						file: options.file,
+						line: options.line,
+						column: options.column,
+						project: options.project,
+					},
+			options.json,
+		);
 		process.exit(1);
 	}
 }

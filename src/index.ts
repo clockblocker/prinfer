@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { contractError } from "./contract.js";
 import {
+	assertCursorPosition,
 	findNearestTsconfig,
 	findNodeAtPosition,
 	findNodeByNameAndLine,
@@ -29,6 +30,7 @@ import type {
 
 export {
 	type BatchHoverSuccess,
+	batchHoverItemSchema,
 	batchHoverResultSchema,
 	batchHoverSuccess,
 	batchHoverSuccessSchema,
@@ -85,14 +87,22 @@ export type {
 	HoverTiming,
 };
 
-/** Get the completion entries TypeScript offers at a 1-based cursor position. */
+/**
+ * Get the completion entries TypeScript offers at a 1-based cursor position,
+ * ranked by TypeScript's sortText with keywords after other entries of the
+ * same rank. `prefix` filters names case-insensitively; `limit` truncates
+ * (`total` and `truncated` report what was cut).
+ */
 export function completions(
 	file: string,
 	line: number,
 	column: number,
 	options?: CompletionOptions,
 ): CompletionResult {
-	return getCompletions(file, line, column, options?.project);
+	return getCompletions(file, line, column, options?.project, {
+		prefix: options?.prefix,
+		limit: options?.limit,
+	});
 }
 
 /**
@@ -224,6 +234,7 @@ function hoverByPositionImpl(
 		);
 	}
 
+	assertCursorPosition(sourceFile.text, line, column, entryFileAbs);
 	const node = findNodeAtPosition(sourceFile, line, column);
 	if (!node) {
 		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
@@ -341,6 +352,12 @@ export function batchHover(
 
 	for (const pos of positions) {
 		try {
+			assertCursorPosition(
+				sourceFile.text,
+				pos.line,
+				pos.column,
+				entryFileAbs,
+			);
 			const node = findNodeAtPosition(sourceFile, pos.line, pos.column);
 			if (!node) {
 				items.push({

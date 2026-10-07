@@ -52,6 +52,10 @@ export interface HoverByNameOptions extends HoverOptions {
 export interface CompletionOptions {
 	/** Optional path to tsconfig.json */
 	project?: string;
+	/** Keep only entries whose name starts with this text (case-insensitive) */
+	prefix?: string;
+	/** Return at most this many entries (default: all); `total` counts every match */
+	limit?: number;
 }
 
 export interface CompletionEntry {
@@ -69,7 +73,14 @@ export interface CompletionResult {
 	isGlobalCompletion: boolean;
 	isMemberCompletion: boolean;
 	isNewIdentifierLocation: boolean;
+	/** The case-insensitive name prefix the entries were filtered by, if any */
+	prefix?: string;
+	/** Entries in rank order, at most `limit` of them */
 	entries: CompletionEntry[];
+	/** Number of matching entries before truncation to `limit` */
+	total: number;
+	/** True when `entries` holds fewer than `total` */
+	truncated: boolean;
 }
 
 /**
