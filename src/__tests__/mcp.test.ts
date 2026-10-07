@@ -205,17 +205,16 @@ describe("MCP server over stdio", () => {
 			);
 		});
 
-		test(`hover resolves the requested occurrence (${backend})`, async () => {
+		test(`hover prefers whole-identifier text matches (${backend})`, async () => {
 			const response = await client.call("hover", {
 				file: sampleFile,
 				line: 4,
 				text: "b",
-				occurrence: 2,
 				backend,
 			});
 			const parsed = hoverSuccessSchema.parse(response.structuredContent);
-			// "export function add(a: number, b: number)": the first "b" is in
-			// "number", so occurrence 2 is the parameter.
+			// "export function add(a: number, b: number)": the "b" inside
+			// "number" is skipped, so the first match is the parameter.
 			expect(parsed.result.position).toEqual({ line: 4, column: 32 });
 			expect(parsed.result.signature).toMatch(/number$/);
 		});

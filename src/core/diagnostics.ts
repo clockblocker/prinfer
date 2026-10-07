@@ -81,7 +81,9 @@ export function summarizeDiagnostics(
 
 /**
  * Render diagnostics as compact `path:line:col error TS2322: message` lines,
- * tsc-style, or "No type errors." when nothing was reported.
+ * tsc-style, or "No type errors." when nothing was reported. Continuation
+ * lines of a message chain keep TypeScript's nesting, with the first level
+ * indented two spaces as tsc prints it.
  */
 export function formatDiagnostics(
 	result: DiagnosticsResult,
@@ -90,12 +92,32 @@ export function formatDiagnostics(
 	if (result.diagnostics.length === 0) return "No type errors.";
 	const lines = result.diagnostics.map(
 		(diagnostic) =>
-			`${displayPath}:${diagnostic.line}:${diagnostic.column} ${diagnostic.category} TS${diagnostic.code}: ${diagnostic.message.replace(/\n/g, "\n    ")}`,
+			`${displayPath}:${diagnostic.line}:${diagnostic.column} ${diagnostic.category} TS${diagnostic.code}: ${indentContinuation(diagnostic.message)}`,
 	);
 	lines.push(
 		`${plural(result.errorCount, "error")}, ${plural(result.warningCount, "warning")}.`,
 	);
 	return lines.join("\n");
+}
+
+const CONTINUATION_INDENT = 2;
+
+/**
+ * Shift continuation lines so the shallowest one is indented exactly
+ * CONTINUATION_INDENT spaces, keeping deeper lines' relative nesting.
+ */
+function indentContinuation(message: string): string {
+	const [first = "", ...rest] = message.split(/\r?\n/);
+	const continuation = rest.filter((line) => line.trim() !== "");
+	if (continuation.length === 0) return first;
+	const base = Math.min(
+		...continuation.map((line) => line.length - line.trimStart().length),
+	);
+	const pad = " ".repeat(CONTINUATION_INDENT);
+	return [
+		first,
+		...continuation.map((line) => `${pad}${line.slice(base)}`),
+	].join("\n");
 }
 
 function plural(count: number, noun: string): string {
