@@ -598,7 +598,9 @@ const fileSchema = z
 const projectSchema = z
 	.string()
 	.optional()
-	.describe("tsconfig.json path; defaults to the nearest one above file");
+	.describe(
+		"tsconfig.json path; defaults to the nearest one above file. On typescript7 it must be the tsconfig the language server picks (the nearest tsconfig.json or one it references); use typescript6 for others",
+	);
 const includeDocsSchema = z
 	.boolean()
 	.optional()
@@ -614,11 +616,13 @@ const textSchema = z
 	.string()
 	.min(1)
 	.describe(
-		'Exact text on the line, e.g. "useState"; hovers its first character. Use instead of column',
+		'Text copied from the line, e.g. "useState"; hovers its first character. Whole-identifier matches count first ("user" skips "users"); only if the line has none is text matched as a plain substring. Use instead of column',
 	);
 const occurrenceSchema = positiveInteger
 	.optional()
-	.describe("Which match of text on the line (default 1)");
+	.describe(
+		"Which match of text on the line (default 1), counted among whole-identifier matches when the line has any",
+	);
 const columnSchema = positiveInteger.describe(
 	"1-based column; alternative to text",
 );
