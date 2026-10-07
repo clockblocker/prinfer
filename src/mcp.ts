@@ -32,7 +32,8 @@ This is a Model Context Protocol server designed to be launched by an MCP
 client over stdio.
 
 Setup:
-  Run 'prinfer setup codex' to configure Codex automatically.
+  Run 'prinfer setup <codex|claude|cursor|vscode|gemini>' to register this
+  server with a client. Without a global install: npx -y prinfer mcp
 
 Provided tools:
   hover(file, line, column, include_docs?, include_timing?, project?)

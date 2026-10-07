@@ -29,14 +29,24 @@ interface OpenDocument {
 	version: number;
 }
 
-const require = createRequire(
-	process.argv[1]
-		? path.resolve(process.argv[1])
-		: path.join(process.cwd(), "package.json"),
-);
+const require = createRequire(resolveFromScript());
 const nativePackage = require.resolve("@typescript/native/package.json");
 const nativeTsc = path.join(path.dirname(nativePackage), "bin", "tsc");
 const sessions = new Map<string, NativeLspClient>();
+
+/**
+ * Global installs run bins through symlinks such as <prefix>/bin/prinfer-mcp,
+ * where no node_modules is reachable; resolve from the real script location.
+ */
+function resolveFromScript(): string {
+	const script = process.argv[1];
+	if (!script) return path.join(process.cwd(), "package.json");
+	try {
+		return fs.realpathSync(script);
+	} catch {
+		return path.resolve(script);
+	}
+}
 
 class NativeLspClient {
 	private readonly child: ChildProcessWithoutNullStreams;
