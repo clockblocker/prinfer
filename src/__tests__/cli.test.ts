@@ -1,4 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	setDefaultTimeout,
+	spyOn,
+	test,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +16,12 @@ import {
 	diagnosticsSuccessSchema,
 	hoverSuccessSchema,
 } from "../contract.js";
+import { runSetup, serverCommand, spawnSpec } from "../setup.js";
+import { ensureFreshBuild, packageRoot } from "./helpers/build.js";
+
+// Every test here spawns at least one CLI process, and many load a
+// TypeScript program; the 5 s default is too tight on a loaded machine.
+setDefaultTimeout(30_000);
 
 const cliPath = path.join(import.meta.dir, "..", "cli.ts");
 const fixturesDir = path.join(import.meta.dir, "fixtures");
@@ -51,18 +66,12 @@ describe("CLI", () => {
 	});
 
 	test("inspects a type with Bun 1.3.14's hoisted TypeScript 7 layout", async () => {
-		const packageRoot = path.join(import.meta.dir, "..", "..");
 		const consumerDir = fs.mkdtempSync(
 			path.join(os.tmpdir(), "prinfer-typescript-7-"),
 		);
 
 		try {
-			const build = Bun.spawnSync(["bun", "run", "build"], {
-				cwd: packageRoot,
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			expect(build.exitCode).toBe(0);
+			ensureFreshBuild();
 
 			const pack = Bun.spawnSync(
 				[
@@ -152,7 +161,7 @@ describe("CLI", () => {
 		} finally {
 			fs.rmSync(consumerDir, { recursive: true, force: true });
 		}
-	}, 15_000);
+	}, 120_000);
 
 	test("shows help with --help flag", async () => {
 		const { stdout, exitCode } = await runCli(["--help"]);
@@ -338,6 +347,103 @@ describe("CLI", () => {
 		expect(stdout).toContain(":line:");
 		expect(stdout).toContain(":column");
 	});
+
+	test("reports a directory as FILE_NOT_FOUND", async () => {
+		const { stdout, exitCode } = await runCli([
+			`${diagnosticsDir}:1:1`,
+			"--json",
+		]);
+		const { error } = contractErrorResponseSchema.parse(JSON.parse(stdout));
+		expect(error.code).toBe("FILE_NOT_FOUND");
+		expect(error.message).toContain("is a directory");
+		expect(exitCode).toBe(1);
+	});
+
+	test("suggests close names with CLI-specific advice", async () => {
+		const { stdout, exitCode } = await runCli([
+			`${sampleFile}:formt`,
+			"--json",
+		]);
+		const { error } = contractErrorResponseSchema.parse(JSON.parse(stdout));
+		expect(error.code).toBe("SYMBOL_NOT_FOUND");
+		expect(error.candidates).toEqual(["format"]);
+		expect(error.suggestion).toContain("<file>:<name>:<line>");
+		expect(error.suggestion).not.toContain("hover_by_name");
+		expect(exitCode).toBe(1);
+	});
+
+	test("words error suggestions for the CLI, not the MCP server", async () => {
+		const missing = contractErrorResponseSchema.parse(
+			JSON.parse(
+				(
+					await runCli(["missing.ts:1:1", "--json"], {
+						cwd: fixturesDir,
+					})
+				).stdout,
+			),
+		).error;
+		expect(missing.code).toBe("FILE_NOT_FOUND");
+		expect(missing.suggestion).toContain(
+			`current directory (${fixturesDir})`,
+		);
+		expect(missing.suggestion).not.toContain("MCP");
+
+		const invalid = contractErrorResponseSchema.parse(
+			JSON.parse((await runCli([sampleFile, "--json"])).stdout),
+		).error;
+		expect(invalid.code).toBe("INVALID_ARGUMENT");
+		expect(invalid.suggestion).toContain("prinfer --help");
+		expect(invalid.suggestion).not.toContain("batch");
+	});
+
+	test("looks up types with --backend typescript7", async () => {
+		const byName = hoverSuccessSchema.parse(
+			JSON.parse(
+				(
+					await runCli([
+						`${sampleFile}:multiply`,
+						"--backend",
+						"typescript7",
+						"--json",
+					])
+				).stdout,
+			),
+		);
+		expect(byName.result.signature).toBe(
+			"const multiply: (x: number, y: number) => number",
+		);
+
+		const { stdout, exitCode } = await runCli([
+			`${sampleFile}:4:17`,
+			"--backend",
+			"typescript7",
+		]);
+		expect(stdout).toContain("function add(a: number, b: number): number");
+		expect(exitCode).toBe(0);
+	});
+
+	test("rejects an unknown backend and typescript7 completions", async () => {
+		const unknown = await runCli([
+			`${sampleFile}:4:17`,
+			"--backend",
+			"typescript9",
+			"--json",
+		]);
+		expect(
+			contractErrorResponseSchema.parse(JSON.parse(unknown.stdout)).error
+				.message,
+		).toContain('Unknown backend "typescript9"');
+		expect(unknown.exitCode).toBe(1);
+
+		const complete = await runCli([
+			"complete",
+			`${completionsFile}:3:33`,
+			"--backend",
+			"typescript7",
+		]);
+		expect(complete.stderr).toContain("only the typescript6 backend");
+		expect(complete.exitCode).toBe(1);
+	});
 });
 
 describe("prinfer check", () => {
@@ -439,9 +545,42 @@ describe("prinfer check", () => {
 		const { stdout } = await runCli(["--help"]);
 		expect(stdout).toContain("prinfer check <file.ts>");
 	});
+
+	test("checks with --backend typescript7", async () => {
+		const { stdout, exitCode } = await runCli([
+			"check",
+			errorsFile,
+			"--backend",
+			"typescript7",
+			"--json",
+		]);
+		const response = diagnosticsSuccessSchema.parse(JSON.parse(stdout));
+		expect(response.result.errorCount).toBe(3);
+		expect(response.result.diagnostics[0]).toMatchObject({
+			line: 3,
+			code: 2322,
+		});
+		expect(exitCode).toBe(1);
+	});
+
+	test("reports a directory with check-specific advice", async () => {
+		const { stdout, exitCode } = await runCli([
+			"check",
+			diagnosticsDir,
+			"--json",
+		]);
+		const { error } = contractErrorResponseSchema.parse(JSON.parse(stdout));
+		expect(error.code).toBe("FILE_NOT_FOUND");
+		expect(error.message).toContain("is a directory");
+		expect(exitCode).toBe(1);
+
+		const usage = contractErrorResponseSchema.parse(
+			JSON.parse((await runCli(["check", "--json"])).stdout),
+		).error;
+		expect(usage.suggestion).toContain("Usage: prinfer check");
+	});
 });
 
-const packageRoot = path.join(import.meta.dir, "..", "..");
 const NPX_SERVER = ["npx", "-y", "prinfer", "mcp"];
 const FAKE_CLIENTS = ["codex", "claude", "code", "gemini"];
 
@@ -868,6 +1007,132 @@ describe("prinfer setup", () => {
 		expect(exitCode).toBe(0);
 		expect(sandbox.calls()).toEqual([]);
 	});
+
+	test("keeps env and other user keys when re-running JSON setup", async () => {
+		const file = path.join(sandbox.home, ".cursor", "mcp.json");
+		fs.mkdirSync(path.dirname(file));
+		fs.writeFileSync(
+			file,
+			JSON.stringify({
+				mcpServers: {
+					prinfer: {
+						type: "stdio",
+						command: "old-prinfer",
+						args: ["--old"],
+						env: { PRINFER_BACKEND: "typescript6" },
+						disabled: false,
+					},
+				},
+			}),
+		);
+
+		const { exitCode } = await sandbox.run(["setup", "cursor"]);
+		expect(readJson(file)).toEqual({
+			mcpServers: {
+				prinfer: {
+					type: "stdio",
+					command: "npx",
+					args: ["-y", "prinfer", "mcp"],
+					env: { PRINFER_BACKEND: "typescript6" },
+					disabled: false,
+				},
+			},
+		});
+		expect(exitCode).toBe(0);
+	});
+});
+
+describe("prinfer setup on Windows", () => {
+	let root: string;
+	let log: ReturnType<typeof spyOn<Console, "log">>;
+	let savedPath: string | undefined;
+
+	beforeEach(() => {
+		root = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-win-"));
+		savedPath = process.env.PATH;
+		// Nothing on PATH: prinfer-mcp is not installed.
+		process.env.PATH = path.join(root, "empty-bin");
+		log = spyOn(console, "log").mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		log.mockRestore();
+		process.env.PATH = savedPath;
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	const printed = () =>
+		log.mock.calls.map((call) => call.join(" ")).join("\n");
+
+	test("wraps the server command in cmd /c", () => {
+		expect(serverCommand(true, "win32")).toEqual([
+			"cmd",
+			"/c",
+			"npx",
+			"-y",
+			"prinfer",
+			"mcp",
+		]);
+		expect(serverCommand(true, "linux")).toEqual(NPX_SERVER);
+	});
+
+	test("writes cmd /c entries into JSON configs", () => {
+		expect(runSetup(["gemini", "--print"], "win32")).toBe(0);
+		expect(JSON.parse(printed().slice(printed().indexOf("{")))).toEqual({
+			mcpServers: {
+				prinfer: { command: "cmd", args: ["/c", ...NPX_SERVER] },
+			},
+		});
+
+		const cwd = process.cwd();
+		process.chdir(root);
+		try {
+			expect(runSetup(["cursor", "--scope", "project"], "win32")).toBe(0);
+		} finally {
+			process.chdir(cwd);
+		}
+		expect(readJson(path.join(root, ".cursor", "mcp.json"))).toEqual({
+			mcpServers: {
+				prinfer: {
+					type: "stdio",
+					command: "cmd",
+					args: ["/c", ...NPX_SERVER],
+				},
+			},
+		});
+	});
+
+	test("registers CLI clients through cmd /c", () => {
+		expect(runSetup(["claude", "--print"], "win32")).toBe(0);
+		expect(printed().trim()).toBe(
+			"claude mcp add --scope user prinfer -- cmd /c npx -y prinfer mcp",
+		);
+	});
+
+	test("runs .cmd client shims through cmd.exe with escaped arguments", () => {
+		const json = JSON.stringify({ name: "prinfer", args: ["/c", "a b"] });
+		const spec = spawnSpec(
+			["code", "--add-mcp", json],
+			"C:\\Program Files\\VS Code\\bin\\code.cmd",
+			"win32",
+		);
+		expect(spec.file).toMatch(/cmd\.exe$/i);
+		expect(spec.options.windowsVerbatimArguments).toBe(true);
+		expect(spec.args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+		expect(spec.args[3]).toBe(
+			'"C:\\Program^ Files\\VS^ Code\\bin\\code.cmd ^"--add-mcp^" ' +
+				'^"{\\^"name\\^":\\^"prinfer\\^"^,\\^"args\\^":^[\\^"/c\\^"^,\\^"a^ b\\^"^]}^""',
+		);
+	});
+
+	test("spawns executables directly", () => {
+		expect(
+			spawnSpec(["codex", "mcp"], "C:\\bin\\codex.exe", "win32"),
+		).toEqual({ file: "C:\\bin\\codex.exe", args: ["mcp"], options: {} });
+		expect(
+			spawnSpec(["claude", "mcp"], "/usr/bin/claude", "darwin"),
+		).toEqual({ file: "claude", args: ["mcp"], options: {} });
+	});
 });
 
 describe("prinfer setup agents-md", () => {
@@ -976,18 +1241,9 @@ describe("prinfer mcp", () => {
 	const distCli = path.join(packageRoot, "dist", "cli.js");
 	let binDir: string;
 
+	beforeAll(() => ensureFreshBuild(), 120_000);
+
 	beforeEach(() => {
-		if (
-			!fs.existsSync(distCli) ||
-			!fs.existsSync(path.join(packageRoot, "dist", "mcp.js"))
-		) {
-			const build = Bun.spawnSync(["bun", "run", "build"], {
-				cwd: packageRoot,
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			expect(build.exitCode).toBe(0);
-		}
 		// npm installs bins as symlinks; the server must resolve beside the target.
 		binDir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-bin-"));
 		fs.symlinkSync(distCli, path.join(binDir, "prinfer"));
@@ -1091,5 +1347,5 @@ describe("prinfer mcp", () => {
 		for (const line of lines) {
 			expect(JSON.parse(line).jsonrpc).toBe("2.0");
 		}
-	}, 15_000);
+	});
 });

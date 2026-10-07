@@ -80,7 +80,8 @@ prinfer is a stdio server. Point your client at `npx -y prinfer mcp`:
 
 - `--print` shows the command or config change without applying it.
 - `--npx` registers `npx -y prinfer mcp` even when `prinfer-mcp` is installed. Use it when the client can't find `prinfer-mcp`; editors started outside a shell often miss nvm, fnm, or volta paths.
-- Re-running setup replaces the existing `prinfer` entry and leaves other servers alone. JSON configs that don't parse are left untouched, and setup prints the entry for you to add by hand.
+- Re-running setup updates the `prinfer` entry's command and leaves other servers alone. In JSON configs it keeps keys you added to the entry, such as `env`. JSON configs that don't parse are left untouched, and setup prints the entry for you to add by hand.
+- On Windows, setup registers the server as `cmd /c npx -y prinfer mcp` (or `cmd /c prinfer-mcp`), because MCP clients launch it without a shell and can't run npm's `.cmd` shims directly.
 
 ## Tell the agent when to use it
 
@@ -174,7 +175,7 @@ Position: 11:33
 
 --- src/missing.ts:1:1 ---
 Error [FILE_NOT_FOUND]: File not found: /project/src/missing.ts
-Suggestion: Check the resolved file path and the MCP server working directory.
+Suggestion: Check the path. Relative paths resolve against the MCP server's working directory (/project); pass an absolute path to be sure.
 ```
 
 Failures stay per item, including a missing file, so one bad lookup doesn't throw away the rest.
@@ -242,17 +243,17 @@ Every tool returns readable text plus versioned structured content. Successes ar
     "file": "/project/src/utils.ts",
     "line": 11,
     "project": "/project/tsconfig.json",
-    "candidates": ["names", "name", "users", "map", "user"],
-    "suggestion": "Try hover_by_name with the symbol name, or hover with text copied from the line instead of a column."
+    "candidates": ["names", "name"],
+    "suggestion": "Check the spelling against candidates, pass line to pick the match on a known line, or call hover with that line and text copied from it."
   }
 }
 ```
 
-The error codes are `INVALID_ARGUMENT`, `FILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`, `TYPESCRIPT_ERROR`, and `INTERNAL_ERROR`. `candidates` lists nearby identifiers when prinfer can find any. The CLI's `--json` output and the exported zod schemas (`hoverSuccessSchema`, `diagnosticsSuccessSchema`, `contractErrorResponseSchema`, and the rest) use the same contract.
+The error codes are `INVALID_ARGUMENT`, `FILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`, `TYPESCRIPT_ERROR`, and `INTERNAL_ERROR`. For `SYMBOL_NOT_FOUND`, `candidates` lists identifiers from the file that are close to the requested name (keywords and words in comments or strings are skipped), or the identifiers near the requested line. `suggestion` is specific to the tool or CLI command that failed. The CLI's `--json` output and the exported zod schemas (`hoverSuccessSchema`, `diagnosticsSuccessSchema`, `contractErrorResponseSchema`, and the rest) use the same contract.
 
 ## CLI
 
-The CLI uses the TypeScript 6 backend.
+The CLI uses the TypeScript 6 backend by default. Pass `--backend typescript7` to look up types or run `check` on the TypeScript 7 language server instead; `complete` is TypeScript 6 only.
 
 ```bash
 # Type by name, optionally with a line hint for repeated names

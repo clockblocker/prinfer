@@ -1,19 +1,34 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+	afterAll,
+	beforeAll,
+	describe,
+	expect,
+	setDefaultTimeout,
+	test,
+} from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { nearbyCandidates } from "../candidates.js";
 import {
 	batchHoverSuccessSchema,
+	contractError,
 	contractErrorResponseSchema,
 	hoverSuccessSchema,
+	suggestionFor,
 } from "../contract.js";
+import { ensureFreshBuild, packageRoot } from "./helpers/build.js";
+
+// Server round trips spawn TypeScript; leave room for a loaded machine.
+setDefaultTimeout(30_000);
 
 // Drives the built server over stdio, exactly as an MCP client would.
-const packageRoot = path.join(import.meta.dir, "..", "..");
 const serverPath = path.join(packageRoot, "dist", "mcp.js");
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
 const genericMethodFile = path.join(fixturesDir, "generic-method.ts");
+const diagnosticsDir = path.join(fixturesDir, "diagnostics");
 const packageVersion = (
 	JSON.parse(
 		fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
@@ -122,36 +137,10 @@ class StdioMcpClient {
 	}
 }
 
-function newestSourceMtime(dir: string): number {
-	let newest = 0;
-	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-		const full = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
-			if (entry.name !== "__tests__") {
-				newest = Math.max(newest, newestSourceMtime(full));
-			}
-		} else if (entry.name.endsWith(".ts")) {
-			newest = Math.max(newest, fs.statSync(full).mtimeMs);
-		}
-	}
-	return newest;
-}
-
 let client: StdioMcpClient;
 
 beforeAll(async () => {
-	const stale =
-		!fs.existsSync(serverPath) ||
-		fs.statSync(serverPath).mtimeMs <
-			newestSourceMtime(path.join(packageRoot, "src"));
-	if (stale) {
-		const build = Bun.spawnSync(["bun", "run", "build"], {
-			cwd: packageRoot,
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		expect(build.exitCode).toBe(0);
-	}
+	ensureFreshBuild();
 	client = new StdioMcpClient();
 	await client.initialize();
 }, 60_000);
@@ -363,6 +352,207 @@ describe("MCP server over stdio", () => {
 			})),
 		});
 		expect(response.isError).toBe(true);
+	});
+
+	for (const backend of ["typescript6", "typescript7"] as const) {
+		test(`batch_hover keeps valid items when one file is a directory (${backend})`, async () => {
+			const response = await client.call("batch_hover", {
+				file: sampleFile,
+				backend,
+				positions: [
+					{ name: "add" },
+					{ file: diagnosticsDir, line: 1, column: 1 },
+					{ file: diagnosticsDir, name: "add" },
+				],
+			});
+			expect(response.isError).toBeUndefined();
+			const { result } = batchHoverSuccessSchema.parse(
+				response.structuredContent,
+			);
+			expect(result.successCount).toBe(1);
+			expect(result.items[0]?.result?.signature).toContain(
+				"(a: number, b: number)",
+			);
+			for (const item of result.items.slice(1)) {
+				expect(item.error?.code).toBe("FILE_NOT_FOUND");
+				expect(item.error?.message).toContain("is a directory");
+			}
+		});
+	}
+
+	test("single-file tools report a directory as FILE_NOT_FOUND", async () => {
+		for (const [tool, args] of [
+			["hover", { file: diagnosticsDir, line: 1, column: 1 }],
+			["hover", { file: diagnosticsDir, line: 1, text: "x" }],
+			["hover_by_name", { file: diagnosticsDir, name: "add" }],
+			["completions", { file: diagnosticsDir, line: 1, column: 1 }],
+			["diagnostics", { file: diagnosticsDir }],
+		] as const) {
+			const response = await client.call(tool, args);
+			expect(response.isError).toBe(true);
+			const { error } = contractErrorResponseSchema.parse(
+				response.structuredContent,
+			);
+			expect(error.code).toBe("FILE_NOT_FOUND");
+			expect(error.file).toBe(diagnosticsDir);
+		}
+	});
+
+	test("hover_by_name suggests close names and tool-specific next steps", async () => {
+		for (const backend of ["typescript6", "typescript7"] as const) {
+			const response = await client.call("hover_by_name", {
+				file: sampleFile,
+				name: "formt",
+				backend,
+			});
+			const { error } = contractErrorResponseSchema.parse(
+				response.structuredContent,
+			);
+			expect(error.code).toBe("SYMBOL_NOT_FOUND");
+			expect(error.candidates).toEqual(["format"]);
+			expect(error.suggestion).not.toContain("hover_by_name");
+			expect(error.suggestion).toContain("candidates");
+			expect(error.suggestion).toContain("line");
+			expect(error.suggestion).toContain("hover with");
+		}
+	});
+
+	test("hover misses suggest text targeting or hover_by_name", async () => {
+		const response = await client.call("hover", {
+			file: sampleFile,
+			line: 1000,
+			column: 1,
+			backend: "typescript6",
+		});
+		const { error } = contractErrorResponseSchema.parse(
+			response.structuredContent,
+		);
+		expect(error.code).toBe("SYMBOL_NOT_FOUND");
+		expect(error.suggestion).toContain("text copied from the line");
+		expect(error.suggestion).toContain("hover_by_name");
+	});
+
+	test("file errors name the server's working directory", async () => {
+		const response = await client.call("diagnostics", {
+			file: "missing.ts",
+		});
+		const { error } = contractErrorResponseSchema.parse(
+			response.structuredContent,
+		);
+		expect(error.code).toBe("FILE_NOT_FOUND");
+		expect(error.suggestion).toContain(
+			`MCP server's working directory (${fixturesDir})`,
+		);
+	});
+});
+
+describe("nearbyCandidates", () => {
+	let dir: string;
+	let file: string;
+
+	beforeAll(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-candidates-"));
+		file = path.join(dir, "format.ts");
+		fs.writeFileSync(
+			file,
+			[
+				"// Formats a value with fixed decimals, one of many helpers",
+				'const label = "formt of the value";',
+				"export function format(value: number): string {",
+				"\treturn value.toFixed(2);",
+				"}",
+				"for (const item of [1]) format(item);",
+				"/** formatter docs */",
+				"export const formatter = { label };",
+				"",
+			].join("\n"),
+		);
+	});
+
+	afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+	test("skips keywords and words in comments and strings", () => {
+		expect(
+			nearbyCandidates(file, { query: "formt", strict: true }),
+		).toEqual(["format"]);
+		const near = nearbyCandidates(file, { line: 1 }) ?? [];
+		for (const word of ["Formats", "fixed", "const", "of", "for"]) {
+			expect(near).not.toContain(word);
+		}
+		expect(near).toContain("label");
+	});
+
+	test("ranks by edit distance and drops distant names", () => {
+		expect(
+			nearbyCandidates(file, { query: "lable", strict: true }),
+		).toEqual(["label"]);
+		expect(
+			nearbyCandidates(file, { query: "zzzzzz", strict: true }),
+		).toBeUndefined();
+	});
+
+	test("never throws for directories or unreadable paths", () => {
+		expect(nearbyCandidates(dir, { query: "format" })).toBeUndefined();
+		expect(
+			nearbyCandidates(path.join(dir, "missing.ts"), { line: 1 }),
+		).toBeUndefined();
+	});
+});
+
+describe("contract suggestions", () => {
+	test("are specific to the MCP tool", () => {
+		expect(
+			suggestionFor("SYMBOL_NOT_FOUND", {
+				interface: "mcp",
+				tool: "hover_by_name",
+			}),
+		).not.toContain("hover_by_name");
+		expect(
+			suggestionFor("INVALID_ARGUMENT", {
+				interface: "mcp",
+				tool: "hover",
+			}),
+		).not.toContain("batch");
+		expect(
+			suggestionFor("INVALID_ARGUMENT", {
+				interface: "mcp",
+				tool: "batch_hover",
+			}),
+		).toContain("100 items");
+		expect(
+			suggestionFor("TYPESCRIPT_ERROR", {
+				interface: "mcp",
+				tool: "completions",
+			}),
+		).not.toContain("backend");
+	});
+
+	test("use CLI wording on the CLI", () => {
+		for (const code of [
+			"INVALID_ARGUMENT",
+			"FILE_NOT_FOUND",
+			"SYMBOL_NOT_FOUND",
+			"TYPESCRIPT_ERROR",
+			"INTERNAL_ERROR",
+		] as const) {
+			for (const command of [
+				"name",
+				"position",
+				"complete",
+				"check",
+				undefined,
+			] as const) {
+				const text = suggestionFor(code, { interface: "cli", command });
+				expect(text).not.toMatch(/MCP|batch|hover_by_name|backend "/);
+			}
+		}
+	});
+
+	test("default to MCP wording for library callers", () => {
+		const response = contractError(
+			new Error("No symbol found at a.ts:1:1"),
+		);
+		expect(response.error.suggestion).toContain("hover_by_name");
 	});
 });
 

@@ -2,7 +2,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { nearbyCandidates } from "./candidates.js";
 import {
+	type CliCommand,
 	type ContractErrorCode,
 	completionSuccess,
 	contractError,
@@ -10,18 +12,20 @@ import {
 	hoverSuccess,
 } from "./contract.js";
 import { formatDiagnostics } from "./core/index.js";
+import { assertSourceFile } from "./errors.js";
 import { completions, diagnostics, hover } from "./index.js";
 import { runSetup } from "./setup.js";
+import type { DiagnosticsResult, HoverOptions, HoverResult } from "./types.js";
 
 const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
-  prinfer <file.ts>:<name> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
-  prinfer <file.ts>:<name>:<line> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
-  prinfer <file.ts>:<line>:<column> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
+  prinfer <file.ts>:<name> [options]
+  prinfer <file.ts>:<name>:<line> [options]
+  prinfer <file.ts>:<line>:<column> [options]
   prinfer complete <file.ts>:<line>:<column> [--json] [--project <tsconfig.json>]
-  prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>]
+  prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <backend>]
   prinfer mcp
   prinfer setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
   prinfer setup agents-md [--file <path>] [--print]
@@ -45,6 +49,7 @@ Options:
   --suggestions        check: also report suggestions such as unused variables
   --json               Emit the versioned JSON contract on stdout
   --project, -p        Path to tsconfig.json (optional)
+  --backend <backend>  typescript6 (default) or typescript7, for type lookups and check
   --help, -h           Show this help message (prinfer setup --help for setup options)
 
 Examples:
@@ -53,6 +58,7 @@ Examples:
   prinfer src/utils.ts:75:10 --docs
   prinfer complete src/utils.ts:75:10
   prinfer check src/utils.ts --json
+  prinfer src/utils.ts:createHandler --backend typescript7
   prinfer setup claude
   prinfer setup cursor --scope project --print
   prinfer setup agents-md --file CLAUDE.md
@@ -86,6 +92,7 @@ interface CliPositionOptions {
 	full: boolean;
 	json: boolean;
 	project?: string;
+	backend: Backend;
 }
 
 interface CliNameOptions {
@@ -98,6 +105,7 @@ interface CliNameOptions {
 	full: boolean;
 	json: boolean;
 	project?: string;
+	backend: Backend;
 }
 
 interface CliCompletionOptions {
@@ -110,6 +118,25 @@ interface CliCompletionOptions {
 }
 
 type CliOptions = CliPositionOptions | CliNameOptions | CliCompletionOptions;
+
+type Backend = "typescript6" | "typescript7";
+
+/** The CLI defaults to TypeScript 6; --backend typescript7 opts in. */
+function parseBackend(
+	args: string[],
+): { backend: Backend } | { error: string } | null {
+	const index = args.indexOf("--backend");
+	if (index === -1) return null;
+	const value = args[index + 1];
+	if (value === "typescript6" || value === "typescript7") {
+		return { backend: value };
+	}
+	return {
+		error: value
+			? `Unknown backend "${value}". Use typescript6 or typescript7.`
+			: "--backend requires typescript6 or typescript7.",
+	};
+}
 
 type ParsedArg =
 	| { mode: "position"; file: string; line: number; column: number }
@@ -165,15 +192,28 @@ function parseArgs(argv: string[]): CliOptions | null {
 	const completionMode = args[0] === "complete" || args[0] === "completions";
 	const positionArg = completionMode ? args[1] : args[0];
 	const parsed = positionArg ? parsePositionArg(positionArg) : null;
+	const command: CliCommand = completionMode
+		? "complete"
+		: parsed?.mode === "name"
+			? "name"
+			: "position";
 
 	if (!parsed) {
 		const message =
 			"Argument must be in format <file>:<line>:<column> or <file>:<name> or <file>:<name>:<line>";
-		if (json) failJson(message, "INVALID_ARGUMENT");
+		if (json) failJson(message, "INVALID_ARGUMENT", command);
 		console.error(`Error: ${message}\n`);
 		console.log(HELP);
 		process.exit(1);
 	}
+
+	const backendArg = parseBackend(args);
+	if (backendArg && "error" in backendArg) {
+		if (json) failJson(backendArg.error, "INVALID_ARGUMENT", command);
+		console.error(`Error: ${backendArg.error}`);
+		process.exit(1);
+	}
+	const backend = backendArg?.backend ?? "typescript6";
 
 	// Check for docs flag
 	const includeDocs = args.includes("--docs") || args.includes("-d");
@@ -187,7 +227,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		project = args[projectIdx + 1];
 		if (!project) {
 			const message = "--project requires a path argument.";
-			if (json) failJson(message, "INVALID_ARGUMENT");
+			if (json) failJson(message, "INVALID_ARGUMENT", command);
 			console.error(`Error: ${message}\n`);
 			console.log(HELP);
 			process.exit(1);
@@ -195,9 +235,12 @@ function parseArgs(argv: string[]): CliOptions | null {
 	}
 
 	if (completionMode) {
-		if (parsed.mode !== "position") {
-			const message = "complete requires <file>:<line>:<column>";
-			if (json) failJson(message, "INVALID_ARGUMENT");
+		if (parsed.mode !== "position" || backend === "typescript7") {
+			const message =
+				parsed.mode !== "position"
+					? "complete requires <file>:<line>:<column>"
+					: "complete supports only the typescript6 backend.";
+			if (json) failJson(message, "INVALID_ARGUMENT", command);
 			console.error(`Error: ${message}`);
 			process.exit(1);
 		}
@@ -222,6 +265,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 			full,
 			json,
 			project,
+			backend,
 		};
 	}
 
@@ -235,28 +279,112 @@ function parseArgs(argv: string[]): CliOptions | null {
 		full,
 		json,
 		project,
+		backend,
 	};
 }
 
 function failJson(
 	message: string,
 	code: ContractErrorCode,
-	context: { file?: string; line?: number; column?: number } = {},
+	command: CliCommand,
 ): never {
 	console.log(
-		JSON.stringify(contractError(new Error(message), { code, ...context })),
+		JSON.stringify(
+			contractError(new Error(message), {
+				code,
+				surface: { interface: "cli", command },
+			}),
+		),
 	);
 	process.exit(1);
+}
+
+/** The JSON contract error for a failed command, with CLI-specific advice. */
+function cliError(
+	error: unknown,
+	command: CliCommand,
+	context: { file: string; line?: number; column?: number; name?: string },
+): string {
+	const file = path.resolve(context.file);
+	const response = contractError(error, {
+		file,
+		line: context.line,
+		column: context.column,
+		surface: { interface: "cli", command },
+	});
+	if (response.error.code === "SYMBOL_NOT_FOUND" && command !== "complete") {
+		const candidates = nearbyCandidates(file, {
+			line: context.line,
+			query: context.name,
+			strict: context.name !== undefined,
+		});
+		if (candidates) response.error.candidates = candidates;
+	}
+	return JSON.stringify(response);
+}
+
+/** TypeScript 7 lookups go through the native language server, loaded lazily. */
+async function runHover(
+	options: CliPositionOptions | CliNameOptions,
+): Promise<HoverResult> {
+	assertSourceFile(options.file);
+	const hoverOptions: HoverOptions = {
+		include_docs: options.includeDocs,
+		include_timing: options.includeTiming,
+		full: options.full,
+		project: options.project,
+	};
+	if (options.backend === "typescript7") {
+		const native = await import("./native-lsp.js");
+		try {
+			return options.mode === "position"
+				? await native.nativeHover(
+						options.file,
+						options.line,
+						options.column,
+						hoverOptions,
+					)
+				: await native.nativeHoverByName(options.file, options.name, {
+						...hoverOptions,
+						line: options.line,
+					});
+		} finally {
+			native.closeNativeSessions();
+		}
+	}
+	return options.mode === "position"
+		? hover(options.file, options.line, options.column, hoverOptions)
+		: hover(options.file, options.name, {
+				...hoverOptions,
+				line: options.line,
+			});
+}
+
+async function runDiagnostics(
+	file: string,
+	options: { project?: string; include_suggestions: boolean },
+	backend: Backend,
+): Promise<DiagnosticsResult> {
+	assertSourceFile(file);
+	if (backend === "typescript7") {
+		const native = await import("./native-lsp.js");
+		try {
+			return await native.nativeDiagnostics(file, options);
+		} finally {
+			native.closeNativeSessions();
+		}
+	}
+	return diagnostics(file, options);
 }
 
 /**
  * Runs `prinfer check <file>` (args exclude "check") and returns an exit code:
  * 0 when the file has no type errors, 1 when it has errors or the check fails.
  */
-function runCheck(args: string[]): number {
+async function runCheck(args: string[]): Promise<number> {
 	const json = args.includes("--json");
 	const fail = (message: string): number => {
-		if (json) failJson(message, "INVALID_ARGUMENT");
+		if (json) failJson(message, "INVALID_ARGUMENT", "check");
 		console.error(`Error: ${message}\n`);
 		console.log(HELP);
 		return 1;
@@ -264,6 +392,7 @@ function runCheck(args: string[]): number {
 
 	let file: string | undefined;
 	let project: string | undefined;
+	let backend: Backend = "typescript6";
 	let includeSuggestions = false;
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -273,6 +402,11 @@ function runCheck(args: string[]): number {
 		} else if (arg === "--project" || arg === "-p") {
 			project = args[++index];
 			if (!project) return fail("--project requires a path argument.");
+		} else if (arg === "--backend") {
+			const parsed = parseBackend(args.slice(index));
+			if (parsed && "error" in parsed) return fail(parsed.error);
+			backend = parsed?.backend ?? backend;
+			index++;
 		} else if (arg.startsWith("-")) {
 			return fail(`Unknown check option ${arg}.`);
 		} else if (file === undefined) {
@@ -284,10 +418,11 @@ function runCheck(args: string[]): number {
 	if (!file) return fail("check requires a file: prinfer check <file.ts>");
 
 	try {
-		const result = diagnostics(file, {
-			project,
-			include_suggestions: includeSuggestions,
-		});
+		const result = await runDiagnostics(
+			file,
+			{ project, include_suggestions: includeSuggestions },
+			backend,
+		);
 		console.log(
 			json
 				? JSON.stringify(diagnosticsSuccess(result))
@@ -296,11 +431,7 @@ function runCheck(args: string[]): number {
 		return result.errorCount > 0 ? 1 : 0;
 	} catch (error) {
 		if (json) {
-			console.log(
-				JSON.stringify(
-					contractError(error, { file: path.resolve(file) }),
-				),
-			);
+			console.log(cliError(error, "check", { file }));
 			return 1;
 		}
 		console.error((error as Error).message);
@@ -308,10 +439,10 @@ function runCheck(args: string[]): number {
 	}
 }
 
-function main(): void {
+async function main(): Promise<void> {
 	const command = process.argv[2];
 	if (command === "mcp") {
-		startMcpServer().catch((error: unknown) => {
+		await startMcpServer().catch((error: unknown) => {
 			console.error(
 				`Error: failed to start the prinfer MCP server: ${(error as Error).message}`,
 			);
@@ -328,7 +459,7 @@ function main(): void {
 			console.log(HELP);
 			process.exit(0);
 		}
-		process.exit(runCheck(args));
+		process.exit(await runCheck(args));
 	}
 
 	const options = parseArgs(process.argv);
@@ -339,6 +470,7 @@ function main(): void {
 
 	try {
 		if (options.mode === "completion") {
+			assertSourceFile(options.file);
 			const result = completions(
 				options.file,
 				options.line,
@@ -354,21 +486,7 @@ function main(): void {
 			}
 			return;
 		}
-		const result =
-			options.mode === "position"
-				? hover(options.file, options.line, options.column, {
-						include_docs: options.includeDocs,
-						include_timing: options.includeTiming,
-						full: options.full,
-						project: options.project,
-					})
-				: hover(options.file, options.name, {
-						include_docs: options.includeDocs,
-						include_timing: options.includeTiming,
-						full: options.full,
-						project: options.project,
-						line: options.line,
-					});
+		const result = await runHover(options);
 
 		if (options.json) {
 			console.log(JSON.stringify(hoverSuccess(result)));
@@ -394,15 +512,25 @@ function main(): void {
 		}
 	} catch (error) {
 		if (options.json) {
-			const context =
-				options.mode === "position" || options.mode === "completion"
-					? {
-							file: path.resolve(options.file),
+			console.log(
+				options.mode === "name"
+					? cliError(error, "name", {
+							file: options.file,
 							line: options.line,
-							column: options.column,
-						}
-					: { file: path.resolve(options.file), line: options.line };
-			console.log(JSON.stringify(contractError(error, context)));
+							name: options.name,
+						})
+					: cliError(
+							error,
+							options.mode === "completion"
+								? "complete"
+								: "position",
+							{
+								file: options.file,
+								line: options.line,
+								column: options.column,
+							},
+						),
+			);
 			process.exit(1);
 		}
 		console.error((error as Error).message);

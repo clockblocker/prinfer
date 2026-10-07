@@ -177,7 +177,26 @@ export function diagnosticsSuccess(result: unknown): DiagnosticsSuccess {
 	});
 }
 
-interface ContractErrorContext {
+/** MCP tools that report contract errors. */
+export type McpTool =
+	| "hover_by_name"
+	| "hover"
+	| "batch_hover"
+	| "completions"
+	| "diagnostics";
+
+/** CLI modes that report contract errors. */
+export type CliCommand = "name" | "position" | "complete" | "check";
+
+/**
+ * Where an error is reported, so the default recovery suggestion names
+ * arguments and commands the caller can actually use there. Defaults to MCP.
+ */
+export type ErrorSurface =
+	| { interface: "mcp"; tool?: McpTool }
+	| { interface: "cli"; command?: CliCommand };
+
+export interface ContractErrorContext {
 	code?: ContractErrorCode;
 	file?: string;
 	line?: number;
@@ -185,6 +204,7 @@ interface ContractErrorContext {
 	project?: string;
 	candidates?: string[];
 	suggestion?: string;
+	surface?: ErrorSurface;
 }
 
 export function contractError(
@@ -211,23 +231,90 @@ export function contractError(
 			suggestion:
 				context.suggestion ??
 				prinfer?.suggestion ??
-				suggestionFor(code),
+				suggestionFor(code, context.surface),
 		},
 	});
 }
 
-function suggestionFor(code: ContractErrorCode): string {
+/** The default recovery suggestion for an error code on a given surface. */
+export function suggestionFor(
+	code: ContractErrorCode,
+	surface: ErrorSurface = { interface: "mcp" },
+): string {
+	return surface.interface === "cli"
+		? cliSuggestion(code, surface.command)
+		: mcpSuggestion(code, surface.tool);
+}
+
+function mcpSuggestion(code: ContractErrorCode, tool?: McpTool): string {
+	const retry =
+		tool === "completions" ? "" : ', or retry with backend "typescript6"';
 	switch (code) {
 		case "INVALID_ARGUMENT":
-			return "Use positive 1-based line and column values, give exactly one of column or text, and send at most 100 batch items.";
+			switch (tool) {
+				case "hover_by_name":
+					return "Pass a non-empty symbol name and, optionally, a positive 1-based line.";
+				case "hover":
+					return "Pass a positive 1-based line and exactly one of text (copied from that line) or column.";
+				case "batch_hover":
+					return "Make each item {name, line?}, {line, text, occurrence?}, or {line, column} with 1-based numbers, and send at most 100 items.";
+				case "completions":
+					return "Pass a positive 1-based line and column for the cursor.";
+				case "diagnostics":
+					return "Pass the path of one TypeScript or JavaScript file.";
+				default:
+					return "Use positive 1-based line and column values, and exactly one of column or text.";
+			}
 		case "FILE_NOT_FOUND":
-			return "Check the resolved file path and the MCP server working directory.";
+			return `Check the path. Relative paths resolve against the MCP server's working directory (${process.cwd()}); pass an absolute path to be sure.`;
 		case "SYMBOL_NOT_FOUND":
-			return "Try hover_by_name with the symbol name, or hover with text copied from the line instead of a column.";
+			switch (tool) {
+				case "hover_by_name":
+					return "Check the spelling against candidates, pass line to pick the match on a known line, or call hover with that line and text copied from it.";
+				case "batch_hover":
+					return "Check name items against candidates, or target the token with {line, text} copied from the line.";
+				case "completions":
+					return "Move the column onto the cursor position, e.g. just inside an opening quote or after a dot.";
+				default:
+					return "Pass text copied from the line instead of a column, or call hover_by_name with the symbol name.";
+			}
 		case "TYPESCRIPT_ERROR":
-			return "Check the selected tsconfig and source syntax, or retry with backend typescript6.";
+			return `Check the selected tsconfig (project) and the source syntax${retry}.`;
 		case "INTERNAL_ERROR":
-			return "Verify the file and project paths, then retry with backend typescript6 if the problem persists.";
+			return `Verify the file and project paths${retry ? `${retry} if the problem persists` : ""}.`;
+	}
+}
+
+function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
+	const retry =
+		command === "complete"
+			? ""
+			: ", or retry with the other --backend (typescript6 or typescript7)";
+	switch (code) {
+		case "INVALID_ARGUMENT":
+			switch (command) {
+				case "check":
+					return "Usage: prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>].";
+				case "complete":
+					return "Usage: prinfer complete <file.ts>:<line>:<column> with a 1-based line and column.";
+				default:
+					return "Use <file>:<name>, <file>:<name>:<line>, or <file>:<line>:<column> with 1-based numbers; run prinfer --help for options.";
+			}
+		case "FILE_NOT_FOUND":
+			return `Check the path. Relative paths resolve against the current directory (${process.cwd()}).`;
+		case "SYMBOL_NOT_FOUND":
+			switch (command) {
+				case "name":
+					return "Check the spelling against candidates, add a line hint (<file>:<name>:<line>), or target the token with <file>:<line>:<column>.";
+				case "complete":
+					return "Move the column onto the cursor position, e.g. just inside an opening quote or after a dot.";
+				default:
+					return "Check that the 1-based line and column point at an identifier, or look the symbol up by name with <file>:<name>.";
+			}
+		case "TYPESCRIPT_ERROR":
+			return `Check the selected tsconfig (--project) and the source syntax${retry}.`;
+		case "INTERNAL_ERROR":
+			return `Verify the file and --project paths${retry ? `${retry} if the problem persists` : ""}.`;
 	}
 }
 

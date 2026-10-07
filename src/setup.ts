@@ -31,7 +31,10 @@ The server command is 'prinfer-mcp' when prinfer is installed globally,
 otherwise 'npx -y prinfer mcp'. Use --npx if the client cannot find
 prinfer-mcp (editors started outside a shell may miss nvm, fnm, or volta
 paths).
-Re-running setup replaces the existing prinfer entry.
+Re-running setup updates the prinfer entry's command; JSON configs keep any
+other keys you added to it, such as env.
+On Windows the server is launched through 'cmd /c' so npx and npm's .cmd
+shims resolve.
 `.trim();
 
 type Scope = "local" | "project" | "user";
@@ -171,8 +174,14 @@ ${AGENTS_END}`;
 
 class SetupError extends Error {}
 
-/** Runs `prinfer setup ...` (args exclude "setup") and returns an exit code. */
-export function runSetup(args: string[]): number {
+/**
+ * Runs `prinfer setup ...` (args exclude "setup") and returns an exit code.
+ * platform is injectable so Windows behaviour can be tested anywhere.
+ */
+export function runSetup(
+	args: string[],
+	platform: NodeJS.Platform = process.platform,
+): number {
 	try {
 		const [target, options] = parseSetupArgs(args);
 		if (target === undefined) {
@@ -183,7 +192,7 @@ export function runSetup(args: string[]): number {
 			setupAgentsMd(options);
 			return 0;
 		}
-		setupClient(target, options);
+		setupClient(target, options, platform);
 		return 0;
 	} catch (error) {
 		if (!(error instanceof SetupError)) throw error;
@@ -280,11 +289,18 @@ function resolveClient(name: string, scope: Scope | undefined): Client {
  * cache, or a project-local install) is not on the client's PATH, so it falls
  * back to npx.
  */
-export function serverCommand(forceNpx: boolean): string[] {
-	if (!forceNpx && findOnPath("prinfer-mcp", { skipPackageBins: true })) {
-		return ["prinfer-mcp"];
-	}
-	return [...NPX_COMMAND];
+export function serverCommand(
+	forceNpx: boolean,
+	platform: NodeJS.Platform = process.platform,
+): string[] {
+	const server =
+		!forceNpx &&
+		findOnPath("prinfer-mcp", { skipPackageBins: true, platform })
+			? ["prinfer-mcp"]
+			: [...NPX_COMMAND];
+	// MCP clients spawn the command without a shell, which on Windows cannot
+	// run npx.cmd or npm's prinfer-mcp.cmd shim; cmd /c resolves them.
+	return platform === "win32" ? ["cmd", "/c", ...server] : server;
 }
 
 function isPackageBin(dir: string): boolean {
@@ -294,10 +310,13 @@ function isPackageBin(dir: string): boolean {
 
 function findOnPath(
 	name: string,
-	{ skipPackageBins = false } = {},
+	{
+		skipPackageBins = false,
+		platform = process.platform,
+	}: { skipPackageBins?: boolean; platform?: NodeJS.Platform } = {},
 ): string | undefined {
 	const extensions =
-		process.platform === "win32"
+		platform === "win32"
 			? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";")
 			: [""];
 	for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
@@ -316,12 +335,16 @@ function findOnPath(
 	return undefined;
 }
 
-function setupClient(name: string, options: SetupOptions): void {
+function setupClient(
+	name: string,
+	options: SetupOptions,
+	platform: NodeJS.Platform,
+): void {
 	const scope = options.scope ?? "user";
 	const client = resolveClient(name, options.scope);
-	const server = serverCommand(options.npx);
+	const server = serverCommand(options.npx, platform);
 	if (client.kind === "cli") {
-		runCliClient(client, server, scope, options.print);
+		runCliClient(client, server, scope, options.print, platform);
 	} else {
 		writeJsonClient(client, server, scope, options.print);
 	}
@@ -332,30 +355,39 @@ function runCliClient(
 	server: string[],
 	scope: Scope,
 	print: boolean,
+	platform: NodeJS.Platform,
 ): void {
 	const { remove, add } = client.commands(server, scope);
-	const manual = add.map(quoteShellArgument).join(" ");
+	const quote =
+		platform === "win32" ? quoteWindowsArgument : quoteShellArgument;
+	const manual = add.map(quote).join(" ");
 	if (print) {
 		console.log(manual);
 		return;
 	}
 
-	if (!findOnPath(client.binary)) {
+	const executable = findOnPath(client.binary, { platform });
+	if (!executable) {
 		throw new SetupError(
 			`'${client.binary}' was not found on PATH. Install ${client.label}'s command-line tool, or run manually:\n  ${manual}`,
 		);
 	}
 
+	const run = (argv: string[], stdio: "ignore" | "inherit") => {
+		const spec = spawnSpec(argv, executable, platform);
+		execFileSync(spec.file, spec.args, { ...spec.options, stdio });
+	};
+
 	if (remove) {
 		try {
-			execFileSync(remove[0], remove.slice(1), { stdio: "ignore" });
+			run(remove, "ignore");
 		} catch {
 			// The server was not previously configured.
 		}
 	}
 
 	try {
-		execFileSync(add[0], add.slice(1), { stdio: "inherit" });
+		run(add, "inherit");
 	} catch (error) {
 		throw new SetupError(
 			`${client.label} setup failed: ${(error as Error).message}\nRun manually:\n  ${manual}`,
@@ -417,7 +449,15 @@ function mergeJsonConfig(
 			`"${key}" in ${file} is not an object. It was left unchanged; add this entry manually:\n${manual}`,
 		);
 	}
-	config[key] = { ...servers, [SERVER_NAME]: entry };
+	// Update what setup owns (command, args, type) and keep keys the user
+	// added to the entry, such as env or cwd.
+	const existing = servers[SERVER_NAME];
+	config[key] = {
+		...servers,
+		[SERVER_NAME]: isPlainObject(existing)
+			? { ...existing, ...entry }
+			: entry,
+	};
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(
 		file,
@@ -482,4 +522,64 @@ function setupAgentsMd(options: SetupOptions): void {
 export function quoteShellArgument(argument: string): string {
 	if (/^[a-zA-Z0-9_./:@=-]+$/.test(argument)) return argument;
 	return `'${argument.replaceAll("'", `'"'"'`)}'`;
+}
+
+/** Quote an argument for display in a Windows command prompt. */
+export function quoteWindowsArgument(argument: string): string {
+	if (/^[a-zA-Z0-9_./:@=\\-]+$/.test(argument)) return argument;
+	return `"${argument.replaceAll('"', '\\"')}"`;
+}
+
+export interface SpawnSpec {
+	file: string;
+	args: string[];
+	options: { windowsVerbatimArguments?: boolean };
+}
+
+/**
+ * How to execFileSync argv without a shell. On Windows, client CLIs installed
+ * through npm (claude, codex) and VS Code's code are .cmd shims, which Node
+ * refuses to spawn directly; run them through cmd.exe with every argument
+ * escaped for both cmd.exe and the program's argv parser.
+ */
+export function spawnSpec(
+	argv: string[],
+	executable: string | undefined,
+	platform: NodeJS.Platform = process.platform,
+): SpawnSpec {
+	const [command, ...args] = argv;
+	if (platform !== "win32") return { file: command, args, options: {} };
+	if (!executable || !/\.(?:cmd|bat)$/i.test(executable)) {
+		return { file: executable ?? command, args, options: {} };
+	}
+	// npm's node_modules/.bin shims re-parse their arguments once more.
+	const doubleEscape = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(
+		executable,
+	);
+	const line = [
+		escapeCmdMetaChars(executable),
+		...args.map((arg) => escapeCmdArgument(arg, doubleEscape)),
+	].join(" ");
+	return {
+		file: process.env.comspec || "cmd.exe",
+		args: ["/d", "/s", "/c", `"${line}"`],
+		options: { windowsVerbatimArguments: true },
+	};
+}
+
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+
+function escapeCmdMetaChars(text: string): string {
+	return text.replace(CMD_META_CHARS, "^$1");
+}
+
+/** Quote for CommandLineToArgvW, then caret-escape for cmd.exe. */
+function escapeCmdArgument(argument: string, doubleEscape: boolean): string {
+	const quoted = argument
+		// Backslashes before a quote are doubled and the quote escaped.
+		.replace(/(\\*)"/g, '$1$1\\"')
+		// Trailing backslashes are doubled before the closing quote.
+		.replace(/(\\*)$/, "$1$1");
+	const escaped = escapeCmdMetaChars(`"${quoted}"`);
+	return doubleEscape ? escapeCmdMetaChars(escaped) : escaped;
 }

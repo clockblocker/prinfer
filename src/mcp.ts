@@ -4,10 +4,12 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
+import { nearbyCandidates } from "./candidates.js";
 import {
 	type BatchHoverSuccess,
 	batchHoverSuccess,
 	batchHoverSuccessSchema,
+	type ContractErrorResponse,
 	completionSuccess,
 	completionSuccessSchema,
 	contractError,
@@ -16,13 +18,14 @@ import {
 	diagnosticsSuccessSchema,
 	hoverSuccess,
 	hoverSuccessSchema,
+	type McpTool,
 } from "./contract.js";
 import {
 	findNearestTsconfig,
 	formatDiagnostics,
 	resolveTextColumn,
 } from "./core/index.js";
-import { PrinferError } from "./errors.js";
+import { assertSourceFile, PrinferError } from "./errors.js";
 import { batchHover, completions, diagnostics, hover } from "./index.js";
 import {
 	nativeDiagnostics,
@@ -70,12 +73,15 @@ See also:
 type Backend = "typescript6" | "typescript7";
 type BatchItem = BatchHoverSuccess["result"]["items"][number];
 
-interface ErrorContext {
+interface FailureContext {
 	file?: string;
+	project?: string;
 	line?: number;
 	column?: number;
-	project?: string;
-	candidates?: string[];
+	/** The name or text that failed to resolve; ranks candidates. */
+	query?: string;
+	/** Only suggest names close to query (name lookups). */
+	strict?: boolean;
 }
 
 function formatError(error: unknown): string {
@@ -145,8 +151,12 @@ function formatCompletionResult(result: CompletionResult): string {
 	return result.entries.map((entry) => entry.name).join("\n");
 }
 
-function errorResult(error: unknown, context: ErrorContext = {}) {
-	const response = contractError(error, context);
+function errorResult(
+	error: unknown,
+	tool: McpTool,
+	context: FailureContext = {},
+) {
+	const response = toolError(error, tool, context);
 	return {
 		content: [{ type: "text" as const, text: formatError(error) }],
 		structuredContent: response,
@@ -154,65 +164,52 @@ function errorResult(error: unknown, context: ErrorContext = {}) {
 	};
 }
 
-function errorContext(
-	file: string,
-	project?: string,
-	position: { line?: number; column?: number } = {},
-	name?: string,
-): ErrorContext {
-	const resolvedFile = path.resolve(process.cwd(), file);
-	const resolvedProject = project
-		? path.resolve(process.cwd(), project)
-		: findNearestTsconfig(path.dirname(resolvedFile));
-	return {
-		file: resolvedFile,
-		project: resolvedProject,
-		...position,
-		candidates: nearbyCandidates(resolvedFile, position.line, name),
-	};
-}
-
-function nearbyCandidates(
-	file: string,
-	line?: number,
-	name?: string,
-): string[] | undefined {
-	if (!fs.existsSync(file)) return undefined;
-	const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
-	const text = line
-		? lines.slice(Math.max(0, line - 3), line + 2).join("\n")
-		: lines.join("\n");
-	const identifiers = [...new Set(text.match(/[A-Za-z_$][\w$]*/g) ?? [])];
-	const ranked = name
-		? identifiers.sort(
-				(left, right) =>
-					nameDistance(left, name) - nameDistance(right, name),
-			)
-		: identifiers;
-	const candidates = ranked
-		.filter((candidate) => candidate !== name)
-		.slice(0, 5);
-	return candidates.length ? candidates : undefined;
-}
-
-function nameDistance(left: string, right: string): number {
-	const a = left.toLowerCase();
-	const b = right.toLowerCase();
-	const row = Array.from({ length: b.length + 1 }, (_, index) => index);
-	for (let i = 1; i <= a.length; i++) {
-		let previous = row[0] ?? 0;
-		row[0] = i;
-		for (let j = 1; j <= b.length; j++) {
-			const current = row[j] ?? 0;
-			row[j] = Math.min(
-				(row[j] ?? 0) + 1,
-				(row[j - 1] ?? 0) + 1,
-				previous + (a[i - 1] === b[j - 1] ? 0 : 1),
-			);
-			previous = current;
-		}
+/**
+ * The contract error for a failed tool call, with tool-specific advice and,
+ * for SYMBOL_NOT_FOUND, nearby names. Never throws: it runs on error paths,
+ * where the file may be missing, a directory, or unreadable.
+ */
+function toolError(
+	error: unknown,
+	tool: McpTool,
+	context: FailureContext = {},
+): ContractErrorResponse {
+	const file = context.file
+		? path.resolve(process.cwd(), context.file)
+		: undefined;
+	const response = contractError(error, {
+		file,
+		line: context.line,
+		column: context.column,
+		project: projectFor(file, context.project),
+		surface: { interface: "mcp", tool },
+	});
+	if (
+		file &&
+		response.error.code === "SYMBOL_NOT_FOUND" &&
+		!response.error.candidates
+	) {
+		const candidates = nearbyCandidates(file, {
+			line: context.line || undefined,
+			query: context.query,
+			strict: context.strict,
+		});
+		if (candidates) response.error.candidates = candidates;
 	}
-	return row[b.length] ?? Number.MAX_SAFE_INTEGER;
+	return response;
+}
+
+function projectFor(
+	file: string | undefined,
+	project: string | undefined,
+): string | undefined {
+	if (project) return path.resolve(process.cwd(), project);
+	if (!file) return undefined;
+	try {
+		return findNearestTsconfig(path.dirname(file));
+	} catch {
+		return undefined;
+	}
 }
 
 function useNative(backend?: Backend): boolean {
@@ -229,11 +226,7 @@ function timingEnabled(): boolean {
 }
 
 function readSource(file: string): string {
-	const resolved = path.resolve(process.cwd(), file);
-	if (!fs.existsSync(resolved)) {
-		throw new Error(`File not found: ${resolved}`);
-	}
-	return fs.readFileSync(resolved, "utf8");
+	return fs.readFileSync(assertSourceFile(file), "utf8");
 }
 
 function resolveColumn(
@@ -368,22 +361,25 @@ async function runBatchHover(
 		pending: PendingItem | { index: number; file?: string },
 		error: unknown,
 		position: HoverPosition,
-		name?: string,
 	) => {
 		const raw = rawItems[pending.index] as RawBatchItem;
 		items[pending.index] = {
 			...echoTarget(pending.file, raw),
 			position,
-			error: contractError(
+			error: toolError(
 				error,
+				"batch_hover",
 				pending.file
-					? errorContext(
-							pending.file,
+					? {
+							file: pending.file,
 							project,
-							position.column ? position : { line: raw.line },
-							name,
-						)
-					: { line: raw.line, column: raw.column },
+							...(position.column
+								? position
+								: { line: raw.line }),
+							query: raw.name ?? raw.text,
+							strict: raw.name !== undefined,
+						}
+					: { line: raw.line, column: raw.column, project },
 			).error,
 		};
 	};
@@ -492,12 +488,7 @@ async function runBatchHover(
 					result,
 				);
 			} catch (error) {
-				fail(
-					pending,
-					error,
-					{ line: target.line ?? 0, column: 0 },
-					target.name,
-				);
+				fail(pending, error, { line: target.line ?? 0, column: 0 });
 			}
 		};
 
@@ -547,10 +538,14 @@ async function runBatchHover(
 									...item.error!,
 									candidates:
 										item.error?.candidates ??
-										nearbyCandidates(
-											file,
-											entry.position.line,
-										),
+										(item.error?.code === "SYMBOL_NOT_FOUND"
+											? nearbyCandidates(file, {
+													line: entry.position.line,
+													query: rawItems[
+														entry.pending.index
+													]?.text,
+												})
+											: undefined),
 								},
 							};
 						}
@@ -667,6 +662,7 @@ function createServer(): McpServer {
 		},
 		async ({ file, name, line, include_docs, project, backend }) => {
 			try {
+				assertSourceFile(file);
 				const result = await hoverNamed(
 					file,
 					name,
@@ -684,10 +680,13 @@ function createServer(): McpServer {
 					structuredContent: hoverSuccess(result),
 				};
 			} catch (error) {
-				return errorResult(
-					error,
-					errorContext(file, project, { line }, name),
-				);
+				return errorResult(error, "hover_by_name", {
+					file,
+					project,
+					line,
+					query: name,
+					strict: true,
+				});
 			}
 		},
 	);
@@ -721,6 +720,7 @@ function createServer(): McpServer {
 		}) => {
 			let resolvedColumn = column;
 			try {
+				assertSourceFile(file);
 				resolvedColumn = resolveColumn(
 					file,
 					line,
@@ -747,13 +747,13 @@ function createServer(): McpServer {
 					}),
 				};
 			} catch (error) {
-				return errorResult(
-					error,
-					errorContext(file, project, {
-						line,
-						column: resolvedColumn,
-					}),
-				);
+				return errorResult(error, "hover", {
+					file,
+					project,
+					line,
+					column: resolvedColumn,
+					query: text,
+				});
 			}
 		},
 	);
@@ -809,10 +809,7 @@ function createServer(): McpServer {
 					structuredContent: batchHoverSuccess(result),
 				};
 			} catch (error) {
-				return errorResult(
-					error,
-					file ? errorContext(file, project) : { project },
-				);
+				return errorResult(error, "batch_hover", { file, project });
 			}
 		},
 	);
@@ -834,6 +831,7 @@ function createServer(): McpServer {
 		},
 		async ({ file, line, column, project }) => {
 			try {
+				assertSourceFile(file);
 				const result = completions(file, line, column, { project });
 				return {
 					content: [
@@ -845,10 +843,12 @@ function createServer(): McpServer {
 					structuredContent: completionSuccess(result),
 				};
 			} catch (error) {
-				return errorResult(
-					error,
-					errorContext(file, project, { line, column }),
-				);
+				return errorResult(error, "completions", {
+					file,
+					project,
+					line,
+					column,
+				});
 			}
 		},
 	);
@@ -876,6 +876,7 @@ function createServer(): McpServer {
 		},
 		async ({ file, project, include_suggestions, backend }) => {
 			try {
+				assertSourceFile(file);
 				const options = { project, include_suggestions };
 				const result = useNative(backend)
 					? await nativeDiagnostics(file, options)
@@ -890,7 +891,7 @@ function createServer(): McpServer {
 					structuredContent: diagnosticsSuccess(result),
 				};
 			} catch (error) {
-				return errorResult(error, errorContext(file, project));
+				return errorResult(error, "diagnostics", { file, project });
 			}
 		},
 	);

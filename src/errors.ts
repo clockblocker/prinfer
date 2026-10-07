@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 /**
  * Error class for wrapping TypeScript internal errors with context
  */
@@ -61,4 +64,27 @@ export class PrinferError extends Error {
 		this.code = code;
 		this.suggestion = suggestion;
 	}
+}
+
+/**
+ * Resolve a source path against cwd and throw a FILE_NOT_FOUND error when it
+ * does not exist or is not a regular file (a directory would otherwise fail
+ * deep inside TypeScript with an unhelpful message).
+ */
+export function assertSourceFile(file: string): string {
+	const resolved = path.resolve(process.cwd(), file);
+	let stats: fs.Stats;
+	try {
+		stats = fs.statSync(resolved);
+	} catch {
+		throw new PrinferError("FILE_NOT_FOUND", `File not found: ${resolved}`);
+	}
+	if (!stats.isFile()) {
+		throw new PrinferError(
+			"FILE_NOT_FOUND",
+			`Not a file: ${resolved} is a ${stats.isDirectory() ? "directory" : "special file"}`,
+			"Pass the path of a TypeScript or JavaScript source file, not a directory.",
+		);
+	}
+	return resolved;
 }
