@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	type ContractErrorCode,
 	completionSuccess,
@@ -8,98 +9,65 @@ import {
 	hoverSuccess,
 } from "./contract.js";
 import { completions, hover } from "./index.js";
+import { runSetup } from "./setup.js";
 
 const HELP = `
 prinfer - TypeScript type inference inspection tool
 
 Usage:
-  prinfer complete <file.ts>:<line>:<column> [--json] [--project <tsconfig.json>]
-  prinfer <file.ts>:<line>:<column> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<name> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
   prinfer <file.ts>:<name>:<line> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
-  prinfer setup codex [--print]
+  prinfer <file.ts>:<line>:<column> [--docs] [--timing] [--full] [--json] [--project <tsconfig.json>]
+  prinfer complete <file.ts>:<line>:<column> [--json] [--project <tsconfig.json>]
+  prinfer mcp
+  prinfer setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
+  prinfer setup agents-md [--file <path>] [--print]
 
 Commands:
   complete             Show TypeScript autocomplete entries at a cursor
-  setup codex          Configure the prinfer MCP server for Codex
+  mcp                  Start the MCP server on stdio (same as prinfer-mcp)
+  setup <client>       Register the MCP server with an agent client
+  setup agents-md      Add prinfer usage instructions to AGENTS.md or CLAUDE.md
 
 Arguments:
-  file.ts:line:column  Path to TypeScript file with 1-based line and column
   file.ts:name         Path to TypeScript file with symbol name
   file.ts:name:line    Path to TypeScript file with symbol name and line hint
+  file.ts:line:column  Path to TypeScript file with 1-based line and column
 
 Options:
   --docs, -d           Include JSDoc/TSDoc documentation
   --timing, -t         Include TypeScript 6 resolution timing
   --full, -f           Disable editor-style type truncation
   --json               Emit the versioned JSON contract on stdout
-  --print              Print setup commands without changing configuration
   --project, -p        Path to tsconfig.json (optional)
-  --help, -h           Show this help message
+  --help, -h           Show this help message (prinfer setup --help for setup options)
 
 Examples:
-  prinfer complete src/utils.ts:75:10
-  prinfer src/utils.ts:75:10
-  prinfer src/utils.ts:createHandler
+  prinfer src/utils.ts:createHandler --json
   prinfer src/utils.ts:createHandler:75
   prinfer src/utils.ts:75:10 --docs
-  prinfer src/utils.ts:75:10 --project ./tsconfig.json
-  prinfer setup codex
-  prinfer setup codex --print
+  prinfer complete src/utils.ts:75:10
+  prinfer setup claude
+  prinfer setup cursor --scope project --print
+  prinfer setup agents-md --file CLAUDE.md
+  npx -y prinfer mcp
 `.trim();
 
-function getMcpBinaryPath(): string {
-	const thisScript = path.resolve(process.argv[1]);
-	return path.join(path.dirname(thisScript), "mcp.js");
-}
-
-function runSetup(args: string[]): void {
-	const client = args[1];
-	if (client !== "codex") {
-		console.error("Error: setup requires a supported client: codex");
+/**
+ * Starts the MCP stdio server from the sibling build output (dist/mcp.js) in
+ * this process, so `npx -y prinfer mcp` works without a second bin name.
+ */
+async function startMcpServer(): Promise<void> {
+	const script = fs.realpathSync(process.argv[1]);
+	const dir = path.dirname(script);
+	const entry = [`mcp${path.extname(script)}`, "mcp.js"]
+		.map((name) => path.join(dir, name))
+		.find((candidate) => fs.existsSync(candidate));
+	if (!entry) {
+		console.error(`Error: prinfer MCP server not found next to ${script}`);
 		process.exit(1);
 	}
-
-	const command = [
-		"codex",
-		"mcp",
-		"add",
-		"prinfer",
-		"--",
-		"node",
-		getMcpBinaryPath(),
-	];
-	if (args.includes("--print")) {
-		console.log(command.map(quoteShellArgument).join(" "));
-		return;
-	}
-
-	try {
-		execFileSync("codex", ["mcp", "remove", "prinfer"], {
-			stdio: "ignore",
-		});
-	} catch {
-		// The server was not previously configured.
-	}
-
-	try {
-		execFileSync("codex", command.slice(1), { stdio: "inherit" });
-		console.log("[ok] Configured prinfer for Codex");
-		console.log("Restart Codex to load the MCP server.");
-	} catch (error) {
-		console.error(
-			`[error] Codex setup failed: ${(error as Error).message}`,
-		);
-		console.error(
-			`Run manually: ${command.map(quoteShellArgument).join(" ")}`,
-		);
-		process.exit(1);
-	}
-}
-
-function quoteShellArgument(argument: string): string {
-	if (/^[a-zA-Z0-9_./:@-]+$/.test(argument)) return argument;
-	return `'${argument.replaceAll("'", `'"'"'`)}'`;
+	await import(pathToFileURL(entry).href);
 }
 
 interface CliPositionOptions {
@@ -185,12 +153,6 @@ function parseArgs(argv: string[]): CliOptions | null {
 	// Check for help flag
 	if (args.includes("--help") || args.includes("-h") || args.length === 0) {
 		console.log(HELP);
-		return null;
-	}
-
-	// Check for setup command
-	if (args[0] === "setup") {
-		runSetup(args);
 		return null;
 	}
 
@@ -282,6 +244,20 @@ function failJson(
 }
 
 function main(): void {
+	const command = process.argv[2];
+	if (command === "mcp") {
+		startMcpServer().catch((error: unknown) => {
+			console.error(
+				`Error: failed to start the prinfer MCP server: ${(error as Error).message}`,
+			);
+			process.exit(1);
+		});
+		return;
+	}
+	if (command === "setup") {
+		process.exit(runSetup(process.argv.slice(3)));
+	}
+
 	const options = parseArgs(process.argv);
 
 	if (!options) {
