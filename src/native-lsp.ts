@@ -227,7 +227,7 @@ class NativeLspClient {
 		throw new PrinferError(
 			"INVALID_ARGUMENT",
 			`The TypeScript 7 backend can't use project ${project} for ${file}: its language server loads ${actual ?? "no tsconfig (an inferred project)"} for that file`,
-			`TypeScript 7 always uses the tsconfig.json nearest the file, or a project that tsconfig references. Retry with backend "typescript6" to use ${path.basename(project)}, or omit project.`,
+			`TypeScript 7 always uses the tsconfig.json nearest the file, or a project that tsconfig references. Use the typescript6 backend for ${path.basename(project)}, or omit project.`,
 		);
 	}
 

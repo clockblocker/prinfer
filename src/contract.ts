@@ -276,7 +276,7 @@ function mcpSuggestion(code: ContractErrorCode, tool?: McpTool): string {
 				case "completions":
 					return "Move the column onto the cursor position, e.g. just inside an opening quote or after a dot.";
 				default:
-					return "Pass text copied from the line instead of a column, or call hover_by_name with the symbol name.";
+					return "Point at an identifier: pass text copied from the line rather than counting columns, or call hover_by_name with the symbol name.";
 			}
 		case "TYPESCRIPT_ERROR":
 			return `Check the selected tsconfig (project) and the source syntax${retry}.`;

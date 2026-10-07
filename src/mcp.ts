@@ -595,11 +595,13 @@ const MAX_BATCH_POSITIONS = 100;
 const fileSchema = z
 	.string()
 	.describe("TS/JS file: absolute, or relative to the server's cwd");
+const PROJECT_DEFAULT =
+	"tsconfig.json path; default: the nearest one above file";
 const projectSchema = z
 	.string()
 	.optional()
 	.describe(
-		"tsconfig.json path; defaults to the nearest one above file. On typescript7 it must be the tsconfig the language server picks (the nearest tsconfig.json or one it references); use typescript6 for others",
+		`${PROJECT_DEFAULT}. typescript7 accepts only that tsconfig or a project it references; use typescript6 for any other`,
 	);
 const includeDocsSchema = z
 	.boolean()
@@ -609,20 +611,18 @@ const backendSchema = z
 	.enum(["typescript6", "typescript7"])
 	.optional()
 	.describe(
-		"Default typescript7. Retry with typescript6 if a lookup fails or looks wrong",
+		"Default typescript7; retry with typescript6 if a call fails or a result looks wrong",
 	);
 const lineSchema = positiveInteger.describe("1-based line");
 const textSchema = z
 	.string()
 	.min(1)
 	.describe(
-		'Text copied from the line, e.g. "useState"; hovers its first character. Whole-identifier matches count first ("user" skips "users"); only if the line has none is text matched as a plain substring. Use instead of column',
+		'Token copied from the line, e.g. "useState"; hovers where it starts. Matches whole identifiers ("user" skips "users"), or any substring if the line has none. Use instead of column',
 	);
 const occurrenceSchema = positiveInteger
 	.optional()
-	.describe(
-		"Which match of text on the line (default 1), counted among whole-identifier matches when the line has any",
-	);
+	.describe("Which match of text on the line (default 1)");
 const columnSchema = positiveInteger.describe(
 	"1-based column; alternative to text",
 );
@@ -631,14 +631,14 @@ const nameSchema = z
 	.min(1)
 	.describe('Symbol name, e.g. "createHandler"');
 
-const INSTRUCTIONS = `prinfer shows the types TypeScript infers, as an editor hover would. Call it instead of guessing a type, reading .d.ts files, or adding an annotation just to find out.
+const INSTRUCTIONS = `prinfer shows the types TypeScript infers, as an editor hover would. Look a type up instead of guessing it, reading .d.ts files, or writing an annotation to find out.
 - hover_by_name: you know the symbol's name. Start here.
-- hover: you know the line; target the token with text copied from that line.
+- hover: a token without a unique name; pass its line and text copied from that line.
 - batch_hover: several lookups, across files, in one call.
 - completions: valid values at a cursor, e.g. string-literal union members.
-- diagnostics: check a file for type errors after editing.
-Lines and columns are 1-based. If a lookup fails or looks wrong on the default TypeScript 7 backend, retry it with backend "typescript6".
-Writing type tests: expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot(), with inferredType from prinfer/testing.`;
+- diagnostics: type errors in one file; run it on each file you edit.
+If a call fails or looks wrong on the default TypeScript 7 backend, retry it with backend "typescript6".
+Type regression tests: expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot(), with inferredType from prinfer/testing.`;
 
 function createServer(): McpServer {
 	const server = new McpServer(
@@ -650,14 +650,14 @@ function createServer(): McpServer {
 		"hover_by_name",
 		{
 			description:
-				"Show the type TypeScript infers for a named variable, function, call, property, or type. Use before writing an explicit type annotation, when unsure what a generic or call resolves to, or instead of reading .d.ts files. Hovers the first match in the file; pass line to pick a specific one.",
+				"Show the type TypeScript infers for a named variable, function, call, parameter, property, or type. Use before writing a type annotation, when unsure what a generic or call resolves to, or instead of reading .d.ts files. Declarations win over other uses of the name; pass line to pick among repeats.",
 			inputSchema: z.object({
 				file: fileSchema,
 				name: nameSchema,
 				line: positiveInteger
 					.optional()
 					.describe(
-						"1-based line to search, to pick among same-named symbols",
+						"1-based line of the one you mean, when the name repeats",
 					),
 				include_docs: includeDocsSchema,
 				project: projectSchema,
@@ -700,7 +700,7 @@ function createServer(): McpServer {
 		"hover",
 		{
 			description:
-				"Show the type TypeScript infers at a token on a line, like an editor hover; generic calls show their instantiated types. Use for tokens without a unique name: callback parameters, expressions, repeated names. Target the token with text from the line (or a column).",
+				"Show the type TypeScript infers at a token on a line, like an editor hover; generic calls show their instantiated types. Use when hover_by_name can't name the token: callback parameters, expressions, repeated names. Target it with text copied from the line (or a column).",
 			inputSchema: z.object({
 				file: fileSchema,
 				line: lineSchema,
@@ -828,9 +828,9 @@ function createServer(): McpServer {
 				file: fileSchema,
 				line: lineSchema,
 				column: positiveInteger.describe(
-					"1-based cursor column, e.g. just inside an opening quote",
+					"1-based cursor column; the cursor sits before this character, e.g. just inside an opening quote",
 				),
-				project: projectSchema,
+				project: z.string().optional().describe(PROJECT_DEFAULT),
 			}),
 			outputSchema: completionToolOutputSchema,
 		},
@@ -862,7 +862,7 @@ function createServer(): McpServer {
 		"diagnostics",
 		{
 			description:
-				'Check one TypeScript file for type errors. Call after editing a file to verify the edit, instead of running tsc on the whole project. Returns `path:line:col error TS2322: message` lines, or "No type errors."',
+				"Check one TypeScript file for type errors, instead of running tsc on the whole project. Call it on each file you edit; the edit is done when none of them reports an error.",
 			inputSchema: z.object({
 				file: fileSchema,
 				project: projectSchema,

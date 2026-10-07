@@ -166,11 +166,11 @@ export const AGENTS_BLOCK = `${AGENTS_START}
 ## TypeScript types (prinfer)
 
 The prinfer MCP server reports what the TypeScript compiler infers. Reach for it when:
-- Adding a type annotation: check the inferred type first with \`hover_by_name(file, name)\` or \`hover(file, line, text)\` (pass the token text instead of counting columns); annotate only when inference is wrong or too wide.
+- Adding a type annotation, or unsure what a variable, generic or call infers: \`hover_by_name(file, name)\`; for a token without a unique name, \`hover(file, line, text)\` with text copied from the line. Several lookups go in one \`batch_hover\`. Annotate only when inference is wrong or too wide.
 - Choosing a value for a typed slot (union member, option key, overload): \`completions(file, line, column)\` lists what TypeScript accepts there.
-- Finishing an edit to a .ts/.tsx file: \`diagnostics(file)\` lists its type errors; the edit is done when it reports none.
+- Finishing an edit to .ts/.tsx files: run \`diagnostics(file)\` on each; the edit is done when none reports an error.
 - Writing type regression tests: \`prinfer/testing\` (dev dependency \`prinfer\`) snapshots an inferred type: \`expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot()\`.
-- Working without MCP: \`npx prinfer path/to/file.ts:symbolName --json\` for a type, \`npx prinfer check path/to/file.ts --json\` for type errors.
+- Working without MCP: \`npx prinfer file.ts:name --json\` (type), \`npx prinfer complete file.ts:line:col --json\` (completions), \`npx prinfer check file.ts --json\` (type errors).
 ${AGENTS_END}`;
 
 class SetupError extends Error {}

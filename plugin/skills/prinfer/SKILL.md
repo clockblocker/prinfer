@@ -12,18 +12,18 @@ The compiler knows the type; look it up instead of guessing. When the inferred t
 | You want | Call |
 | :- | :- |
 | Type of a named symbol | `hover_by_name(file, name)`; add `line` when the name repeats |
-| Type of an expression or call site | `hover(file, line, text)`; add `occurrence` for the nth match on that line |
+| Type of a token without a unique name (callback parameter, expression, call site) | `hover(file, line, text)`; add `occurrence` for the nth match on that line |
 | Several types, any files | one `batch_hover` call |
 | Valid values at a cursor (union members, keys, methods) | `completions(file, line, column)` |
 | Type errors after an edit | `diagnostics(file)` |
 
 An edit is done when `diagnostics` reports no errors for every file you changed.
 
-All tools accept `project` (path to a `tsconfig.json`) for files outside the nearest project.
+All tools accept `project`, a `tsconfig.json` path that defaults to the nearest one above the file. On `typescript7` only that tsconfig or a project it references works; for any other, also pass `backend: "typescript6"`.
 
 ## Positions
 
-Lines and columns are 1-based. For `hover`, pass `text`: the token exactly as it appears on the line, such as `useQuery` or `config`. Prinfer finds the column, so you never count characters.
+Lines and columns are 1-based. For `hover` and `batch_hover` items, pass `text`: the token exactly as it appears on the line, such as `useQuery` or `config`. prinfer finds the column, so you never count characters.
 
 `completions` needs a column: the cursor sits before the character at that column. For a string-literal union, put it just inside the opening quote.
 
@@ -43,15 +43,16 @@ test("groupBy keys by the callback's return type", () => {
 - Leave the matcher empty; the runner writes the type. After an intended change, rerun with the runner's snapshot update (`vitest -u`, `bun test --update-snapshots`).
 - Unlike `expectTypeOf` or `tsd`, there is no hand-written expected type: the snapshot is the type as the editor displays it, so any change fails.
 - Another module: `new URL("../src/users.ts", import.meta.url)` as the file. Targets: `{ name }`, `{ line, text }`, `{ line, column }`.
-- Synchronous on TypeScript 6; `backend: "typescript7"` returns a promise. `inferredCompletions(file, { line, text })` resolves to completion names, cursor right after `text`.
+- `inferredType` is synchronous on TypeScript 6; `backend: "typescript7"` returns a promise.
+- `await expect(inferredCompletions(file, { line, text })).resolves.toMatchInlineSnapshot()` pins completion names (TypeScript 7, cursor right after `text`).
 
 ## Backend
 
-The default backend is `typescript7`, the native compiler. If a call fails or its type looks wrong, retry that call with `backend: "typescript6"`.
+The MCP tools default to `typescript7`, the native compiler. If a call fails or its type looks wrong, retry that call with `backend: "typescript6"`. `completions` always runs on TypeScript 6.
 
 ## Without MCP
 
-When the prinfer tools are not connected, run the CLI. Output is a JSON object with `ok` plus `result` or `error`:
+When the prinfer tools are not connected, run the CLI. It defaults to TypeScript 6 (`--backend typescript7` switches lookups and `check`). Output is a JSON object with `ok` plus `result` or `error`:
 
 ```bash
 npx prinfer src/file.ts:symbolName --json

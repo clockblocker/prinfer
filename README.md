@@ -117,7 +117,7 @@ Position: 11:14
 
 ### hover
 
-Hover a token on a known line. Pass `text` copied from the line and prinfer finds the column, so the agent doesn't have to count characters. `text` matches whole identifiers first: on `users.map((user) => user.name)`, `text: "user"` skips `users` and hits the callback parameter, and `occurrence: 2` picks the next `user`. Only when the line has no whole-identifier match is `text` matched as a plain substring. A `column` still works in place of `text`.
+Hover a token on a known line, for things `hover_by_name` can't name: callback parameters, expressions, repeated names. Pass `text` copied from the line and prinfer finds the column, so the agent doesn't have to count characters. `text` matches whole identifiers first: on `users.map((user) => user.name)`, `text: "user"` skips `users` and hits the callback parameter, and `occurrence: 2` picks the next `user`. Only when the line has no whole-identifier match is `text` matched as a plain substring. A `column` still works in place of `text`.
 
 ```text
 hover(file: "src/utils.ts", line: 11, text: "user")
@@ -129,6 +129,7 @@ Type: (parameter) user: {
     id: number;
     name: string;
 }
+Name: user
 Kind: parameter
 Position: 11:33
 Target: "user" at 11:33
@@ -197,7 +198,7 @@ tea
 
 ### diagnostics
 
-Type errors for one file, without type-checking the whole project. Meant for the end of an edit.
+Type errors for one file, without type-checking the whole project. Run it on each file you edited; the edit is done when none reports an error.
 
 ```text
 diagnostics(file: "src/utils.ts")
@@ -271,6 +272,8 @@ Failed lookups throw (or reject) with the fix in the message: an unknown name li
 
 - `typescript7` (default) runs the native TypeScript 7 language server. One warm session per project is shared across requests, and its output is closest to what your editor shows.
 - `typescript6` uses the TypeScript 6 compiler API in-process. If a lookup fails or looks wrong on TypeScript 7, retry that call with `typescript6`.
+
+Only the MCP server defaults to TypeScript 7, and its `completions` tool always runs on TypeScript 6. The CLI and `prinfer/testing` type lookups default to TypeScript 6 (switch with `--backend typescript7` or `backend: "typescript7"`), the library API always uses it, and `inferredCompletions` always uses TypeScript 7.
 
 The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. Both backends pick the same symbol for `hover_by_name`, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
 
@@ -381,7 +384,7 @@ import { batchHover, completions, diagnostics, hover } from "prinfer";
 // By symbol name
 hover("./src/utils.ts", "format");
 // => { signature: "(value: number, digits?: number): string", returnType: "string",
-//      line: 2, column: 1, kind: "function", name: "format", documentation: undefined }
+//      line: 2, column: 17, kind: "function", name: "format", documentation: undefined }
 
 // By name with a line hint, for repeated names
 hover("./src/utils.ts", "names", { line: 11 });
@@ -427,7 +430,7 @@ bun install
 bun run ci    # typecheck, build, biome check, tests
 ```
 
-The repository type-checks with TypeScript 7 (`bun run typecheck`). The MCP server's default backend uses the TypeScript 7 native language server, and the testing helpers use its unstable standalone async compiler API. The TypeScript 6 package backs the synchronous library API, the CLI, the `typescript6` MCP backend, and declaration bundling.
+The repository type-checks with TypeScript 7 (`bun run typecheck`). The MCP server's default backend uses the TypeScript 7 native language server. `inferredCompletions` and the testing helpers' `backend: "typescript7"` mode use its unstable standalone async compiler API. The TypeScript 6 package backs the synchronous library API, the CLI's default backend, the testing helpers' default, MCP `completions`, the `typescript6` MCP backend, and declaration bundling.
 
 Releases go through changesets (`bun run changeset`). `bun run version` also copies the version into `server.json` and the Claude Code plugin manifest.
 

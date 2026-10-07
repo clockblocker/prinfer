@@ -9,6 +9,23 @@ const genericMethodFile = path.join(fixturesDir, "generic-method.ts");
 const completionsFile = path.join(fixturesDir, "completions.ts");
 
 describe("completions", () => {
+	test("rejects positions outside the file with the valid range", () => {
+		for (const [line, column, range] of [
+			[999, 1, "Use a line between 1 and"],
+			[1, 999, "use a column between 1 and"],
+		] as const) {
+			try {
+				completions(completionsFile, line, column);
+				throw new Error("expected completions to throw");
+			} catch (error) {
+				expect(error).toMatchObject({ code: "INVALID_ARGUMENT" });
+				expect((error as { suggestion?: string }).suggestion).toContain(
+					range,
+				);
+			}
+		}
+	});
+
 	test("returns string-literal values at the cursor", () => {
 		const result = completions(completionsFile, 3, 33);
 		expect(result.entries.map((entry) => entry.name)).toEqual([

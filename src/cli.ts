@@ -44,12 +44,13 @@ Arguments:
 
 Options:
   --docs, -d           Include JSDoc/TSDoc documentation
-  --timing, -t         Include TypeScript 6 resolution timing
+  --timing, -t         Include type-resolution timing
   --full, -f           Disable editor-style type truncation
   --suggestions        check: also report suggestions such as unused variables
   --json               Emit the versioned JSON contract on stdout
   --project, -p        Path to tsconfig.json (optional)
-  --backend <backend>  typescript6 (default) or typescript7, for type lookups and check
+  --backend <backend>  typescript6 (default) or typescript7, for type lookups and
+                       check; complete always uses typescript6
   --help, -h           Show this help message (prinfer setup --help for setup options)
 
 Examples:

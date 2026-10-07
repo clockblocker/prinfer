@@ -266,7 +266,9 @@ function createRequest(
 		throw testingError(
 			"INVALID_ARGUMENT",
 			`${helper} got unknown backend ${JSON.stringify(backend)}.`,
-			'Use backend: "typescript7", or omit it for the synchronous TypeScript 6 default.',
+			helper === "inferredCompletions"
+				? "Omit backend; completions always use TypeScript 7."
+				: 'Use backend: "typescript7", or omit it for the synchronous TypeScript 6 default.',
 		);
 	}
 	return { helper, input, file: sourcePath(input), backend };

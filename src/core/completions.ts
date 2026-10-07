@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { PrinferError } from "../errors.js";
 import type { CompletionResult } from "../types.js";
 import { createProgramLanguageService, loadProgram } from "./program.js";
 
@@ -20,7 +21,8 @@ export function getCompletions(
 		line < 1 ||
 		column < 1
 	) {
-		throw new Error(
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
 			"Completion line and column must be positive integers.",
 		);
 	}
@@ -32,12 +34,22 @@ export function getCompletions(
 			`Could not load source file into the program (check tsconfig include/exclude): ${entryFileAbs}`,
 		);
 	}
+	const lineCount = sourceFile.getLineStarts().length;
+	if (line > lineCount) {
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
+			`Line ${line} is outside ${entryFileAbs}, which has ${lineCount} lines`,
+			`Use a line between 1 and ${lineCount}.`,
+		);
+	}
 	const lineStart = sourceFile.getPositionOfLineAndCharacter(line - 1, 0);
 	const lineEnd = sourceFile.getLineEndOfPosition(lineStart);
 	const position = lineStart + column - 1;
 	if (position > lineEnd) {
-		throw new Error(
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
 			`No cursor position at ${entryFileAbs}:${line}:${column}`,
+			`Line ${line} has ${lineEnd - lineStart} characters; use a column between 1 and ${lineEnd - lineStart + 1}.`,
 		);
 	}
 

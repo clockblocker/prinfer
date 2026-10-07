@@ -99,7 +99,7 @@ describe("TypeScript 7 project selection", () => {
 			const error = await failure(run);
 			expect(error.code).toBe("INVALID_ARGUMENT");
 			expect(error.message).toContain(path.join(dir, "tsconfig.json"));
-			expect(error.suggestion).toContain('backend "typescript6"');
+			expect(error.suggestion).toContain("typescript6 backend");
 		}
 		// The TypeScript 6 backend honors the same project.
 		expect(hover(main, 1, 14, { project }).name).toBe("value");
