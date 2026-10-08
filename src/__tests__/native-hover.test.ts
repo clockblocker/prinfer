@@ -4,6 +4,7 @@ import path from "node:path";
 import { resolveTextColumn } from "../core/index.js";
 import { hover } from "../index.js";
 import {
+	arrowToCallSignature,
 	closeNativeSessions,
 	nativeHover,
 	nativeHoverByName,
@@ -37,7 +38,7 @@ describe("parseHoverMarkdown (TypeScript 7 hover output)", () => {
 			{
 				kind: "method",
 				name: "map",
-				returnType: "{\n    id: number;\n    label: string;\n}[]",
+				returnType: "{ id: number; label: string; }[]",
 			},
 		],
 		[
@@ -102,10 +103,50 @@ describe("parseHoverMarkdown (TypeScript 7 hover output)", () => {
 		],
 	];
 
+	// The canonical signature: type text only, on one line.
+	const canonical: Record<string, string> = {
+		"function add(a: number, b: number): number":
+			"(a: number, b: number): number",
+		"(method) Array<string>.map<number>(callbackfn: (value: string, index: number, array: string[]) => number, thisArg?: any): number[]":
+			"<number>(callbackfn: (value: string, index: number, array: string[]) => number, thisArg?: any): number[]",
+		"(method) Promise<number>.then<number, never>(onfulfilled?: ((value: number) => number | PromiseLike<number>) | null | undefined, onrejected?: ((reason: any) => PromiseLike<never>) | null | undefined): Promise<number>":
+			"<number, never>(onfulfilled?: ((value: number) => number | PromiseLike<number>) | null | undefined, onrejected?: ((reason: any) => PromiseLike<never>) | null | undefined): Promise<number>",
+		"(method) Box<T>.make<U>(v: U): Box<U>": "<U>(v: U): Box<U>",
+		'function generic<User, "id">(obj: User, key: "id"): number':
+			'<User, "id">(obj: User, key: "id"): number',
+		"(method) Array<{ id: number; name: string; }>.map<{\n    id: number;\n    label: string;\n}>(callbackfn: (value: {\n    id: number;\n    name: string;\n}, index: number, array: {\n    id: number;\n    name: string;\n}[]) => {\n    id: number;\n    label: string;\n}, thisArg?: any): {\n    id: number;\n    label: string;\n}[]":
+			"<{ id: number; label: string; }>(callbackfn: (value: { id: number; name: string; }, index: number, array: { id: number; name: string; }[]) => { id: number; label: string; }, thisArg?: any): { id: number; label: string; }[]",
+		"(alias) function helper<1>(x: 1): 1": "<1>(x: 1): 1",
+		"constructor K(x: number): K": "(x: number): K",
+		"(parameter) a: number": "number",
+		"(parameter) person: {\n    id: number;\n    name: string;\n}":
+			"{ id: number; name: string; }",
+		"(property) Box<T>.value: T": "T",
+		"(property) type: string": "string",
+		"(accessor) K.size: number": "number",
+		"const names: string[]": "string[]",
+		"(alias) const value: 1": "1",
+		"let mutable: number": "number",
+		"const arrow: <T>(x: T) => Promise<T[]>": "<T>(x: T) => Promise<T[]>",
+		"const cb: (fn: (x: number) => string) => ((y: string) => number)":
+			"(fn: (x: number) => string) => ((y: string) => number)",
+		"const maybe: ((x: number) => string) | undefined":
+			"((x: number) => string) | undefined",
+		"type Pair<T> = {\n    left: T;\n    right: T;\n}":
+			"type Pair<T> = { left: T; right: T; }",
+		"interface User": "User",
+		"class Box<T>": "Box<T>",
+		"enum Color": "Color",
+		"(enum member) Color.Red = 0": "Color.Red",
+		"namespace NS": "typeof NS",
+		"function over(x: string): string (+1 overload)": "(x: string): string",
+	};
+
 	for (const [signature, expected] of cases) {
 		test(signature.split("\n", 1)[0] ?? signature, () => {
 			const parsed = parseHoverMarkdown(block(signature));
-			expect(parsed.signature).toBe(signature);
+			expect(parsed.display).toBe(signature);
+			expect(parsed.signature).toBe(canonical[signature] ?? "missing");
 			expect(parsed.documentation).toBeUndefined();
 			expect({
 				kind: parsed.kind,
@@ -118,6 +159,29 @@ describe("parseHoverMarkdown (TypeScript 7 hover output)", () => {
 			});
 		});
 	}
+
+	test("maps TypeScript 7 labels onto the shared kind vocabulary", () => {
+		for (const [display, kind] of [
+			["(local function) inner(): void", "function"],
+			["(getter) K.size: number", "accessor"],
+			["(setter) K.size: number", "accessor"],
+		] as const) {
+			expect(parseHoverMarkdown(block(display)).kind).toBe(kind);
+		}
+	});
+
+	test("turns a function type into a call signature for calls", () => {
+		expect(arrowToCallSignature("<T>(x: T) => Promise<T[]>")).toBe(
+			"<T>(x: T): Promise<T[]>",
+		);
+		expect(arrowToCallSignature("(a: () => void) => number")).toBe(
+			"(a: () => void): number",
+		);
+		expect(
+			arrowToCallSignature("((x: number) => string) | undefined"),
+		).toBe("((x: number) => string) | undefined");
+		expect(arrowToCallSignature("string[]")).toBe("string[]");
+	});
 
 	test("keeps documentation after the code block", () => {
 		const parsed = parseHoverMarkdown(
@@ -143,7 +207,8 @@ describe("TypeScript 7 hover kinds (live)", () => {
 
 	test("function", async () => {
 		expect(await at(1, "add")).toMatchObject({
-			signature: "function add(a: number, b: number): number",
+			signature: "(a: number, b: number): number",
+			display: "function add(a: number, b: number): number",
 			kind: "function",
 			name: "add",
 			returnType: "number",
@@ -151,21 +216,30 @@ describe("TypeScript 7 hover kinds (live)", () => {
 	});
 
 	test("overloaded function, at a declaration and at a call", async () => {
+		const overloads = [
+			"(value: string): string",
+			"(value: number): number",
+		];
 		expect(await at(5, "pick")).toMatchObject({
+			signature: "(value: string): string",
 			kind: "function",
 			name: "pick",
 			returnType: "string",
+			overloads,
 		});
 		expect(await at(10, "pick")).toMatchObject({
-			signature: "function pick(value: number): number",
+			signature: "(value: number): number",
+			kind: "call",
 			name: "pick",
 			returnType: "number",
+			overloads,
 		});
 	});
 
 	test("method", async () => {
 		expect(await at(27, "get")).toMatchObject({
-			signature: "(method) Box<T>.get(): T",
+			signature: "(): T",
+			display: "(method) Box<T>.get(): T",
 			kind: "method",
 			name: "get",
 			returnType: "T",
@@ -174,7 +248,7 @@ describe("TypeScript 7 hover kinds (live)", () => {
 
 	test("generic method with a one-line signature", async () => {
 		expect(await at(13, "map")).toMatchObject({
-			kind: "method",
+			kind: "call",
 			name: "map",
 			returnType: "number[]",
 		});
@@ -182,11 +256,12 @@ describe("TypeScript 7 hover kinds (live)", () => {
 
 	test("generic method with a multi-line signature", async () => {
 		const result = await at(33, "map");
-		expect(result.signature).toContain("\n");
+		expect(result.display).toContain("\n");
+		expect(result.signature).not.toContain("\n");
 		expect(result).toMatchObject({
-			kind: "method",
+			kind: "call",
 			name: "map",
-			returnType: "{\n    id: number;\n    label: string;\n}[]",
+			returnType: "{ id: number; label: string; }[]",
 		});
 	});
 
@@ -198,7 +273,8 @@ describe("TypeScript 7 hover kinds (live)", () => {
 
 	test("property", async () => {
 		expect(await at(38, "name")).toMatchObject({
-			signature: "(property) User.name: string",
+			signature: "string",
+			display: "(property) User.name: string",
 			kind: "property",
 			name: "name",
 		});
@@ -206,7 +282,8 @@ describe("TypeScript 7 hover kinds (live)", () => {
 
 	test("const, including one holding a curried function", async () => {
 		expect(await at(12, "names")).toMatchObject({
-			signature: "const names: string[]",
+			signature: "string[]",
+			display: "const names: string[]",
 			kind: "const",
 			name: "names",
 		});
@@ -223,12 +300,14 @@ describe("TypeScript 7 hover kinds (live)", () => {
 			name: "Pair",
 		});
 		expect(await at(17, "User")).toMatchObject({
-			signature: "interface User",
+			signature: "User",
+			display: "interface User",
 			kind: "interface",
 			name: "User",
 		});
 		expect(await at(22, "Box")).toMatchObject({
-			signature: "class Box<T>",
+			signature: "Box<T>",
+			display: "class Box<T>",
 			kind: "class",
 			name: "Box",
 		});

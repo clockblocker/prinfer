@@ -19,7 +19,8 @@ afterAll(closeNativeSessions);
 describe("TypeScript 7 native LSP", () => {
 	test("returns native hover information by position", async () => {
 		const result = await nativeHover(fixture, 4, 17);
-		expect(result.signature).toBe(
+		expect(result.signature).toBe("(a: number, b: number): number");
+		expect(result.display).toBe(
 			"function add(a: number, b: number): number",
 		);
 		expect(result.returnType).toBe("number");
@@ -39,9 +40,7 @@ describe("TypeScript 7 native LSP", () => {
 
 	test("keeps documentation out of the signature", async () => {
 		const plain = await nativeHoverByName(jsdocFixture, "add");
-		expect(plain.signature).toBe(
-			"function add(a: number, b: number): number",
-		);
+		expect(plain.signature).toBe("(a: number, b: number): number");
 		expect(plain.returnType).toBe("number");
 		expect(plain.documentation).toBeUndefined();
 

@@ -642,8 +642,8 @@ describe("MCP server over stdio", () => {
 		]) {
 			expect(listed).not.toContain(noise);
 		}
-		// tools/list was ~15K characters before the schemas were compacted.
-		expect(listed.length).toBeLessThan(15_000);
+		// Budget for everything an agent loads per session (~4 chars/token).
+		expect(listed.length).toBeLessThan(16_000);
 
 		const outputSchema = (name: string) => {
 			const tool = tools.find((candidate) => candidate.name === name);

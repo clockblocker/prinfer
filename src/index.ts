@@ -6,11 +6,11 @@ import {
 	assertCursorPosition,
 	findNearestTsconfig,
 	findNodeAtPosition,
-	findNodeByNameAndLine,
 	getCompletions,
 	getFileDiagnostics,
 	getHoverInfo,
 	loadProgram,
+	lookupName,
 } from "./core/index.js";
 import type {
 	AnnotationFinding,
@@ -27,6 +27,7 @@ import type {
 	DiagnosticsOptions,
 	DiagnosticsResult,
 	FileDiagnostic,
+	HoverAlternative,
 	HoverByNameOptions,
 	HoverOptions,
 	HoverPosition,
@@ -53,6 +54,7 @@ export {
 	contractErrorResponseSchema,
 	contractErrorSchema,
 	type DiagnosticsSuccess,
+	declarationLocationSchema,
 	diagnosticCategorySchema,
 	diagnosticsResultSchema,
 	diagnosticsSuccess,
@@ -96,6 +98,7 @@ export type {
 	DiagnosticsOptions,
 	DiagnosticsResult,
 	FileDiagnostic,
+	HoverAlternative,
 	HoverByNameOptions,
 	HoverOptions,
 	HoverPosition,
@@ -317,13 +320,7 @@ function hoverByNameImpl(
 		);
 	}
 
-	const node = findNodeByNameAndLine(sourceFile, name, line);
-	if (!node) {
-		const lineInfo = line ? ` at line ${line}` : "";
-		throw new Error(
-			`No symbol named "${name}"${lineInfo} found in ${file}`,
-		);
-	}
+	const { node, alternatives } = lookupName(sourceFile, name, line, file);
 
 	const typeResolutionStarted = performance.now();
 	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
@@ -331,6 +328,7 @@ function hoverByNameImpl(
 	if (include_timing) {
 		result.timing = { resolution_ms: roundMs(typeResolutionMs) };
 	}
+	if (alternatives) result.alternatives = alternatives;
 	return result;
 }
 

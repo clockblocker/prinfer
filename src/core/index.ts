@@ -11,7 +11,12 @@ export {
 	getFileDiagnostics,
 	summarizeDiagnostics,
 } from "./diagnostics.js";
-export { getDocumentation, getHoverInfo } from "./hover.js";
+export {
+	countUnionMembers,
+	getDocumentation,
+	getHoverInfo,
+	getSymbolKind,
+} from "./hover.js";
 export {
 	assertCursorPosition,
 	fromLspPosition,
@@ -21,6 +26,16 @@ export {
 	stripBom,
 	toLspPosition,
 } from "./lines.js";
+export {
+	alternativeDeclarations,
+	declarationLocation,
+	findDeclarationsByName,
+	lookupName,
+	MAX_ALTERNATIVES,
+	type NameLookup,
+	NameNotFoundError,
+	nameNotFoundError,
+} from "./name-lookup.js";
 export {
 	findFirstMatch,
 	findNodeAtPosition,
@@ -34,5 +49,6 @@ export {
 	invalidateProgramCache,
 	loadProgram,
 } from "./program.js";
+export { singleLine } from "./signature-text.js";
 export { resolveTextColumn, type TextTarget } from "./text-target.js";
 export { getTypeInfo, type InferredTypeResult } from "./type-info.js";

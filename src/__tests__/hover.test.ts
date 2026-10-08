@@ -134,8 +134,10 @@ describe("hover", () => {
 	test("gets type at arrow function variable", () => {
 		// "multiply" at line 9, column 14 is on variable name
 		const result = hover(sampleFile, 9, 14);
-		expect(result.signature).toContain("number");
-		expect(result.kind).toBe("function");
+		expect(result.signature).toBe("(x: number, y: number) => number");
+		expect(result.returnType).toBe("number");
+		// The editor's label: the declaration keyword, not "function".
+		expect(result.kind).toBe("const");
 		expect(result.name).toBe("multiply");
 	});
 

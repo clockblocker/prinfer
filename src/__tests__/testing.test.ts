@@ -91,9 +91,14 @@ describe("text targets", () => {
 			text: "order",
 			backend: "typescript7",
 		});
-		expect(result.signature).toBe(
-			'(drink: Drink) => { drink: Drink; size: "large"; }',
-		);
+		// A call reports its call signature on every backend.
+		expect(result).toMatchObject({
+			kind: "call",
+			signature: '(drink: Drink): { drink: Drink; size: "large"; }',
+		});
+		expect(
+			inferredTypeInfo(targets, { line: 3, text: "order" }).signature,
+		).toBe(result.signature);
 		expect(result.column).toBe(22);
 	});
 
@@ -177,7 +182,7 @@ describe("setup errors", () => {
 			inferredType(targets, { name: "latte", line: 5 }),
 		);
 		expect(error.message).toContain(
-			'"latte" is declared on line 3; fix line or omit it.',
+			'"latte" is declared on line 3; pass one of those as the line, or omit the line.',
 		);
 	});
 

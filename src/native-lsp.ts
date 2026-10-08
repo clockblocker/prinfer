@@ -3,23 +3,34 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+	API,
+	NodeBuilderFlags,
+	SignatureKind,
+	type Snapshot,
+	TypeFlags,
+} from "@typescript/native/unstable/async";
 import * as ts from "typescript";
 import { summarizeDiagnostics } from "./core/diagnostics.js";
 import {
 	assertCursorPosition,
 	fromLspPosition,
 	type LineCharacter,
+	lineStarts,
 	stripBom,
 	toLspPosition,
 } from "./core/lines.js";
-import { findNodeByNameAndLine } from "./core/node-find.js";
+import { lookupName } from "./core/name-lookup.js";
+import { findNodeAtPosition } from "./core/node-find.js";
 import { getNameNode } from "./core/node-match.js";
+import { singleLine } from "./core/signature-text.js";
 import {
 	type FileChange,
 	WorkspaceFiles,
 	type WorkspaceScanStats,
 } from "./core/workspace-files.js";
 import { PrinferError } from "./errors.js";
+import { countNativeUnionMembers, nativeSignatureText } from "./native-api.js";
 import type {
 	DiagnosticCategory,
 	DiagnosticsOptions,
@@ -72,6 +83,19 @@ interface OpenDocument {
 	signature?: string;
 }
 
+/**
+ * The language server truncates hover types past `maximumHoverLength`
+ * characters (`... 389 more ...`), like an editor. A `full` hover raises the
+ * limit beyond any real type for the duration of the request.
+ */
+const FULL_HOVER_LENGTH = 2 ** 31 - 1;
+
+/** What the TypeScript 7 checker adds to a hover; see HoverResult. */
+export interface HoverExtras {
+	overloads?: string[];
+	unionMembers?: number;
+}
+
 const require = createRequire(resolveFromScript());
 const nativePackage = require.resolve("@typescript/native/package.json");
 const nativeTsc = path.join(path.dirname(nativePackage), "bin", "tsc");
@@ -103,6 +127,15 @@ class NativeLspClient {
 	private nextId = 1;
 	private stderr = "";
 	private supportsPullDiagnostics = false;
+	/** Whether the server currently has the full hover length configured. */
+	private fullHovers = false;
+	/** Hovers in flight under the current hover-length setting. */
+	private activeHovers = 0;
+	private idleWaiters: Array<() => void> = [];
+	/** API session sharing this server's projects, opened on first use. */
+	private api: Promise<API<true>> | undefined;
+	/** API requests run one at a time, each on a fresh snapshot. */
+	private apiTail: Promise<unknown> = Promise.resolve();
 	readonly ready: Promise<void>;
 
 	constructor(root: string) {
@@ -152,10 +185,12 @@ class NativeLspClient {
 		file: string,
 		position: HoverPosition,
 		project?: string,
+		full = false,
 	): Promise<{
 		result: LspHover | null;
 		text: string;
 		resolutionMs: number;
+		extras: HoverExtras;
 	}> {
 		await this.ready;
 		const uri = pathToFileURL(file).href;
@@ -168,19 +203,134 @@ class NativeLspClient {
 			file,
 		);
 		if (project) await this.assertProject(uri, file, project);
-		const resolutionStarted = performance.now();
-		const result = (await this.request("textDocument/hover", {
-			textDocument: { uri },
-			position: toLspPosition(document.text, {
-				line: position.line - 1,
-				character: position.column - 1,
-			}),
-		})) as LspHover | null;
-		return {
-			result,
-			text: document.text,
-			resolutionMs: roundMs(performance.now() - resolutionStarted),
-		};
+		await this.acquireHoverLength(full);
+		try {
+			const resolutionStarted = performance.now();
+			const result = (await this.request("textDocument/hover", {
+				textDocument: { uri },
+				position: toLspPosition(document.text, {
+					line: position.line - 1,
+					character: position.column - 1,
+				}),
+			})) as LspHover | null;
+			const resolutionMs = roundMs(performance.now() - resolutionStarted);
+			const extras = result
+				? await this.hoverExtras(
+						file,
+						offsetOf(document.text, position),
+						full,
+					)
+				: {};
+			return { result, text: document.text, resolutionMs, extras };
+		} finally {
+			this.releaseHoverLength();
+		}
+	}
+
+	/**
+	 * Configure the hover length a request needs. The setting is
+	 * server-wide, so it only changes while no hover is in flight.
+	 */
+	private async acquireHoverLength(full: boolean): Promise<void> {
+		while (this.fullHovers !== full && this.activeHovers > 0) {
+			await new Promise<void>((resolve) =>
+				this.idleWaiters.push(resolve),
+			);
+		}
+		if (this.fullHovers !== full) {
+			this.fullHovers = full;
+			this.notify("workspace/didChangeConfiguration", {
+				settings: { typescript: this.preferences() },
+			});
+		}
+		this.activeHovers += 1;
+	}
+
+	private releaseHoverLength(): void {
+		this.activeHovers -= 1;
+		if (this.activeHovers > 0) return;
+		const waiters = this.idleWaiters;
+		this.idleWaiters = [];
+		for (const resolve of waiters) resolve();
+	}
+
+	/** The `typescript` settings section prinfer runs the server with. */
+	private preferences(): Record<string, unknown> {
+		return this.fullHovers ? { maximumHoverLength: FULL_HOVER_LENGTH } : {};
+	}
+
+	/**
+	 * Overloads and union size from the checker, through an API session on
+	 * this language server (no second compiler process). Best effort: if the
+	 * API is unavailable, the hover is returned without them.
+	 */
+	private hoverExtras(
+		file: string,
+		offset: number,
+		full: boolean,
+	): Promise<HoverExtras> {
+		const run = this.apiTail.then(() =>
+			this.hoverExtrasNow(file, offset, full),
+		);
+		this.apiTail = run.catch(() => undefined);
+		return run;
+	}
+
+	private async hoverExtrasNow(
+		file: string,
+		offset: number,
+		full: boolean,
+	): Promise<HoverExtras> {
+		let snapshot: Snapshot | undefined;
+		try {
+			this.api ??= this.openApi();
+			snapshot = await (await this.api).updateSnapshot({});
+			const project = await snapshot.getDefaultProjectForFile(file);
+			if (!project) return {};
+			const { checker } = project;
+			const flags = full
+				? NodeBuilderFlags.NoTruncation
+				: NodeBuilderFlags.None;
+			const [type, symbol] = await Promise.all([
+				checker.getTypeAtPosition(file, offset),
+				checker.getSymbolAtPosition(file, offset),
+			]);
+			const extras: HoverExtras = {};
+			const unionMembers = type
+				? await countNativeUnionMembers(checker, type)
+				: undefined;
+			if (unionMembers !== undefined) extras.unionMembers = unionMembers;
+			const symbolType = symbol
+				? await checker.getTypeOfSymbol(symbol)
+				: undefined;
+			if (symbolType && symbolType.flags & TypeFlags.Object) {
+				const signatures = await checker.getSignaturesOfType(
+					symbolType,
+					SignatureKind.Call,
+				);
+				if (signatures.length > 1) {
+					extras.overloads = await Promise.all(
+						signatures.map((signature) =>
+							nativeSignatureText(project, signature, flags),
+						),
+					);
+				}
+			}
+			return extras;
+		} catch {
+			return {};
+		} finally {
+			await snapshot?.dispose().catch(() => undefined);
+		}
+	}
+
+	private async openApi(): Promise<API<true>> {
+		const session = (await this.request(
+			"custom/initializeAPISession",
+			{},
+		)) as { pipe?: string } | null;
+		if (!session?.pipe) throw new Error("No API session pipe");
+		return API.fromLSPConnection({ pipe: session.pipe });
 	}
 
 	async diagnostics(
@@ -213,6 +363,12 @@ class NativeLspClient {
 	}
 
 	close(): void {
+		const api = this.api;
+		this.api = undefined;
+		void api?.then(
+			(session) => session.close().catch(() => undefined),
+			() => undefined,
+		);
 		this.child.kill();
 	}
 
@@ -337,14 +493,16 @@ class NativeLspClient {
 	private onMessage(message: LspResponse): void {
 		if (message.id === undefined) return;
 		if (message.method) {
+			const items = (
+				message.params as { items?: Array<{ section?: string }> }
+			)?.items;
 			const result =
 				message.method === "workspace/configuration" &&
-				Array.isArray(
-					(message.params as { items?: unknown[] } | undefined)
-						?.items,
-				)
-					? (message.params as { items: unknown[] }).items.map(
-							() => null,
+				Array.isArray(items)
+					? items.map((item) =>
+							item?.section === "typescript"
+								? this.preferences()
+								: null,
 						)
 					: null;
 			this.send({ jsonrpc: "2.0", id: message.id, result });
@@ -383,7 +541,13 @@ export async function nativeHover(
 		result: hover,
 		text,
 		resolutionMs,
-	} = await client.hover(entryFileAbs, { line, column }, config);
+		extras,
+	} = await client.hover(
+		entryFileAbs,
+		{ line, column },
+		config,
+		options?.full ?? false,
+	);
 	if (!hover)
 		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
 	const result = toHoverResult(
@@ -393,10 +557,30 @@ export async function nativeHover(
 		column,
 		options?.include_docs ?? false,
 	);
+	// The hover text can't tell a callee from its declaration; the syntax
+	// can. Calls are reported as `call` with a call signature, as on
+	// TypeScript 6.
+	if (isCallee(entryFileAbs, line, column)) {
+		result.kind = "call";
+		result.signature = arrowToCallSignature(result.signature);
+	}
+	if (extras.overloads) result.overloads = extras.overloads;
+	if (extras.unionMembers !== undefined)
+		result.unionMembers = extras.unionMembers;
 	if (options?.include_timing) {
 		result.timing = { resolution_ms: resolutionMs };
 	}
 	return result;
+}
+
+/** Whether the position is on the callee name of a call expression. */
+function isCallee(file: string, line: number, column: number): boolean {
+	try {
+		const node = findNodeAtPosition(parseSource(file), line, column);
+		return node !== undefined && ts.isCallExpression(node);
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -414,17 +598,18 @@ export async function nativeHoverByName(
 	if (!fs.existsSync(entryFileAbs))
 		throw new Error(`File not found: ${entryFileAbs}`);
 	const sourceFile = parseSource(entryFileAbs);
-	const node = findNodeByNameAndLine(sourceFile, name, options?.line);
-	if (!node) {
-		const lineInfo = options?.line ? ` at line ${options.line}` : "";
-		throw new Error(
-			`No symbol named "${name}"${lineInfo} found in ${file}`,
-		);
-	}
+	const { node, alternatives } = lookupName(
+		sourceFile,
+		name,
+		options?.line,
+		file,
+	);
 	const { line, character } = sourceFile.getLineAndCharacterOfPosition(
 		getNameNode(node).getStart(sourceFile),
 	);
-	return nativeHover(file, line + 1, character + 1, options);
+	const result = await nativeHover(file, line + 1, character + 1, options);
+	if (alternatives) result.alternatives = alternatives;
+	return result;
 }
 
 /**
@@ -621,6 +806,9 @@ function toHoverResult(
 		: undefined;
 	return {
 		signature: parsed.signature,
+		...(parsed.display !== parsed.signature
+			? { display: parsed.display }
+			: {}),
 		returnType: parsed.returnType,
 		line: start ? start.line + 1 : line,
 		column: start ? start.character + 1 : column,
@@ -650,7 +838,10 @@ function hoverContents(contents: LspHover["contents"]): string {
 }
 
 export interface ParsedHover {
+	/** Canonical type text: see HoverResult.signature */
 	signature: string;
+	/** The hover's code block as the editor shows it */
+	display: string;
 	documentation?: string;
 	kind: string;
 	name?: string;
@@ -665,29 +856,56 @@ const IDENTIFIER = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*/u;
 const OVERLOADS = /\s*\(\+\d+ overloads?\)$/;
 
 /**
+ * Hover labels TypeScript 7 uses where prinfer's kind vocabulary (shared
+ * with the TypeScript 6 backend) has another name.
+ */
+const KIND_ALIASES = new Map([
+	["local function", "function"],
+	["local var", "var"],
+	["local class", "class"],
+	["getter", "accessor"],
+	["setter", "accessor"],
+	["module", "namespace"],
+]);
+
+/**
  * Split TypeScript 7 hover markdown into signature and documentation, and
  * read the symbol's kind, name, and return type from the signature. The
  * signature may span lines (expanded object types) and contain nested
  * parentheses and generics, so it is scanned with bracket matching.
  *
+ * `display` is the hover text as shown; `signature` is its canonical form
+ * (type text only, one line; see HoverResult.signature).
+ *
  * @internal Exported for tests.
  */
 export function parseHoverMarkdown(markdown: string): ParsedHover {
 	const codeMatch = CODE_BLOCK.exec(markdown);
-	const signature = (codeMatch?.[1] ?? markdown).trim();
+	const display = (codeMatch?.[1] ?? markdown).trim();
 	const documentation = codeMatch
 		? markdown.slice(codeMatch.index + codeMatch[0].length).trim() ||
 			undefined
 		: undefined;
-	return { signature, documentation, ...describeSignature(signature) };
+	const described = describeSignature(display);
+	return {
+		display,
+		documentation,
+		...described,
+		kind: KIND_ALIASES.get(described.kind) ?? described.kind,
+		signature: singleLine(described.signature),
+		...(described.returnType
+			? { returnType: singleLine(described.returnType) }
+			: {}),
+	};
 }
 
-function describeSignature(signature: string): {
+function describeSignature(display: string): {
+	signature: string;
 	kind: string;
 	name?: string;
 	returnType?: string;
 } {
-	let rest = signature;
+	let rest = display.replace(OVERLOADS, "");
 	let kind: string | undefined;
 	const label = /^\(([^()]+)\)\s+/.exec(rest);
 	if (label) {
@@ -702,21 +920,38 @@ function describeSignature(signature: string): {
 		kind = keyword[1];
 		rest = rest.slice(keyword[0].length);
 	}
-	kind ??= signature.split(/\s/, 1)[0]?.replace(/[():]/g, "") || "symbol";
+	kind ??= display.split(/\s/, 1)[0]?.replace(/[():]/g, "") || "symbol";
 
-	const { name, end } = readQualifiedName(rest);
-	if (end === 0) return { kind };
-	if (kind === "type" || kind === "interface" || kind === "class")
-		return { kind, name };
+	const { name, end, argumentsStart } = readQualifiedName(rest);
+	if (end === 0) return { signature: rest, kind };
+	switch (kind) {
+		case "type":
+			return { signature: `type ${rest}`, kind, name };
+		case "interface":
+		case "class":
+		case "enum":
+			// The name with its type parameters, as TypeScript 6 prints it.
+			return { signature: rest, kind, name };
+		case "namespace":
+		case "module":
+			return { signature: `typeof ${rest.slice(0, end)}`, kind, name };
+		case "type parameter":
+			return { signature: name ?? rest, kind, name };
+		case "enum member":
+			// "Color.Red = 0": TypeScript 6 prints the member type, Color.Red.
+			return { signature: rest.slice(0, end), kind, name };
+	}
 
 	let index = skipSpaces(rest, end);
 	if (rest[index] === "?") index++;
 	if (rest[index] === "(") {
-		// Call signature: name(params): ReturnType
+		// Call signature: name<T>(params): ReturnType
+		const signature = rest.slice(argumentsStart ?? index).trim();
 		const close = matchBracket(rest, index);
-		if (close < 0) return { kind, name };
+		if (close < 0) return { signature, kind, name };
 		const after = skipSpaces(rest, close + 1);
 		return {
+			signature,
 			kind,
 			name,
 			returnType:
@@ -725,23 +960,52 @@ function describeSignature(signature: string): {
 					: undefined,
 		};
 	}
-	if (rest[index] !== ":") return { kind, name };
+	if (rest[index] !== ":") return { signature: rest, kind, name };
 	// Value with a type: a function type's return type is reported.
+	const type = rest.slice(index + 1).trim();
 	return {
+		signature: type,
 		kind,
 		name,
-		returnType: functionReturnType(rest.slice(index + 1)),
+		returnType: functionReturnType(type),
 	};
+}
+
+/**
+ * `(x: number) => R` as a call signature, `(x: number): R`; other types are
+ * returned unchanged. A hover on a call of a function-typed variable shows
+ * the variable's type, while calls report their signature.
+ */
+export function arrowToCallSignature(type: string): string {
+	let index = skipSpaces(type, 0);
+	if (type[index] === "<") {
+		const close = matchBracket(type, index);
+		if (close < 0) return type;
+		index = skipSpaces(type, close + 1);
+	}
+	if (type[index] !== "(") return type;
+	const close = matchBracket(type, index);
+	if (close < 0) return type;
+	const arrow = skipSpaces(type, close + 1);
+	if (type.slice(arrow, arrow + 2) !== "=>") return type;
+	return `${type.slice(0, close + 1)}: ${type.slice(arrow + 2).trim()}`;
 }
 
 /**
  * Read `Array<string>.map<number>` or `Box<T>.value`: identifiers joined by
  * dots, each with optional type arguments. The name is the last identifier.
  */
-function readQualifiedName(text: string): { name?: string; end: number } {
+function readQualifiedName(text: string): {
+	name?: string;
+	end: number;
+	/** Where the last name's type arguments start, if it has any */
+	argumentsStart?: number;
+} {
 	let index = 0;
 	let name: string | undefined;
+	let argumentsStart: number | undefined;
 	while (index < text.length) {
+		argumentsStart = undefined;
 		const quote = text[index];
 		if (quote === '"' || quote === "'") {
 			const close = skipString(text, index);
@@ -756,12 +1020,17 @@ function readQualifiedName(text: string): { name?: string; end: number } {
 		if (text[index] === "<") {
 			const close = matchBracket(text, index);
 			if (close < 0) break;
+			argumentsStart = index;
 			index = close + 1;
 		}
 		if (text[index] !== ".") break;
 		index++;
 	}
-	return { name, end: name === undefined ? 0 : index };
+	return {
+		name,
+		end: name === undefined ? 0 : index,
+		...(argumentsStart !== undefined ? { argumentsStart } : {}),
+	};
 }
 
 /** The return type when `type` is a function type `<T>(…) => R`. */
@@ -831,6 +1100,11 @@ function matchBracket(text: string, open: number): number {
 		}
 	}
 	return -1;
+}
+
+/** UTF-16 offset of a 1-based TypeScript-rules position in `text`. */
+function offsetOf(text: string, position: HoverPosition): number {
+	return (lineStarts(text)[position.line - 1] ?? 0) + position.column - 1;
 }
 
 function roundMs(value: number): number {

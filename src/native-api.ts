@@ -1,13 +1,17 @@
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { Node, SourceFile } from "@typescript/native/unstable/ast";
 import {
-	isArrowFunction,
-	isCallExpression,
+	type CallExpression,
+	type Node,
+	NodeFlags,
+	type SourceFile,
+	SyntaxKind,
+	type TypeParameterDeclaration,
+} from "@typescript/native/unstable/ast";
+import {
 	isClassDeclaration,
 	isFunctionDeclaration,
-	isFunctionExpression,
 	isIdentifier,
 	isInterfaceDeclaration,
 	isMethodDeclaration,
@@ -21,12 +25,25 @@ import {
 } from "@typescript/native/unstable/ast/is";
 import {
 	API,
+	type Checker,
 	NodeBuilderFlags,
 	type Project,
+	type Signature,
 	SignatureKind,
 	type Snapshot,
+	SymbolFlags,
+	type Symbol as TsSymbol,
 	type Type,
+	TypeFlags,
+	type UnionType,
 } from "@typescript/native/unstable/async";
+import * as ts from "typescript";
+import { getNodeName, getSymbolKind } from "./core/hover.js";
+import { stripBom } from "./core/lines.js";
+import { lookupName } from "./core/name-lookup.js";
+import { findNodeAtPosition as findSyntaxNode } from "./core/node-find.js";
+import { getNameNode } from "./core/node-match.js";
+import { singleLine } from "./core/signature-text.js";
 import { PrinferError } from "./errors.js";
 import type { CompletionOptions, HoverOptions, HoverResult } from "./types.js";
 
@@ -183,12 +200,17 @@ export async function nativeApiTypeInfo(
 					`No symbol found at ${entryFileAbs}:${line}:${column}`,
 				);
 			}
-			const node = findNodeAtPosition(sourceFile, position);
-			const result = await typeInfo(project, type, node, {
-				...options,
-				line,
-				column,
-			});
+			const result = await typeInfo(
+				project,
+				type,
+				{
+					file: entryFileAbs,
+					sourceFile,
+					syntax: parseSyntax(entryFileAbs, text),
+					position,
+				},
+				{ ...options, line, column },
+			);
 			if (options?.include_timing) {
 				result.timing = {
 					resolution_ms: roundMs(
@@ -201,51 +223,38 @@ export async function nativeApiTypeInfo(
 	);
 }
 
+/**
+ * Type information for a symbol by name. The symbol is chosen exactly as
+ * the other backends choose it (see findNodeByNameAndLine), then read at its
+ * name token.
+ */
 export async function nativeApiTypeInfoByName(
 	file: string,
 	name: string,
 	options?: HoverOptions & { line?: number },
 ): Promise<HoverResult> {
 	const entryFileAbs = resolveFile(file);
-	return getSession(entryFileAbs, options?.project).run(
+	const syntax = parseSyntax(
 		entryFileAbs,
-		async (project, sourceFile) => {
-			const node = findNamedNode(sourceFile, name, options?.line);
-			if (!node) {
-				const lineInfo = options?.line
-					? ` at line ${options.line}`
-					: "";
-				throw new PrinferError(
-					"SYMBOL_NOT_FOUND",
-					`No symbol named "${name}"${lineInfo} found in ${entryFileAbs}`,
-				);
-			}
-			const location = nodeName(node) ?? node;
-			const resolutionStarted = performance.now();
-			const type = await project.checker.getTypeAtLocation(location);
-			if (!type) {
-				throw new PrinferError(
-					"SYMBOL_NOT_FOUND",
-					`No type found for "${name}" in ${entryFileAbs}`,
-				);
-			}
-			const start = node.getStart(sourceFile);
-			const position = sourceFile.getLineAndCharacterOfPosition(start);
-			const result = await typeInfo(project, type, node, {
-				...options,
-				line: position.line + 1,
-				column: position.character + 1,
-			});
-			if (options?.include_timing) {
-				result.timing = {
-					resolution_ms: roundMs(
-						performance.now() - resolutionStarted,
-					),
-				};
-			}
-			return result;
-		},
+		fs.readFileSync(entryFileAbs, "utf8"),
 	);
+	const { node, alternatives } = lookupName(
+		syntax,
+		name,
+		options?.line,
+		entryFileAbs,
+	);
+	const { line, character } = syntax.getLineAndCharacterOfPosition(
+		getNameNode(node).getStart(syntax),
+	);
+	const result = await nativeApiTypeInfo(
+		entryFileAbs,
+		line + 1,
+		character + 1,
+		options,
+	);
+	if (alternatives) result.alternatives = alternatives;
+	return result;
 }
 
 export async function closeNativeApiSessions(): Promise<void> {
@@ -254,66 +263,447 @@ export async function closeNativeApiSessions(): Promise<void> {
 	await Promise.all(active.map((session) => session.close()));
 }
 
-async function typeInfo(
+/**
+ * A signature printed the way TypeScript 6's signatureToString prints it,
+ * on one line: `<T>(value: T): T`.
+ */
+export async function nativeSignatureText(
 	project: Project,
-	type: Type,
-	node: Node | undefined,
-	options: HoverOptions & { line: number; column: number },
-): Promise<HoverResult> {
-	const flags =
-		(options.full ? NodeBuilderFlags.NoTruncation : NodeBuilderFlags.None) |
-		(node && isTypeAliasDeclaration(node)
-			? NodeBuilderFlags.InTypeAlias
-			: NodeBuilderFlags.None);
-	const displayedType = await project.checker.typeToString(
-		type,
+	signature: Signature,
+	flags: number,
+): Promise<string> {
+	const declaration = await project.checker.signatureToSignatureDeclaration(
+		signature,
+		SyntaxKind.CallSignature,
 		undefined,
 		flags,
 	);
-	const name = node ? nodeNameText(node) : undefined;
-	const signature =
-		node && isTypeAliasDeclaration(node) && name
-			? `type ${name} = ${displayedType}`
-			: displayedType;
+	if (!declaration) return "";
+	const printed = await project.emitter.printNode(declaration);
+	return singleLine(printed).replace(/;$/, "");
+}
+
+/**
+ * Members of a union type as TypeScript displays them; the TypeScript 7
+ * counterpart of countUnionMembers in core/hover.ts.
+ */
+export async function countNativeUnionMembers(
+	checker: Checker,
+	type: Type,
+): Promise<number | undefined> {
+	if (!(type.flags & TypeFlags.Union) || type.flags & TypeFlags.Boolean)
+		return undefined;
+	const members = await (type as UnionType).getTypes();
+	let count = members.length;
+	const booleans = members.filter(
+		(member) => member.flags & TypeFlags.BooleanLiteral,
+	);
+	if (booleans.length >= 2) count -= 1;
+	const enumLiterals = members.filter(
+		(member) => member.flags & TypeFlags.EnumLiteral,
+	);
+	if (enumLiterals.length < 2) return count > 1 ? count : undefined;
+	const byEnum = new Map<number, { symbol: TsSymbol; present: number }>();
+	for (const member of enumLiterals) {
+		const parent = await (await member.getSymbol())?.getParent();
+		if (!parent) continue;
+		const entry = byEnum.get(parent.id) ?? { symbol: parent, present: 0 };
+		entry.present += 1;
+		byEnum.set(parent.id, entry);
+	}
+	for (const { symbol, present } of byEnum.values()) {
+		const enumType = await checker.getDeclaredTypeOfSymbol(symbol);
+		const total =
+			enumType.flags & TypeFlags.Union
+				? (await (enumType as UnionType).getTypes()).length
+				: 1;
+		if (present > 1 && present === total) count -= present - 1;
+	}
+	return count > 1 ? count : undefined;
+}
+
+interface Location {
+	file: string;
+	/** The TypeScript 7 source file */
+	sourceFile: SourceFile;
+	/** The same file parsed by TypeScript 6, for the shared syntax rules */
+	syntax: ts.SourceFile;
+	/** UTF-16 offset of the hovered position */
+	position: number;
+}
+
+/**
+ * Build a hover result with the same rules as the TypeScript 6 backend
+ * (core/hover.ts): the node and kind come from the shared syntax lookup,
+ * the types from the TypeScript 7 checker. See HoverResult.signature.
+ */
+async function typeInfo(
+	project: Project,
+	type: Type,
+	location: Location,
+	options: HoverOptions & { line: number; column: number },
+): Promise<HoverResult> {
+	const { checker } = project;
+	const flags = options.full
+		? NodeBuilderFlags.NoTruncation
+		: NodeBuilderFlags.None;
+	const typeText = (shown: Type, extra = 0) =>
+		checker.typeToString(shown, undefined, flags | extra);
+	const syntaxNode = findSyntaxNodeAt(location.syntax, options);
+	const node = findNodeAtPosition(location.sourceFile, location.position);
+	let kind = syntaxNode ? getSymbolKind(syntaxNode) : "symbol";
+	if (
+		syntaxNode &&
+		(kind === "identifier" || ts.isPropertyAccessExpression(syntaxNode))
+	) {
+		kind = await referenceKind(project, location, kind);
+	}
+	if (kind === "unknown") kind = "symbol";
+	const name =
+		(syntaxNode ? getNodeName(syntaxNode) : undefined) ??
+		(node ? nodeNameText(node) : undefined);
 	const result: HoverResult = {
-		signature,
+		signature: "",
 		line: options.line,
 		column: options.column,
-		kind: node ? nodeKind(node) : "symbol",
+		kind,
 		name,
 	};
 
-	if (options.include_docs && node) {
-		const symbol = await project.checker.getSymbolAtLocation(
-			nodeName(node) ?? node,
+	if (options.include_docs) {
+		const symbol = await checker.getSymbolAtPosition(
+			location.file,
+			location.position,
 		);
 		if (symbol) {
 			const documentation =
-				await project.checker.getDocumentationCommentOfSymbol(symbol);
+				await checker.getDocumentationCommentOfSymbol(symbol);
 			if (documentation) result.documentation = documentation;
 		}
 	}
 
-	if (result.kind === "function" || result.kind === "method") {
-		const signatures = await project.checker.getSignaturesOfType(
-			type,
-			SignatureKind.Call,
+	if (syntaxNode && ts.isTypeAliasDeclaration(syntaxNode) && node) {
+		const parameters = await typeParameterList(
+			project,
+			syntaxNode,
+			node,
+			flags,
 		);
-		const first = signatures[0];
-		if (first) {
+		result.signature = `type ${syntaxNode.name.text}${parameters} = ${await typeText(type, NodeBuilderFlags.InTypeAlias)}`;
+		return withUnion(result, await countNativeUnionMembers(checker, type));
+	}
+
+	if (
+		syntaxNode &&
+		(ts.isInterfaceDeclaration(syntaxNode) ||
+			ts.isClassDeclaration(syntaxNode)) &&
+		syntaxNode.name &&
+		syntaxNode.typeParameters?.length &&
+		node
+	) {
+		result.signature = `${syntaxNode.name.text}${await typeParameterList(project, syntaxNode, node, flags)}`;
+		return result;
+	}
+
+	if (syntaxNode && ts.isCallExpression(syntaxNode)) {
+		const call = enclosingCall(node);
+		const signature = call
+			? await checker.getResolvedSignature(call)
+			: undefined;
+		const callee = await calleeType(project, location);
+		const overloads = callee
+			? await overloadTexts(project, callee, flags)
+			: undefined;
+		if (overloads) result.overloads = overloads;
+		if (signature) {
+			result.signature = await nativeSignatureText(
+				project,
+				signature,
+				flags | NodeBuilderFlags.WriteTypeArgumentsOfSignature,
+			);
 			const returnType =
-				await project.checker.getReturnTypeOfSignature(first);
-			if (returnType) {
-				result.returnType = await project.checker.typeToString(
-					returnType,
-					undefined,
-					flags,
-				);
-			}
+				await checker.getReturnTypeOfSignature(signature);
+			if (returnType) result.returnType = await typeText(returnType);
+			return result;
 		}
 	}
 
+	if (
+		syntaxNode &&
+		(ts.isFunctionDeclaration(syntaxNode) ||
+			ts.isMethodDeclaration(syntaxNode) ||
+			ts.isMethodSignature(syntaxNode)) &&
+		node
+	) {
+		const signature = await checker.getSignatureFromDeclaration(node);
+		if (signature) {
+			result.signature = await nativeSignatureText(
+				project,
+				signature,
+				flags,
+			);
+			const returnType =
+				await checker.getReturnTypeOfSignature(signature);
+			if (returnType) result.returnType = await typeText(returnType);
+			const overloads = await overloadTexts(project, type, flags);
+			if (overloads) result.overloads = overloads;
+			return result;
+		}
+	}
+
+	result.signature = await typeText(type);
+	const signatures = await checker.getSignaturesOfType(
+		type,
+		SignatureKind.Call,
+	);
+	const single = signatures.length === 1 ? signatures[0] : undefined;
+	if (single && (await checker.getPropertiesOfType(type)).length === 0) {
+		const returnType = await checker.getReturnTypeOfSignature(single);
+		if (returnType) result.returnType = await typeText(returnType);
+	}
+	const overloads = await overloadTexts(project, type, flags);
+	if (overloads) result.overloads = overloads;
+	return withUnion(result, await countNativeUnionMembers(checker, type));
+}
+
+function withUnion(
+	result: HoverResult,
+	unionMembers: number | undefined,
+): HoverResult {
+	if (unionMembers !== undefined) result.unionMembers = unionMembers;
 	return result;
+}
+
+/** Every call signature of `type`, when there is more than one. */
+async function overloadTexts(
+	project: Project,
+	type: Type,
+	flags: number,
+): Promise<string[] | undefined> {
+	const signatures = await project.checker.getSignaturesOfType(
+		type,
+		SignatureKind.Call,
+	);
+	if (signatures.length < 2) return undefined;
+	return Promise.all(
+		signatures.map((signature) =>
+			nativeSignatureText(project, signature, flags),
+		),
+	);
+}
+
+/** The callee's declared type at a call's name, for its overloads. */
+async function calleeType(
+	project: Project,
+	location: Location,
+): Promise<Type | undefined> {
+	const symbol = await project.checker.getSymbolAtPosition(
+		location.file,
+		location.position,
+	);
+	return symbol ? project.checker.getTypeOfSymbol(symbol) : undefined;
+}
+
+/**
+ * `<R extends UnitRoute = UnitRoute>`: type parameters with modifiers (from
+ * the source), constraints and defaults (printed by the checker).
+ */
+async function typeParameterList(
+	project: Project,
+	syntax: ts.DeclarationWithTypeParameterChildren,
+	node: Node,
+	flags: number,
+): Promise<string> {
+	const parameters = syntax.typeParameters;
+	if (!parameters?.length) return "";
+	const nativeParameters =
+		(
+			node as Node & {
+				typeParameters?: readonly TypeParameterDeclaration[];
+			}
+		).typeParameters ?? [];
+	const typeNodeText = async (typeNode: Node | undefined) => {
+		if (!typeNode) return undefined;
+		const type = await project.checker.getTypeFromTypeNode(
+			typeNode as Parameters<Checker["getTypeFromTypeNode"]>[0],
+		);
+		return type
+			? project.checker.typeToString(type, undefined, flags)
+			: undefined;
+	};
+	const parts = await Promise.all(
+		parameters.map(async (parameter, index) => {
+			const native = nativeParameters[index];
+			const modifiers =
+				parameter.modifiers?.map((modifier) => modifier.getText()) ??
+				[];
+			let part = [...modifiers, parameter.name.text].join(" ");
+			const constraint = parameter.constraint
+				? ((await typeNodeText(native?.constraint)) ??
+					singleLine(parameter.constraint.getText()))
+				: undefined;
+			if (constraint) part += ` extends ${constraint}`;
+			const fallback = parameter.default
+				? singleLine(parameter.default.getText())
+				: undefined;
+			const defaultType = parameter.default
+				? ((await typeNodeText(native?.defaultType)) ?? fallback)
+				: undefined;
+			if (defaultType) part += ` = ${defaultType}`;
+			return part;
+		}),
+	);
+	return `<${parts.join(", ")}>`;
+}
+
+/**
+ * The kind of a reference, from its symbol's declaration, as
+ * referenceKind in core/hover.ts does with the TypeScript 6 checker.
+ */
+async function referenceKind(
+	project: Project,
+	location: Location,
+	fallback: string,
+): Promise<string> {
+	try {
+		let symbol = await project.checker.getSymbolAtPosition(
+			location.file,
+			location.position,
+		);
+		if (symbol && symbol.flags & SymbolFlags.Alias) {
+			symbol = await project.checker.getAliasedSymbol(symbol);
+		}
+		const handle = symbol?.valueDeclaration ?? symbol?.declarations[0];
+		const declaration = handle ? await handle.resolve() : undefined;
+		const kind = declaration ? declarationKind(declaration) : undefined;
+		return kind ?? fallback;
+	} catch {
+		return fallback;
+	}
+}
+
+/** The kind vocabulary of getSymbolKind, for a TypeScript 7 declaration. */
+function declarationKind(node: Node): string | undefined {
+	switch (node.kind) {
+		case SyntaxKind.FunctionDeclaration:
+		case SyntaxKind.FunctionExpression:
+		case SyntaxKind.ArrowFunction:
+			return "function";
+		case SyntaxKind.MethodDeclaration:
+		case SyntaxKind.MethodSignature:
+			return "method";
+		case SyntaxKind.Constructor:
+			return "constructor";
+		case SyntaxKind.VariableDeclaration:
+			return variableKind(node);
+		case SyntaxKind.Parameter:
+			return "parameter";
+		case SyntaxKind.PropertyDeclaration:
+		case SyntaxKind.PropertySignature:
+		case SyntaxKind.PropertyAssignment:
+		case SyntaxKind.ShorthandPropertyAssignment:
+			return "property";
+		case SyntaxKind.TypeAliasDeclaration:
+			return "type";
+		case SyntaxKind.InterfaceDeclaration:
+			return "interface";
+		case SyntaxKind.ClassDeclaration:
+		case SyntaxKind.ClassExpression:
+			return "class";
+		case SyntaxKind.EnumDeclaration:
+			return "enum";
+		case SyntaxKind.EnumMember:
+			return "enum member";
+		case SyntaxKind.GetAccessor:
+		case SyntaxKind.SetAccessor:
+			return "accessor";
+		case SyntaxKind.ModuleDeclaration:
+			return "namespace";
+		case SyntaxKind.TypeParameter:
+			return "type parameter";
+		case SyntaxKind.BindingElement: {
+			let root: Node = node;
+			while (
+				root.kind === SyntaxKind.BindingElement ||
+				root.kind === SyntaxKind.ObjectBindingPattern ||
+				root.kind === SyntaxKind.ArrayBindingPattern
+			) {
+				root = root.parent;
+			}
+			return root.kind === SyntaxKind.Parameter
+				? "parameter"
+				: root.kind === SyntaxKind.VariableDeclaration
+					? variableKind(root)
+					: undefined;
+		}
+		default:
+			return undefined;
+	}
+}
+
+/** `const`, `let`, `using`, `await using`, or `var`, from the declaration list. */
+function variableKind(declaration: Node): string {
+	const list = declaration.parent;
+	const flags =
+		list && list.kind === SyntaxKind.VariableDeclarationList
+			? list.flags & 7
+			: 0;
+	switch (flags) {
+		case NodeFlags.Const:
+			return "const";
+		case NodeFlags.Let:
+			return "let";
+		case NodeFlags.Using:
+			return "using";
+		case NodeFlags.AwaitUsing:
+			return "await using";
+		default:
+			return "var";
+	}
+}
+
+/** The call expression whose callee contains `node`, if any. */
+function enclosingCall(node: Node | undefined): CallExpression | undefined {
+	for (let current = node; current; current = current.parent) {
+		if (current.kind === SyntaxKind.CallExpression)
+			return current as CallExpression;
+		if (current.parent === current) return undefined;
+	}
+	return undefined;
+}
+
+const MAX_PARSED = 16;
+const parsed = new Map<string, { text: string; sourceFile: ts.SourceFile }>();
+
+/** The file parsed by TypeScript 6 for the shared syntax rules, cached. */
+function parseSyntax(file: string, text: string): ts.SourceFile {
+	const cached = parsed.get(file);
+	if (cached && cached.text === text) return cached.sourceFile;
+	const sourceFile = ts.createSourceFile(
+		file,
+		stripBom(text),
+		ts.ScriptTarget.Latest,
+		true,
+	);
+	parsed.delete(file);
+	parsed.set(file, { text, sourceFile });
+	if (parsed.size > MAX_PARSED) {
+		const oldest = parsed.keys().next().value;
+		if (oldest) parsed.delete(oldest);
+	}
+	return sourceFile;
+}
+
+/** The TypeScript 6 node the other backends would hover at a position. */
+function findSyntaxNodeAt(
+	syntax: ts.SourceFile,
+	position: { line: number; column: number },
+): ts.Node | undefined {
+	try {
+		return findSyntaxNode(syntax, position.line, position.column);
+	} catch {
+		return undefined;
+	}
 }
 
 function getSession(file: string, project?: string): NativeApiSession {
@@ -411,29 +801,6 @@ function sourcePosition(
 	return position;
 }
 
-function findNamedNode(
-	sourceFile: SourceFile,
-	name: string,
-	line?: number,
-): Node | undefined {
-	let found: Node | undefined;
-	const visit = (node: Node): void => {
-		if (found) return;
-		if (isSupportedDeclaration(node) && nodeNameText(node) === name) {
-			const position = sourceFile.getLineAndCharacterOfPosition(
-				node.getStart(sourceFile),
-			);
-			if (line === undefined || position.line + 1 === line) {
-				found = node;
-				return;
-			}
-		}
-		node.forEachChild(visit);
-	};
-	visit(sourceFile);
-	return found;
-}
-
 function findNodeAtPosition(
 	sourceFile: SourceFile,
 	position: number,
@@ -489,29 +856,6 @@ function nodeNameText(node: Node): string | undefined {
 	if (isIdentifier(node)) return node.text;
 	const name = nodeName(node);
 	return name && isIdentifier(name) ? name.text : undefined;
-}
-
-function nodeKind(node: Node): string {
-	if (isIdentifier(node) && node.parent !== node)
-		return nodeKind(node.parent);
-	if (isTypeAliasDeclaration(node)) return "type";
-	if (isInterfaceDeclaration(node)) return "interface";
-	if (isClassDeclaration(node)) return "class";
-	if (isMethodDeclaration(node) || isMethodSignatureDeclaration(node))
-		return "method";
-	if (isPropertyDeclaration(node) || isPropertySignatureDeclaration(node))
-		return "property";
-	if (isParameterDeclaration(node)) return "parameter";
-	if (isCallExpression(node)) return "call";
-	if (isFunctionDeclaration(node)) return "function";
-	if (isVariableDeclaration(node)) {
-		return node.initializer &&
-			(isArrowFunction(node.initializer) ||
-				isFunctionExpression(node.initializer))
-			? "function"
-			: "variable";
-	}
-	return "symbol";
 }
 
 function roundMs(value: number): number {
