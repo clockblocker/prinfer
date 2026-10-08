@@ -4,12 +4,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { type ParsedTarget, parseTargetArg, shellHint } from "./cli-args.js";
 import {
+	annotationsSuccess,
 	type CliCommand,
 	completionSuccess,
 	contractError,
 	diagnosticsSuccess,
 	hoverSuccess,
 } from "./contract.js";
+import { formatAnnotations, getFileAnnotations } from "./core/annotations.js";
 import {
 	formatCompletions,
 	formatDiagnostics,
@@ -33,6 +35,7 @@ Usage:
   prinfer <file>:<line>:<column> [options]
   prinfer complete <file>:<line>:<text|column> [--prefix <text>] [--limit <n>] [--json] [--project <tsconfig.json>]
   prinfer check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]
+  prinfer annotations <file> [--json] [--project <tsconfig.json>]
   prinfer mcp
   prinfer setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
   prinfer setup agents-md [--file <path>] [--print]
@@ -40,6 +43,9 @@ Usage:
 Commands:
   complete             Show TypeScript autocomplete entries at a cursor
   check                Report type errors in one file; exits 1 when it has errors
+  annotations          List type annotations TypeScript would infer anyway
+                       (redundant) or that are wider than the inferred type
+                       (widening); exits 0 unless the check itself fails
   mcp                  Start the MCP server on stdio (same as prinfer-mcp)
   setup <client>       Register the MCP server with an agent client
   setup agents-md      Add prinfer usage instructions to AGENTS.md or CLAUDE.md
@@ -81,6 +87,7 @@ Examples:
   prinfer complete src/utils.ts:75:user.
   prinfer complete src/utils.ts:75:10 --prefix use --limit 20
   prinfer check src/utils.ts --json
+  prinfer annotations src/utils.ts
   prinfer src/utils.ts:createHandler --backend typescript7
   prinfer setup claude
   prinfer setup cursor --scope project --print
@@ -145,6 +152,8 @@ type CliOptions = CliHoverOptions | CliCompletionOptions;
 
 const DEFAULT_COMPLETION_LIMIT = 50;
 const HELP_POINTER = "Run prinfer --help for all options.";
+const ANNOTATIONS_USAGE =
+	"Usage: prinfer annotations <file> [--json] [--project <tsconfig.json>]";
 const CHECK_USAGE =
 	"Usage: prinfer check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]";
 
@@ -736,6 +745,57 @@ async function runLookup(options: CliHoverOptions): Promise<void> {
 	}
 }
 
+/**
+ * Runs `prinfer annotations <file>` (args exclude "annotations") and returns
+ * an exit code: 0 whatever it finds, 1 when the check itself fails.
+ */
+function runAnnotations(args: string[]): number {
+	const json = args.includes("--json");
+	const fail = (message: string): never =>
+		usageError(message, {
+			command: "annotations",
+			json,
+			details: [ANNOTATIONS_USAGE],
+			suggestion: ANNOTATIONS_USAGE,
+		});
+
+	let file: string | undefined;
+	let project: string | undefined;
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === "--json") continue;
+		if (arg === "--project" || arg === "-p") {
+			project = args[++index];
+			if (!project) return fail("--project requires a path argument.");
+		} else if (arg.startsWith("-")) {
+			return fail(`Unknown annotations option ${arg}.`);
+		} else if (file === undefined) {
+			file = arg;
+		} else {
+			return fail(`Unexpected argument "${arg}".`);
+		}
+	}
+	if (!file) {
+		return fail(
+			"annotations requires a file: prinfer annotations <file.ts>",
+		);
+	}
+
+	try {
+		assertSourceFile(file);
+		const result = getFileAnnotations(file, project);
+		console.log(
+			json
+				? JSON.stringify(annotationsSuccess(result))
+				: formatAnnotations(result, file),
+		);
+		return 0;
+	} catch (error) {
+		reportCliError(error, "annotations", { file, project }, json);
+		return 1;
+	}
+}
+
 async function main(): Promise<void> {
 	const command = process.argv[2];
 	if (command === "mcp") {
@@ -757,6 +817,15 @@ async function main(): Promise<void> {
 			process.exit(0);
 		}
 		process.exit(await runCheck(args));
+	}
+
+	if (command === "annotations") {
+		const args = process.argv.slice(3);
+		if (args.includes("--help") || args.includes("-h")) {
+			console.log(HELP);
+			process.exit(0);
+		}
+		process.exit(runAnnotations(args));
 	}
 
 	const options = parseArgs(process.argv);

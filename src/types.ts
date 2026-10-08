@@ -168,3 +168,51 @@ export interface DiagnosticsResult {
 	errorCount: number;
 	warningCount: number;
 }
+
+export interface AnnotationsOptions {
+	/** Optional path to tsconfig.json */
+	project?: string;
+}
+
+/**
+ * redundant: removing the annotation keeps exactly the same type.
+ * widening: the annotation is wider than the type TypeScript would infer.
+ */
+export type AnnotationKind = "redundant" | "widening";
+
+/** What the annotation is on */
+export type AnnotationTarget = "variable" | "parameter" | "property" | "return";
+
+/** An explicit type annotation compared with the type TypeScript would infer */
+export interface AnnotationFinding {
+	/** 1-based start of the `: Type` text that removing the annotation deletes */
+	line: number;
+	column: number;
+	/** 1-based end (exclusive) of that text */
+	endLine: number;
+	endColumn: number;
+	/** The annotated variable, parameter, property, or function */
+	name: string;
+	target: AnnotationTarget;
+	kind: AnnotationKind;
+	/** The annotated type (for return, the declared return type) */
+	declared: string;
+	/** The type TypeScript infers without the annotation */
+	inferred: string;
+	/** Part of the module's exported API */
+	exported: boolean;
+	/** One-line advice */
+	suggestion: string;
+}
+
+/** Redundant and widening type annotations in one file */
+export interface AnnotationsResult {
+	/** Absolute path of the checked file */
+	file: string;
+	/** Findings sorted by position */
+	findings: AnnotationFinding[];
+	redundantCount: number;
+	wideningCount: number;
+	/** Annotations examined: those with an initializer or body to infer from */
+	checkedCount: number;
+}

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { contractError } from "./contract.js";
+import { getFileAnnotations } from "./core/annotations.js";
 import {
 	assertCursorPosition,
 	findNearestTsconfig,
@@ -12,6 +13,11 @@ import {
 	loadProgram,
 } from "./core/index.js";
 import type {
+	AnnotationFinding,
+	AnnotationKind,
+	AnnotationsOptions,
+	AnnotationsResult,
+	AnnotationTarget,
 	BatchHoverItem,
 	BatchHoverResult,
 	CompletionEntry,
@@ -29,6 +35,11 @@ import type {
 } from "./types.js";
 
 export {
+	type AnnotationsSuccess,
+	annotationFindingSchema,
+	annotationsResultSchema,
+	annotationsSuccess,
+	annotationsSuccessSchema,
 	type BatchHoverSuccess,
 	batchHoverItemSchema,
 	batchHoverResultSchema,
@@ -71,6 +82,11 @@ export {
 } from "./core/index.js";
 // Re-export types
 export type {
+	AnnotationFinding,
+	AnnotationKind,
+	AnnotationsOptions,
+	AnnotationsResult,
+	AnnotationTarget,
 	BatchHoverItem,
 	BatchHoverResult,
 	CompletionEntry,
@@ -129,6 +145,30 @@ export function diagnostics(
 		options?.project,
 		options?.include_suggestions ?? false,
 	);
+}
+
+/**
+ * Find explicit type annotations that TypeScript would infer anyway
+ * (`redundant`: removing one keeps exactly the same type) or that are wider
+ * than the inferred type (`widening`). Covers variable, parameter, and class
+ * property annotations with an initializer, and return types of functions,
+ * class methods, and arrow/function expressions that are not contextually
+ * typed. Runs on the TypeScript 6 checker.
+ *
+ * @example
+ * ```ts
+ * import { annotations } from "prinfer";
+ *
+ * for (const f of annotations("./src/utils.ts").findings) {
+ *   console.log(`${f.line}:${f.column} ${f.kind} ${f.name}: ${f.declared} -> ${f.inferred}`);
+ * }
+ * ```
+ */
+export function annotations(
+	file: string,
+	options?: AnnotationsOptions,
+): AnnotationsResult {
+	return getFileAnnotations(file, options?.project);
 }
 
 /**
