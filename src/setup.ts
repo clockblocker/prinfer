@@ -166,7 +166,7 @@ export const AGENTS_BLOCK = `${AGENTS_START}
 ## TypeScript types (prinfer)
 
 The prinfer MCP server reports what the TypeScript compiler infers. Reach for it when:
-- Adding a type annotation, or unsure what a variable, generic or call infers: \`hover_by_name(file, name)\`; for a token without a unique name, \`hover(file, line, text)\` with text copied from the line. Several lookups go in one \`batch_hover\`. Annotate only when inference is wrong or too wide.
+- Adding a type annotation, or unsure what a variable, generic or call infers: \`hover_by_name(file, name)\`; for a token without a unique name, \`hover(file, line, text)\` with text copied from the line. Several lookups go in one \`batch_hover\`. Annotate only when inference is wrong or too wide; \`annotations(file)\` lists annotations TypeScript would infer anyway.
 - Choosing a value for a typed slot (union member, option key, overload): \`completions(file, line, column, prefix?)\` lists what TypeScript accepts there.
 - Finishing an edit to .ts/.tsx files: run \`diagnostics(file)\` on each; the edit is done when none reports an error.
 - Writing type regression tests: \`prinfer/testing\` (dev dependency \`prinfer\`) snapshots an inferred type: \`expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot()\`.

@@ -76,17 +76,43 @@ describe("test-runner snapshot integration", () => {
 		expect(reading).not.toContain('NoteData["reading"]');
 	});
 
-	test("keeps compact TypeScript 7 output truncated by default", async () => {
-		const relation = await inferredType(
-			new URL("./fixtures/native-fidelity.ts", import.meta.url),
-			{
-				name: "ExpandedRelationClaim",
-				backend: "typescript7",
-			},
+	test("snapshots untruncated types by default on both backends", async () => {
+		const fixture = new URL(
+			"./fixtures/native-fidelity.ts",
+			import.meta.url,
 		);
+		const selector = { name: "ExpandedRelationClaim" };
+		const ts6 = inferredType(fixture, selector);
+		const ts7 = await inferredType(fixture, {
+			...selector,
+			backend: "typescript7",
+		});
 
-		expect(relation).toContain("...");
-		expect(relation).not.toContain("\n");
+		expect(ts6).not.toContain("...");
+		expect(ts6).toContain(
+			'readonly target: { lemma: { ownerKind: "Lemma"; ownerKey: string; };',
+		);
+		expect(ts7).toBe(ts6);
+	});
+
+	test("full: false opts back into editor-style truncation", async () => {
+		const fixture = new URL(
+			"./fixtures/native-fidelity.ts",
+			import.meta.url,
+		);
+		const selector = { name: "ExpandedRelationClaim", full: false };
+		const ts6 = inferredType(fixture, selector);
+		const ts7 = await inferredType(fixture, {
+			...selector,
+			backend: "typescript7",
+		});
+
+		expect(ts6).toContain("readonly target: { ...; }");
+		expect(ts7).toContain("readonly target: { ...; }");
+		expect(ts7).not.toContain("\n");
+		expect(inferredTypeInfo(fixture, selector).signature).toContain(
+			"{ ...; }",
+		);
 	});
 
 	test("uses the explicit TypeScript 7 project and reports timing", async () => {

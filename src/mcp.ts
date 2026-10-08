@@ -64,13 +64,21 @@ Provided tools:
   batch_hover(positions, file?, include_docs?, full?, max_chars?, project?, backend?)
   completions(file, line, column, prefix?, limit?, project?)
   diagnostics(file, include_suggestions?, project?, backend?)
+  annotations(file, project?)
+
+Backends:
+  hover_by_name, hover, batch_hover and diagnostics default to typescript7.
+  completions (top 50 by default) and annotations always use typescript6.
+
+Hover text is capped at ${DEFAULT_MAX_CHARS} characters per type (max_chars; 0 for no
+cap); structuredContent always has the complete result.
 
 Environment:
   PRINFER_BACKEND=typescript6   Backend for hover and diagnostics tools (default typescript7)
   PRINFER_INCLUDE_TIMING=1      Add type-resolution timing to every hover result
 
 See also:
-  prinfer --help    CLI: type lookups, completions, and prinfer check
+  prinfer --help    CLI: type lookups, completions, check, and annotations
 `.trim();
 
 type Backend = "typescript6" | "typescript7";
@@ -548,14 +556,12 @@ const MAX_COMPLETION_LIMIT = 500;
 const fileSchema = z
 	.string()
 	.describe("TS/JS file: absolute, or relative to the server's cwd");
-const PROJECT_DEFAULT =
-	"tsconfig.json path; default: the nearest one above file";
+// typescript7 rejects a project its language server wouldn't use; the error
+// says to switch to typescript6, so the description stays short.
 const projectSchema = z
 	.string()
 	.optional()
-	.describe(
-		`${PROJECT_DEFAULT}. typescript7 accepts only that tsconfig or a project it references; use typescript6 for any other`,
-	);
+	.describe("tsconfig.json; default: the nearest one above file");
 const includeDocsSchema = z
 	.boolean()
 	.optional()
@@ -564,14 +570,14 @@ const backendSchema = z
 	.enum(["typescript6", "typescript7"])
 	.optional()
 	.describe(
-		"Default typescript7; retry with typescript6 if a call fails or a result looks wrong",
+		"Default typescript7; retry with typescript6 if it fails or looks wrong",
 	);
 const lineSchema = positiveInteger.describe("1-based line");
 const textSchema = z
 	.string()
 	.min(1)
 	.describe(
-		'Token copied from the line, e.g. "useState"; hovers where it starts. Matches whole identifiers ("user" skips "users"), or any substring if the line has none. Use instead of column',
+		'Token copied from the line, e.g. "useState"; whole identifiers match first ("user" skips "users"). Instead of column',
 	);
 const occurrenceSchema = positiveInteger
 	.optional()
@@ -604,6 +610,7 @@ const INSTRUCTIONS = `prinfer shows the types TypeScript infers, as an editor ho
 - batch_hover: several lookups, across files, in one call.
 - completions: valid values at a cursor, e.g. string-literal union members.
 - diagnostics: type errors in one file; run it on each file you edit.
+- annotations: annotations TypeScript would infer anyway, when cleaning up types.
 If a call fails or looks wrong on the default TypeScript 7 backend, retry it with backend "typescript6".
 Type regression tests: expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot(), with inferredType from prinfer/testing.`;
 
@@ -617,16 +624,14 @@ function createServer(): McpServer {
 		"hover_by_name",
 		{
 			description:
-				"Show the type TypeScript infers for a named variable, function, call, parameter, property, or type. Use before writing a type annotation, when unsure what a generic or call resolves to, or instead of reading .d.ts files. Declarations win over other uses of the name; pass line to pick among repeats.",
+				"Show the type TypeScript infers for a named variable, function, call, parameter, property, or type. Use before writing a type annotation, when unsure what a generic or call resolves to, or instead of reading .d.ts files.",
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
 					name: nameSchema,
 					line: positiveInteger
 						.optional()
-						.describe(
-							"1-based line of the one you mean, when the name repeats",
-						),
+						.describe("1-based line, to pick among repeated names"),
 					include_docs: includeDocsSchema,
 					...hoverTextShape,
 					project: projectSchema,
@@ -687,7 +692,7 @@ function createServer(): McpServer {
 		"hover",
 		{
 			description:
-				"Show the type TypeScript infers at a token on a line, like an editor hover; generic calls show their instantiated types. Use when hover_by_name can't name the token: callback parameters, expressions, repeated names. Target it with text copied from the line (or a column).",
+				"Show the type TypeScript infers at a token on a line, like an editor hover; generic calls show their instantiated types. Use when hover_by_name can't name the token: callback parameters, expressions, repeated names.",
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
@@ -766,23 +771,19 @@ function createServer(): McpServer {
 	server.registerTool(
 		"batch_hover",
 		{
-			description: `Run up to ${MAX_BATCH_POSITIONS} hovers in one call, e.g. to check several inferred types after an edit. Each item is {name, line?}, {line, text, occurrence?}, or {line, column}, in its own file or the shared file. Failures are reported per item.`,
+			description: `Run up to ${MAX_BATCH_POSITIONS} hovers in one call, across files, e.g. to check several inferred types after an edit. Items: {name, line?}, {line, text, occurrence?}, or {line, column}; failures are per item.`,
 			inputSchema: compact(
 				z.object({
 					file: fileSchema
 						.optional()
-						.describe(
-							"Default file for items without their own file",
-						),
+						.describe("Shared file for items without one"),
 					positions: z
 						.array(
 							z.object({
 								file: z
 									.string()
 									.optional()
-									.describe(
-										"This item's file, overriding the shared file",
-									),
+									.describe("Overrides the shared file"),
 								name: nameSchema.optional(),
 								line: positiveInteger
 									.optional()
@@ -846,19 +847,19 @@ function createServer(): McpServer {
 	server.registerTool(
 		"completions",
 		{
-			description: `List the completions TypeScript offers at a cursor, including string-literal union members. Use to find valid values for an argument, property key, or import before writing it. Returns the best ${DEFAULT_COMPLETION_LIMIT} by default; pass prefix to narrow.`,
+			description: `List the completions TypeScript offers at a cursor, including string-literal union members. Use to find valid values for an argument, property key, or import before writing it. Returns the top ${DEFAULT_COMPLETION_LIMIT}; pass prefix to narrow.`,
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
 					line: lineSchema,
 					column: positiveInteger.describe(
-						"1-based cursor column; the cursor sits before this character, e.g. just inside an opening quote",
+						"1-based cursor column; the cursor sits before it, e.g. just inside an opening quote",
 					),
 					prefix: z
 						.string()
 						.optional()
 						.describe(
-							'Keep names starting with this (case-insensitive). Default: the partial identifier or string text left of the cursor; "" lists all',
+							'Case-insensitive name prefix; default: the text typed left of the cursor; "" lists all',
 						),
 					limit: positiveInteger
 						.max(MAX_COMPLETION_LIMIT)
@@ -866,7 +867,7 @@ function createServer(): McpServer {
 						.describe(
 							`Max entries (default ${DEFAULT_COMPLETION_LIMIT}); locals and members rank first`,
 						),
-					project: z.string().optional().describe(PROJECT_DEFAULT),
+					project: projectSchema,
 				}),
 			),
 			outputSchema: completionsOutputSchema,
@@ -945,11 +946,11 @@ function createServer(): McpServer {
 		"annotations",
 		{
 			description:
-				"List type annotations in one file that TypeScript would infer anyway. Use when reviewing or cleaning up TypeScript, before adding annotations, or when asked to cut redundant types. redundant: deleting it keeps the exact type. widening: the annotation is wider than the inferred type, often an intended API contract.",
+				"Find type annotations in one file that TypeScript would infer anyway (redundant) or that are wider than the inferred type (widening, often an intended API contract). Use when reviewing or cleaning up TypeScript, or asked to cut redundant types.",
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
-					project: z.string().optional().describe(PROJECT_DEFAULT),
+					project: projectSchema,
 				}),
 			),
 			outputSchema: annotationsOutputSchema,

@@ -545,6 +545,27 @@ describe("prinfer annotations", () => {
 		expect(exitCode).toBe(0);
 	});
 
+	test("accepts --project=<path> like the other commands", async () => {
+		const file = project("const wide: string = 'a';\n");
+		const tsconfig = path.join(path.dirname(file), "tsconfig.json");
+		const { stdout, exitCode } = await runCli([
+			"annotations",
+			file,
+			"--json",
+			`--project=${tsconfig}`,
+		]);
+		expect(annotationsSuccessSchema.parse(JSON.parse(stdout)).ok).toBe(
+			true,
+		);
+		expect(exitCode).toBe(0);
+
+		const usage = await runCli(["annotations", file, "--docs"]);
+		expect(usage.stderr).toContain(
+			"--docs is not an option of annotations.",
+		);
+		expect(usage.exitCode).toBe(1);
+	});
+
 	test("exits 1 when the check fails", async () => {
 		const missing = await runCli([
 			"annotations",
@@ -558,7 +579,7 @@ describe("prinfer annotations", () => {
 		expect(missing.exitCode).toBe(1);
 
 		const usage = await runCli(["annotations", "--bogus"]);
-		expect(usage.stderr).toContain("Unknown annotations option --bogus");
+		expect(usage.stderr).toContain("Unknown option --bogus.");
 		expect(usage.exitCode).toBe(1);
 	});
 });

@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * Parsing of the CLI's `<file>:<target>` argument, kept free of side effects
- * so it can be unit tested.
+ * Parsing of the CLI's `<file>:<target>` argument and options, shared by
+ * every command and kept free of side effects (failures go through the
+ * caller's `fail`) so it can be unit tested.
  */
 
 /** A target as written on the command line, before any flag is applied. */
@@ -129,4 +130,69 @@ export function shellHint(arg: string): string | undefined {
 		return 'If you built it from a shell variable: zsh reads $F:r, :t, :h, ... as modifiers ("$F:root" becomes "${F:r}oot"). Write "${F}:root" or single-quote the argument.';
 	}
 	return undefined;
+}
+
+/** Option name, the key it sets, and whether it takes a value. */
+export const FLAGS: Record<string, { key: string; value?: true }> = {
+	"--docs": { key: "docs" },
+	"-d": { key: "docs" },
+	"--timing": { key: "timing" },
+	"-t": { key: "timing" },
+	"--full": { key: "full" },
+	"-f": { key: "full" },
+	"--json": { key: "json" },
+	"--suggestions": { key: "suggestions" },
+	"--text": { key: "text", value: true },
+	"--occurrence": { key: "occurrence", value: true },
+	"--max-chars": { key: "maxChars", value: true },
+	"--project": { key: "project", value: true },
+	"-p": { key: "project", value: true },
+	"--backend": { key: "backend", value: true },
+	"--prefix": { key: "prefix", value: true },
+	"--limit": { key: "limit", value: true },
+};
+
+/**
+ * Split args into positionals and option values. Value options accept
+ * `--opt value` and `--opt=value`; unknown options are errors.
+ */
+export function parseFlags(
+	args: string[],
+	allowed: Set<string>,
+	commandName: string,
+	fail: (message: string) => never,
+): { positionals: string[]; values: Map<string, string | true> } {
+	const positionals: string[] = [];
+	const values = new Map<string, string | true>();
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index] as string;
+		if (!arg.startsWith("-") || arg === "-") {
+			positionals.push(arg);
+			continue;
+		}
+		const eq = arg.startsWith("--") ? arg.indexOf("=") : -1;
+		const name = eq >= 0 ? arg.slice(0, eq) : arg;
+		const flag = FLAGS[name];
+		if (!flag) return fail(`Unknown option ${name}.`);
+		if (!allowed.has(flag.key)) {
+			fail(`${name} is not an option of ${commandName}.`);
+		}
+		if (!flag.value) {
+			if (eq >= 0) fail(`${name} takes no value.`);
+			values.set(flag.key, true);
+			continue;
+		}
+		const value = eq >= 0 ? arg.slice(eq + 1) : args[++index];
+		if (value === undefined) {
+			fail(
+				name === "--prefix"
+					? '--prefix requires text (pass "" to list every entry).'
+					: name === "--project" || name === "-p"
+						? `${name} requires a path argument.`
+						: `${name} requires a value.`,
+			);
+		}
+		values.set(flag.key, value);
+	}
+	return { positionals, values };
 }

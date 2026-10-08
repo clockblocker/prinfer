@@ -2,10 +2,14 @@
 "prinfer": major
 ---
 
-prinfer 3.0 makes the MCP server easier for agents to find, install, and call correctly, and adds single-file type checking.
+prinfer 3.0 makes the MCP server easier for agents to find, install, and call correctly, gives every backend the same hover result, and adds single-file type checking and an annotations check.
 
 ### Breaking changes
 
+- `prinfer/testing`: `inferredType` and `inferredTypeInfo` return untruncated types by default, on both backends. A snapshot that held `{ ...; }` or `... 12 more ...` now holds the whole type, so changes deep inside a type fail the test. Update the snapshots, or pass `full: false` to keep the editor's shortened form.
+- `signature` is the type text alone, on one line, on every backend (TypeScript 6, the TypeScript 7 language server, and the `prinfer/testing` TypeScript 7 API). On the TypeScript 7 language server (the MCP default, and the CLI's `--backend typescript7`) it used to be the editor's hover text, such as `const names: string[]` with object types over several lines; that text is now the new `display` field. Two TypeScript 6 and `prinfer/testing` signatures change too: a variable initialized with a function reports its type, `(x: number) => string`, with `kind: "const"` instead of `(x: number): string` and `kind: "function"`; and type aliases keep their type parameters, `type Box<T extends string = "a"> = { value: T; }` instead of `type Box = { value: T; }`.
+- Hover text from the MCP hover tools and CLI type lookups is capped at 4000 characters per type, ending with a line that gives the total length and the union member count. Pass `max_chars` (MCP) or `--max-chars` (CLI) to raise the cap, `0` for none. Structured content and `--json` output are never cut.
+- The CLI rejects unknown options, and options a command doesn't take (such as `--prefix` on a type lookup), with exit code 1. Type lookups used to ignore them. Malformed targets print a short error with the accepted forms instead of the whole help text.
 - The deprecated `hoverByName` MCP tool is removed. Use `hover_by_name`.
 - MCP tools no longer accept `include_timing`. Set `PRINFER_INCLUDE_TIMING=1` on the server process to add timing to every hover result. The library option and the CLI `--timing` flag are unchanged.
 - `batch_hover` reports a missing, unreadable, or directory `file` as a per-item `FILE_NOT_FOUND` error instead of failing the whole call, because items can now come from different files. `file` is optional when every item names its own.
@@ -13,7 +17,7 @@ prinfer 3.0 makes the MCP server easier for agents to find, install, and call co
 - Name lookups prefer declarations (functions, variables, types, calls, then parameters, members, and other declarations) and never match comments or strings. Both backends pick the same node, which can differ from what earlier versions returned for a repeated name.
 - The `completions` MCP tool and `prinfer complete` return at most 50 entries by default, and filter by the text already typed left of the cursor (an identifier's start, or a string literal's contents), as an editor does. Pass `prefix` (`--prefix`) to filter by other text or `""` to turn filtering off, and `limit` (`--limit`, up to 500 on MCP) for more entries. The text output ends with `… N more; pass prefix to narrow, or raise limit` when entries were cut.
 - Completion entries are ranked by TypeScript's sortText with keywords after other entries of the same rank, in the library `completions()` too.
-- TypeScript 6 hover kinds match the editor and the TypeScript 7 backend more closely: variables are `const`, `let`, or `var` instead of `variable`, and a bare reference reports the kind of what it refers to (`parameter`, `property`, `method`, `const`, ...) instead of `identifier`. This affects the library, the CLI, `prinfer/testing`'s `inferredTypeInfo`, and the `typescript6` MCP backend.
+- Hover `kind` uses the editor's labels on every backend. On TypeScript 6, variables are `const`, `let`, or `var` instead of `variable`, a variable initialized with a function is `const` (or `let`, `var`) rather than `function`, and a bare reference reports the kind of what it refers to (`parameter`, `property`, `method`, `const`, ...) instead of `identifier`. This affects the library, the CLI, `prinfer/testing`'s `inferredTypeInfo`, and both MCP backends.
 - A hover line or column outside the file is an `INVALID_ARGUMENT` error that gives the valid range, on both backends and in the CLI, instead of `SYMBOL_NOT_FOUND`.
 - Error text starts with the code (`Error [SYMBOL_NOT_FOUND]: …`) and adds `Did you mean: …?` (or `Nearby identifiers: …`) and `Suggestion: …` lines, on MCP tools, `batch_hover` items, and CLI stderr. Many MCP clients show the model only text content, so the recovery hints used to be invisible there.
 - MCP `outputSchema`s are one compact envelope per tool (`version`, `ok`, and `result` or `error`) instead of a union, and list only the error fields an agent recovers with. Structured content is unchanged. Together with dropping zod's safe-integer bounds and `$schema` from input schemas, `tools/list` is about a fifth smaller.
@@ -26,6 +30,13 @@ prinfer 3.0 makes the MCP server easier for agents to find, install, and call co
 - CLI name targets accept any JavaScript identifier, such as `prinfer 'src/store.ts:$store'` or non-ASCII names.
 - CLI `--json` errors include `project`, like the MCP server's.
 - `batch_hover` accepts up to 100 items across any number of files, mixing `{name, line?}`, `{line, text, occurrence?}`, and `{line, column}` targets.
+- CLI text targets: `prinfer src/a.ts:75:user` hovers where `user` starts on line 75, matching whole identifiers first like the `hover` tool's `text`. `prinfer src/a.ts:75 --text user --occurrence 2` does the same for text that is all digits or needs the nth match. `prinfer complete` takes the same targets and puts the cursor right after the text, so `src/a.ts:75:user.` lists the members of `user`.
+- CLI value options accept `--opt=value`. Arguments the shell probably rewrote (an expanded `$name`, or a zsh `:r` modifier in `"$F:root"`) get a quoting hint.
+- Hover results add `overloads` (every call signature of an overloaded function), `unionMembers` (the size of a union type), and, for name lookups that matched one of several declarations, `alternatives` with the others' positions and kinds. The text shows `(+1 overload)` with the overloads listed, and `Matched line 8 of 2 declarations (also 12); pass line to choose.`
+- A name lookup whose `line` misses says where the name is declared, in the suggestion and in a new `declaredAt` error field.
+- The MCP hover tools take `full` and `max_chars`.
+- At an object-literal key that accepts any key, such as a `Record<string, number>`, completions return no entries and a `note` explaining why, instead of every global name.
+- New `annotations` MCP tool, `annotations(file, options)` library function, and `prinfer annotations <file> [--json] [--project]` command list the explicit type annotations in one file that TypeScript would infer anyway (`redundant`), or that are wider than the inferred type (`widening`, often a deliberate contract). They run on TypeScript 6. The command exits 0 whatever it finds.
 - New `diagnostics` MCP tool, `diagnostics(file, options)` library function, and `prinfer check <file> [--json] [--suggestions]` command report one file's type errors without checking the whole project. `prinfer check` exits 1 when the file has errors.
 - The CLI accepts `--backend typescript6|typescript7` for type lookups and `prinfer check`. It still defaults to `typescript6`, and `prinfer complete` stays TypeScript 6 only.
 - Tool descriptions and server instructions say when to call each tool.
@@ -45,6 +56,7 @@ prinfer 3.0 makes the MCP server easier for agents to find, install, and call co
 
 - The MCP server exits when its client disconnects (stdin closes) or on SIGINT/SIGTERM, shutting down warm TypeScript 7 language servers. Previously each session left a server process running.
 - The TypeScript 7 backend no longer returns stale types or errors after another file in the project (such as an imported module) is edited, created, or deleted on disk.
+- `full: true` turns off truncation on the TypeScript 7 language server backend too.
 - The TypeScript 7 backend keeps JSDoc out of `signature` and `returnType`, and `include_docs` returns it as `documentation`. Multi-line generic signatures get the right `returnType`.
 - Lines and columns follow TypeScript on both backends: CR, LF, CRLF, U+2028, and U+2029 end a line, and a leading BOM is ignored.
 - A directory passed as `file` is a clean `FILE_NOT_FOUND` error on every MCP tool and CLI command.

@@ -643,7 +643,7 @@ describe("MCP server over stdio", () => {
 			expect(listed).not.toContain(noise);
 		}
 		// Budget for everything an agent loads per session (~4 chars/token).
-		expect(listed.length).toBeLessThan(16_000);
+		expect(listed.length).toBeLessThan(14_400);
 
 		const outputSchema = (name: string) => {
 			const tool = tools.find((candidate) => candidate.name === name);

@@ -12,12 +12,7 @@ import {
 	nativeApiTypeInfo,
 	nativeApiTypeInfoByName,
 } from "./native-api.js";
-import type {
-	CompletionOptions,
-	HoverByNameOptions,
-	HoverOptions,
-	HoverResult,
-} from "./types.js";
+import type { HoverOptions, HoverResult } from "./types.js";
 
 /**
  * A source file for the testing helpers. Pass `import.meta.url` for the test
@@ -26,14 +21,20 @@ import type {
  */
 export type TestingFile = string | URL;
 
-interface CompletionsBackend {
-	/** TypeScript 7 is the only completions backend and the default. */
+/** Options shared by every `inferredCompletions` selector. */
+interface InferredCompletionsOptions {
+	/** Optional path to tsconfig.json (default: the nearest one above the file). */
+	project?: string;
+	/**
+	 * `inferredCompletions` always runs on TypeScript 7 and returns every
+	 * completion name, with no prefix filter or limit. (The MCP `completions`
+	 * tool and `prinfer complete` use TypeScript 6 and return 50 by default.)
+	 */
 	backend?: "typescript7";
 }
 
 export interface InferredCompletionsPosition
-	extends CompletionOptions,
-		CompletionsBackend {
+	extends InferredCompletionsOptions {
 	/** Positive, 1-based source line. */
 	line: number;
 	/** Positive, 1-based cursor column: the cursor sits before this character. */
@@ -41,8 +42,7 @@ export interface InferredCompletionsPosition
 }
 
 export interface InferredCompletionsTextTarget
-	extends CompletionOptions,
-		CompletionsBackend {
+	extends InferredCompletionsOptions {
 	/** Positive, 1-based source line. */
 	line: number;
 	/** Exact text on the line that places the cursor. */
@@ -61,19 +61,37 @@ export type InferredCompletionsSelector =
 	| InferredCompletionsPosition
 	| InferredCompletionsTextTarget;
 
-export interface InferredTypeTarget extends HoverByNameOptions {
-	/** The declaration name whose inferred type should be captured. */
-	name: string;
+/** Options shared by every `inferredType` and `inferredTypeInfo` selector. */
+export interface InferredTypeOptions
+	extends Omit<HoverOptions, "full" | "backend"> {
+	/**
+	 * Untruncated types, on by default so a change anywhere in a type fails
+	 * the snapshot. Pass `false` for editor-style truncation (`{ ...; }`).
+	 */
+	full?: boolean;
+	/**
+	 * `prinfer/testing` defaults to `"typescript6"` and returns synchronously.
+	 * `"typescript7"` returns a promise. (The MCP server defaults to
+	 * TypeScript 7; the CLI and library to TypeScript 6.)
+	 */
+	backend?: "typescript6" | "typescript7";
 }
 
-export interface InferredTypePosition extends HoverOptions {
+export interface InferredTypeTarget extends InferredTypeOptions {
+	/** The declaration name whose inferred type should be captured. */
+	name: string;
+	/** 1-based line that picks among same-named declarations. */
+	line?: number;
+}
+
+export interface InferredTypePosition extends InferredTypeOptions {
 	/** Positive, 1-based source line. */
 	line: number;
 	/** Positive, 1-based source column. */
 	column: number;
 }
 
-export interface InferredTypeTextTarget extends HoverOptions {
+export interface InferredTypeTextTarget extends InferredTypeOptions {
 	/** Positive, 1-based source line. */
 	line: number;
 	/** Exact text on the line; the type is read where the match starts. */
@@ -107,8 +125,9 @@ interface Request {
 }
 
 /**
- * Return the completion names TypeScript 7 offers at a cursor, sorted the way
- * the compiler returns them.
+ * Return every completion name TypeScript 7 offers at a cursor, sorted the
+ * way the compiler returns them, with no prefix filter or limit, so a
+ * snapshot catches any added or removed entry.
  *
  * @example
  * ```ts
@@ -126,7 +145,7 @@ export async function inferredCompletions(
 		throw testingError(
 			"INVALID_ARGUMENT",
 			`inferredCompletions only supports backend "typescript7", got ${JSON.stringify(selector.backend)}.`,
-			"Omit backend; completions always use TypeScript 7.",
+			"Omit backend; inferredCompletions always uses TypeScript 7.",
 		);
 	}
 	try {
@@ -148,8 +167,9 @@ export async function inferredCompletions(
 /**
  * Inspect a source expression for use with a test runner's ordinary snapshot
  * matcher. `import.meta.url` is accepted directly so tests stay relocatable.
- * Without a backend the result is synchronous (TypeScript 6); with
- * `backend: "typescript7"` it is a promise.
+ * Types are untruncated unless `full: false`. Without a backend the result
+ * is synchronous (TypeScript 6); with `backend: "typescript7"` it is a
+ * promise.
  *
  * @example
  * ```ts
@@ -267,7 +287,7 @@ function createRequest(
 			"INVALID_ARGUMENT",
 			`${helper} got unknown backend ${JSON.stringify(backend)}.`,
 			helper === "inferredCompletions"
-				? "Omit backend; completions always use TypeScript 7."
+				? "Omit backend; inferredCompletions always uses TypeScript 7."
 				: 'Use backend: "typescript7", or omit it for the synchronous TypeScript 6 default.',
 		);
 	}
@@ -354,8 +374,9 @@ function resolveTarget(
 	};
 }
 
+/** Snapshots default to untruncated types, so a change anywhere in a type fails. */
 function hoverOptions(selector: InferredTypeSelector): HoverOptions {
-	const { project, include_docs, include_timing, full } = selector;
+	const { project, include_docs, include_timing, full = true } = selector;
 	return { project, include_docs, include_timing, full };
 }
 

@@ -874,7 +874,7 @@ describe("prinfer check", () => {
 			cleanFile,
 			"--bogus",
 		]);
-		expect(stderr).toContain("Unknown check option --bogus");
+		expect(stderr).toContain("Unknown option --bogus.");
 		expect(exitCode).toBe(1);
 	});
 

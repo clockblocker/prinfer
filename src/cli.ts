@@ -2,7 +2,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { type ParsedTarget, parseTargetArg, shellHint } from "./cli-args.js";
+import {
+	type ParsedTarget,
+	parseFlags,
+	parseTargetArg,
+	shellHint,
+} from "./cli-args.js";
 import {
 	annotationsSuccess,
 	type CliCommand,
@@ -41,18 +46,22 @@ Usage:
   prinfer setup agents-md [--file <path>] [--print]
 
 Commands:
-  complete             Show TypeScript autocomplete entries at a cursor
+  complete             Show TypeScript autocomplete entries at a cursor (top 50 by
+                       default). Always TypeScript 6
   check                Report type errors in one file; exits 1 when it has errors
   annotations          List type annotations TypeScript would infer anyway
                        (redundant) or that are wider than the inferred type
-                       (widening); exits 0 unless the check itself fails
+                       (widening); exits 0 unless the check itself fails.
+                       Always TypeScript 6
   mcp                  Start the MCP server on stdio (same as prinfer-mcp)
   setup <client>       Register the MCP server with an agent client
   setup agents-md      Add prinfer usage instructions to AGENTS.md or CLAUDE.md
 
 Targets (lines and columns are 1-based):
   <file>:<name>           A declaration by name (any JavaScript identifier)
-  <file>:<name>:<line>    The same, choosing among repeated names by line
+  <file>:<name>:<line>    The same, choosing among repeated names by line. On
+                          a line that uses the name (box.value), the type
+                          there, narrowed by the surrounding code
   <file>:<line>:<text>    The token where text starts on that line; whole
                           identifiers match first ("user" skips "users").
                           complete puts the cursor right after the text
@@ -75,7 +84,7 @@ Options:
   --json               Emit the versioned JSON contract on stdout
   --project, -p <path> Path to tsconfig.json (default: the nearest one above the file)
   --backend <name>     typescript6 (default) or typescript7, for type lookups and
-                       check; complete supports only typescript6
+                       check; complete and annotations always use typescript6
   --help, -h           Show this help message (prinfer setup --help for setup options)
 
 Examples:
@@ -157,25 +166,6 @@ const ANNOTATIONS_USAGE =
 const CHECK_USAGE =
 	"Usage: prinfer check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]";
 
-/** Option name, the key it sets, and whether it takes a value. */
-const FLAGS: Record<string, { key: string; value?: true }> = {
-	"--docs": { key: "docs" },
-	"-d": { key: "docs" },
-	"--timing": { key: "timing" },
-	"-t": { key: "timing" },
-	"--full": { key: "full" },
-	"-f": { key: "full" },
-	"--json": { key: "json" },
-	"--text": { key: "text", value: true },
-	"--occurrence": { key: "occurrence", value: true },
-	"--max-chars": { key: "maxChars", value: true },
-	"--project": { key: "project", value: true },
-	"-p": { key: "project", value: true },
-	"--backend": { key: "backend", value: true },
-	"--prefix": { key: "prefix", value: true },
-	"--limit": { key: "limit", value: true },
-};
-
 const HOVER_KEYS = new Set([
 	"docs",
 	"timing",
@@ -187,6 +177,8 @@ const HOVER_KEYS = new Set([
 	"project",
 	"backend",
 ]);
+const CHECK_KEYS = new Set(["json", "project", "backend", "suggestions"]);
+const ANNOTATIONS_KEYS = new Set(["json", "project"]);
 const COMPLETE_KEYS = new Set([
 	"json",
 	"text",
@@ -250,51 +242,6 @@ function usageError(
 		console.error(lines.join("\n"));
 	}
 	process.exit(1);
-}
-
-/**
- * Split args into positionals and option values. Value options accept
- * `--opt value` and `--opt=value`; unknown options are errors.
- */
-function parseFlags(
-	args: string[],
-	allowed: Set<string>,
-	commandName: string,
-	fail: (message: string) => never,
-): { positionals: string[]; values: Map<string, string | true> } {
-	const positionals: string[] = [];
-	const values = new Map<string, string | true>();
-	for (let index = 0; index < args.length; index++) {
-		const arg = args[index] as string;
-		if (!arg.startsWith("-") || arg === "-") {
-			positionals.push(arg);
-			continue;
-		}
-		const eq = arg.startsWith("--") ? arg.indexOf("=") : -1;
-		const name = eq >= 0 ? arg.slice(0, eq) : arg;
-		const flag = FLAGS[name];
-		if (!flag) return fail(`Unknown option ${name}.`);
-		if (!allowed.has(flag.key)) {
-			fail(`${name} is not an option of ${commandName}.`);
-		}
-		if (!flag.value) {
-			if (eq >= 0) fail(`${name} takes no value.`);
-			values.set(flag.key, true);
-			continue;
-		}
-		const value = eq >= 0 ? arg.slice(eq + 1) : args[++index];
-		if (value === undefined) {
-			fail(
-				name === "--prefix"
-					? '--prefix requires text (pass "" to list every entry).'
-					: name === "--project" || name === "-p"
-						? `${name} requires a path argument.`
-						: `${name} requires a value.`,
-			);
-		}
-		values.set(flag.key, value);
-	}
-	return { positionals, values };
 }
 
 function parseInteger(
@@ -603,30 +550,17 @@ async function runCheck(args: string[]): Promise<number> {
 			suggestion: CHECK_USAGE,
 		});
 
-	let file: string | undefined;
-	let project: string | undefined;
-	let backend: Backend = "typescript6";
-	let includeSuggestions = false;
-	for (let index = 0; index < args.length; index++) {
-		const arg = args[index] as string;
-		if (arg === "--json") continue;
-		if (arg === "--suggestions") {
-			includeSuggestions = true;
-		} else if (arg === "--project" || arg === "-p") {
-			project = args[++index];
-			if (!project) fail(`${arg} requires a path argument.`);
-		} else if (arg === "--backend") {
-			backend = parseBackend(args[++index] ?? "", fail);
-		} else if (arg.startsWith("-")) {
-			fail(`Unknown check option ${arg}.`);
-		} else if (file === undefined) {
-			file = arg;
-		} else {
-			fail(
-				`Unexpected argument ${JSON.stringify(arg)}; check takes one file.`,
-			);
-		}
+	const { positionals, values } = parseFlags(args, CHECK_KEYS, "check", fail);
+	if (positionals.length > 1) {
+		fail(
+			`Unexpected argument ${JSON.stringify(positionals[1])}; check takes one file.`,
+		);
 	}
+	const file = positionals[0];
+	const projectValue = values.get("project");
+	const project = typeof projectValue === "string" ? projectValue : undefined;
+	const backend = parseBackend(values.get("backend"), fail);
+	const includeSuggestions = values.has("suggestions");
 	if (!file) return fail("check requires a file: prinfer check <file.ts>");
 
 	try {
@@ -759,22 +693,20 @@ function runAnnotations(args: string[]): number {
 			suggestion: ANNOTATIONS_USAGE,
 		});
 
-	let file: string | undefined;
-	let project: string | undefined;
-	for (let index = 0; index < args.length; index++) {
-		const arg = args[index];
-		if (arg === "--json") continue;
-		if (arg === "--project" || arg === "-p") {
-			project = args[++index];
-			if (!project) return fail("--project requires a path argument.");
-		} else if (arg.startsWith("-")) {
-			return fail(`Unknown annotations option ${arg}.`);
-		} else if (file === undefined) {
-			file = arg;
-		} else {
-			return fail(`Unexpected argument "${arg}".`);
-		}
+	const { positionals, values } = parseFlags(
+		args,
+		ANNOTATIONS_KEYS,
+		"annotations",
+		fail,
+	);
+	if (positionals.length > 1) {
+		fail(
+			`Unexpected argument ${JSON.stringify(positionals[1])}; annotations takes one file.`,
+		);
 	}
+	const file = positionals[0];
+	const projectValue = values.get("project");
+	const project = typeof projectValue === "string" ? projectValue : undefined;
 	if (!file) {
 		return fail(
 			"annotations requires a file: prinfer annotations <file.ts>",

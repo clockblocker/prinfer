@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { parseTargetArg, shellHint } from "../cli-args.js";
+import { parseFlags, parseTargetArg, shellHint } from "../cli-args.js";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 
@@ -74,5 +74,40 @@ describe("shellHint", () => {
 	test("stays quiet for ordinary source paths", () => {
 		expect(shellHint("src/a.ts")).toBeUndefined();
 		expect(shellHint("src/a.ts:foo:bar")).toBeUndefined();
+	});
+});
+
+describe("parseFlags", () => {
+	const fail = (message: string): never => {
+		throw new Error(message);
+	};
+	const parse = (args: string[]) =>
+		parseFlags(args, new Set(["json", "project"]), "annotations", fail);
+
+	test("accepts --opt value and --opt=value", () => {
+		for (const args of [
+			["a.ts", "--project", "tsconfig.json"],
+			["a.ts", "--project=tsconfig.json"],
+			["-p", "tsconfig.json", "a.ts"],
+		]) {
+			const { positionals, values } = parse(args);
+			expect(positionals).toEqual(["a.ts"]);
+			expect(values.get("project")).toBe("tsconfig.json");
+		}
+	});
+
+	test("rejects unknown options and options of other commands", () => {
+		expect(() => parse(["a.ts", "--bogus"])).toThrow(
+			"Unknown option --bogus.",
+		);
+		expect(() => parse(["a.ts", "--docs"])).toThrow(
+			"--docs is not an option of annotations.",
+		);
+		expect(() => parse(["a.ts", "--json=1"])).toThrow(
+			"--json takes no value.",
+		);
+		expect(() => parse(["a.ts", "--project"])).toThrow(
+			"--project requires a path argument.",
+		);
 	});
 });

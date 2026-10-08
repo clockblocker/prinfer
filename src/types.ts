@@ -8,9 +8,13 @@ export interface HoverOptions {
 	include_docs?: boolean;
 	/** Include the hovered symbol's type-resolution timing */
 	include_timing?: boolean;
-	/** Disable editor-style type truncation */
+	/** Disable TypeScript's own type truncation (`{ ...; }`). Default false */
 	full?: boolean;
-	/** Experimental inference backend. Defaults to PRINFER_BACKEND or typescript7. */
+	/**
+	 * Ignored by the library's `hover()` and `batchHover()`, which always use
+	 * TypeScript 6. (The MCP hover tools default to `PRINFER_BACKEND` or
+	 * typescript7; the CLI and `prinfer/testing` default to typescript6.)
+	 */
 	backend?: "typescript6" | "typescript7";
 }
 
@@ -70,7 +74,7 @@ export interface HoverResult {
 	column: number;
 	/** JSDoc/TSDoc documentation if requested */
 	documentation?: string;
-	/** Symbol kind (function, variable, method, etc.) */
+	/** Editor hover label (`function`, `const`, `parameter`, `call`, ...); see above */
 	kind: string;
 	/** Symbol name if available */
 	name?: string;
@@ -109,9 +113,16 @@ export interface HoverByNameOptions extends HoverOptions {
 export interface CompletionOptions {
 	/** Optional path to tsconfig.json */
 	project?: string;
-	/** Keep only entries whose name starts with this text (case-insensitive) */
+	/**
+	 * Keep only entries whose name starts with this text (case-insensitive).
+	 * Library default: no filter. (The MCP `completions` tool and
+	 * `prinfer complete` default to the text typed left of the cursor.)
+	 */
 	prefix?: string;
-	/** Return at most this many entries (default: all); `total` counts every match */
+	/**
+	 * Return at most this many entries; `total` counts every match. Library
+	 * default: all. (The MCP tool and `prinfer complete` default to 50.)
+	 */
 	limit?: number;
 }
 

@@ -96,7 +96,9 @@ The block sits between `<!-- prinfer:start -->` and `<!-- prinfer:end -->` marke
 
 ## Tools
 
-Lines and columns are 1-based everywhere. `file` is absolute or relative to the server's working directory, and `project` (a `tsconfig.json` path) defaults to the nearest one above the file.
+Lines and columns are 1-based everywhere. `file` is absolute or relative to the server's working directory, and `project` (a `tsconfig.json` path) defaults to the nearest one above the file. Which TypeScript version answers depends on the tool and the surface; see [Backends at a glance](#backends-at-a-glance).
+
+Hover text is capped at 4000 characters per type. A cut type ends with a line such as `… truncated: 187 chars total, union of 4 members. Pass max_chars: N to see more (0 for no limit).` `max_chars` raises the cap or, at `0`, removes it. `full: true` turns off TypeScript's own truncation (`{ ...; }`, `... 12 more ...`) and lists every overload. Structured content is never cut.
 
 ### hover_by_name
 
@@ -109,10 +111,40 @@ hover_by_name(file: "src/utils.ts", name: "format", include_docs: true)
 ```
 
 ```text
-Type: const names: string[]
+Type: string[]
 Name: names
 Kind: const
 Position: 11:14
+```
+
+When the name is declared more than once, the lookup prefers declarations and says which one it picked:
+
+```text
+hover_by_name(file: "src/extras.ts", name: "item")
+```
+
+```text
+Type: string
+Name: item
+Kind: const
+Position: 8:9
+Matched line 8 of 2 declarations (also 12); pass line to choose.
+```
+
+The structured result lists the others as `alternatives: [{ line, column, kind }]`. A `line` that matches none of them fails with `SYMBOL_NOT_FOUND`, a suggestion naming the declaration lines, and `declaredAt` holding their positions. Overloaded functions show the first signature, then the rest (up to three in the text; `full: true` lists all, and `overloads` in structured content always has every one):
+
+```text
+hover_by_name(file: "src/extras.ts", name: "parse")
+```
+
+```text
+Type: (value: string): number (+1 overload)
+Overloads:
+  (value: number): string
+Returns: number
+Name: parse
+Kind: function
+Position: 1:17
 ```
 
 ### hover
@@ -125,10 +157,7 @@ hover(file: "src/utils.ts", line: 11, column: 33)
 ```
 
 ```text
-Type: (parameter) user: {
-    id: number;
-    name: string;
-}
+Type: { id: number; name: string; }
 Name: user
 Kind: parameter
 Position: 11:33
@@ -139,6 +168,7 @@ Generic calls show their instantiated types, the same as an editor hover. If the
 
 ```text
 Error [SYMBOL_NOT_FOUND]: Text "nope" not found on line 11 of /project/src/utils.ts
+Nearby identifiers: name, names, map, user, users
 Suggestion: Line 11 reads: "export const names = users.map((user) => user.name);". Copy text exactly from it, or pass column instead.
 ```
 
@@ -158,19 +188,14 @@ batch_hover(file: "src/utils.ts", positions: [
 Batch hover results: 2 succeeded, 1 failed
 
 --- src/utils.ts:users:6 ---
-Type: const users: {
-    id: number;
-    name: string;
-}[]
+Type: { id: number; name: string; }[]
 Name: users
 Kind: const
 Position: 6:14
 
 --- src/utils.ts:11:33 text "user" ---
-Type: (parameter) user: {
-    id: number;
-    name: string;
-}
+Type: { id: number; name: string; }
+Name: user
 Kind: parameter
 Position: 11:33
 
@@ -180,6 +205,15 @@ Suggestion: Check the path. Relative paths resolve against the MCP server's work
 ```
 
 Failures stay per item, including a missing file, so one bad lookup doesn't throw away the rest. A line or column outside the file is an `INVALID_ARGUMENT` error that gives the valid range, for `hover` and `batch_hover` items alike.
+
+### Hover results
+
+Every hover returns the same fields on every backend and surface:
+
+- `signature` is the type text alone, on one line, without the declaration keyword or name an editor hover starts with: `string[]` for a variable, `(value: string): number` for a function, the instantiated signature for a call. Type aliases keep their name and type parameters (`type Event = { kind: "open"; ... } | ...`), and interfaces and classes are their name (`Box<T>`).
+- `display` is the editor's hover text (`const names: string[]`, object types over several lines). Only the TypeScript 7 language server reports it.
+- `kind` is the editor's label: `function`, `method`, `const`, `let`, `var`, `parameter`, `property`, `type`, `interface`, `class`, `enum`, and so on, plus `call` for the callee of a call.
+- `overloads`, `unionMembers` (members of a union type), and `alternatives` appear when they apply.
 
 ### completions
 
@@ -199,7 +233,13 @@ Entries come in TypeScript's ranking: locals, members, and literal values first,
 
 `prefix` keeps names that start with it, ignoring case. Without `prefix`, the text already typed left of the cursor filters the list, as in an editor: with the cursor after `use` in `useSt`, only names starting with `use` come back, and inside `"co"` only literals starting with `co`. Pass `prefix: ""` to turn that off.
 
-`completions` always runs on the TypeScript 6 backend and takes no `backend` argument.
+At a key of an object literal that accepts any key, such as a `Record<string, number>`, TypeScript would offer every global name. prinfer returns no entries and a `note` instead:
+
+```text
+No completion entries. Any key is accepted here; TypeScript knows no specific keys for this object literal.
+```
+
+`completions` always runs on TypeScript 6 and takes no `backend` argument.
 
 ### diagnostics
 
@@ -216,6 +256,26 @@ src/utils.ts:16:14 error TS2322: Type 'string' is not assignable to type 'number
 ```
 
 A clean file returns `No type errors.`. Errors and warnings are reported by default. `include_suggestions` adds suggestion diagnostics such as TS6133 (declared but never read).
+
+### annotations
+
+Explicit type annotations in one file that TypeScript would infer anyway. Use it when cleaning up types, or to check a file before review.
+
+```text
+annotations(file: "src/utils.ts")
+```
+
+```text
+src/utils.ts:2:55 redundant return type of format: declared string, inferred string (exported)
+src/utils.ts:14:19 widening drink: declared Drink, inferred "tea" (exported)
+src/utils.ts:21:19 redundant label: declared string, inferred string (exported)
+src/utils.ts:22:18 widening mode: declared string, inferred "dark" (exported)
+2 redundant, 2 widening (5 annotations checked).
+redundant: delete the annotation; the type stays the same.
+widening: the annotation is wider than the inferred type; keep it if the wider type is intended.
+```
+
+A `redundant` annotation can be deleted without changing the type. A `widening` one is wider than what TypeScript infers, which is often deliberate (a variable that must accept any `Drink` later, or an exported API contract), so treat it as a question rather than a fix. Only annotations with an initializer or body to infer from are checked. Each structured finding has the range of the `: Type` text to delete, `declared`, `inferred`, `exported`, and a one-line `suggestion`. `annotations` always runs on TypeScript 6.
 
 ## Type regression tests
 
@@ -261,7 +321,20 @@ The second argument picks the target:
 - `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
 - `{ line, column }`: a 1-based position.
 
-`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. `full: true` disables truncation, and `include_docs` adds JSDoc to `inferredTypeInfo`.
+`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
+
+To pin what a function infers for an argument you have no value for, declare the argument in a fixture file and point the helper at it. A `declare const` in the test file itself has no runtime value, so the test throws a `ReferenceError` as soon as it runs.
+
+```typescript
+// test/groupBy.fixture.ts, read for types only, never run
+import { groupBy, type User } from "../src/users";
+declare const input: User[];
+export const byName = groupBy(input, (user) => user.name);
+
+// test/users.test.ts
+expect(inferredType(new URL("./groupBy.fixture.ts", import.meta.url), { name: "byName" }))
+  .toMatchInlineSnapshot(`"Record<string, User[]>"`);
+```
 
 `inferredCompletions` uses TypeScript 7 and resolves to every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
 
@@ -273,16 +346,21 @@ Failed lookups throw (or reject) with the fix in the message: an unknown name li
 
 ## Backends and environment
 
-`hover_by_name`, `hover`, `batch_hover`, and `diagnostics` take `backend: "typescript7" | "typescript6"`.
+### Backends at a glance
 
-- `typescript7` (default) runs the native TypeScript 7 language server. One warm session per project is shared across requests, and its output is closest to what your editor shows.
+| Surface | Type lookups | Completions | Type errors | Annotations |
+| :- | :- | :- | :- | :- |
+| MCP server | TS7; `backend: "typescript6"` | TS6, top 50 | TS7; `backend: "typescript6"` | TS6 |
+| CLI | TS6; `--backend typescript7` | TS6, top 50 | TS6; `--backend typescript7` | TS6 |
+| Library (`prinfer`) | TS6 | TS6, all entries | TS6 | TS6 |
+| `prinfer/testing` | TS6, sync; `backend: "typescript7"` returns a promise | TS7, every name | none | none |
+
+- `typescript7` runs the native TypeScript 7 language server (the testing helpers use its standalone compiler API). One warm session per project is shared across requests, and its output is closest to what your editor shows.
 - `typescript6` uses the TypeScript 6 compiler API in-process. If a lookup fails or looks wrong on TypeScript 7, retry that call with `typescript6`.
-
-Only the MCP server defaults to TypeScript 7, and its `completions` tool always runs on TypeScript 6. The CLI and `prinfer/testing` type lookups default to TypeScript 6 (switch with `--backend typescript7` or `backend: "typescript7"`), the library API always uses it, and `inferredCompletions` always uses TypeScript 7.
 
 The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. Both backends pick the same symbol for `hover_by_name`, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
 
-- Signatures are formatted differently. TypeScript 7 returns `const names: string[]` and `(parameter) user: {...}` with object types expanded over several lines; TypeScript 6 returns `string[]` and `{ id: number; name: string; }`.
+- `signature` has the same shape on both (see [Hover results](#hover-results)), but the TypeScript 7 language server prints an optional parameter as `digits?: number` where TypeScript 6 prints `digits?: number | undefined`. Only the language server reports `display`.
 - TypeScript 7 always uses the tsconfig.json nearest the file, or a project that tsconfig references. A `project` it would not pick, such as an unreferenced `tsconfig.build.json`, fails with `INVALID_ARGUMENT`; use `typescript6` for it.
 - On TypeScript 7, edits to files reached by relative imports are seen immediately. `diagnostics` also rescans the tsconfig's include directories (bounded, skipping `node_modules`, build output, and dot-directories); any other unopened edit reaches the language server through its file watcher shortly after.
 
@@ -290,7 +368,7 @@ Environment variables on the server process:
 
 | Variable | Effect |
 | :- | :- |
-| `PRINFER_BACKEND=typescript6` | Default backend for the four tools above. An explicit `backend` argument still wins. |
+| `PRINFER_BACKEND=typescript6` | Default backend for `hover_by_name`, `hover`, `batch_hover`, and `diagnostics`. An explicit `backend` argument still wins. |
 | `PRINFER_INCLUDE_TIMING=1` | Add type-resolution timing to every hover result (`1` or `true`). |
 
 Timing appears as `Type resolution: 82.06 ms` in text and `timing: { resolution_ms }` in structured content. It covers only the type lookup itself: the in-process checker call on TypeScript 6, the language-server hover exchange on TypeScript 7. Startup, project loading, file reads, and name or text resolution are excluded. In `batch_hover` each successful item gets its own timing.
@@ -323,13 +401,13 @@ Its structured content looks like this:
 }
 ```
 
-The error codes are `INVALID_ARGUMENT`, `FILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`, `TYPESCRIPT_ERROR`, and `INTERNAL_ERROR`. For `SYMBOL_NOT_FOUND`, `candidates` lists identifiers from the file that are close to the requested name (keywords and words in comments or strings are skipped), or the identifiers near the requested line; the text shows them as `Did you mean: …?` for a name lookup and `Nearby identifiers: …` otherwise. `suggestion` is specific to the tool or CLI command that failed. The CLI's `--json` output and the exported zod schemas (`hoverSuccessSchema`, `diagnosticsSuccessSchema`, `contractErrorResponseSchema`, and the rest) use the same contract.
+The error codes are `INVALID_ARGUMENT`, `FILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`, `TYPESCRIPT_ERROR`, and `INTERNAL_ERROR`. For `SYMBOL_NOT_FOUND`, `candidates` lists identifiers from the file that are close to the requested name (keywords and words in comments or strings are skipped), or the identifiers near the requested line; the text shows them as `Did you mean: …?` for a name lookup and `Nearby identifiers: …` otherwise. When a name lookup's `line` misses, `declaredAt` lists where the name is declared. `suggestion` is specific to the tool or CLI command that failed. The CLI's `--json` output and the exported zod schemas (`hoverSuccessSchema`, `diagnosticsSuccessSchema`, `contractErrorResponseSchema`, and the rest) use the same contract.
 
 Each tool's `outputSchema` describes both outcomes in one envelope (`version`, `ok`, and `result` or `error`), because MCP clients may validate error results against it too. It lists the error fields an agent recovers with (`code`, `message`, `candidates`, `suggestion`); the others are still sent.
 
 ## CLI
 
-The CLI uses the TypeScript 6 backend by default. Pass `--backend typescript7` to look up types or run `check` on the TypeScript 7 language server instead; `complete` is TypeScript 6 only.
+The CLI uses TypeScript 6 by default. Pass `--backend typescript7` to look up types or run `check` on the TypeScript 7 language server instead; `complete` and `annotations` always use TypeScript 6.
 
 ```bash
 # Type by name, optionally with a line hint for repeated names
@@ -337,43 +415,62 @@ prinfer src/utils.ts:format
 prinfer src/utils.ts:names:11
 prinfer 'src/store.ts:$store'          # any JavaScript identifier, including $ and non-ASCII names
 
-# Type at a position
+# Type of a token on a line: text copied from the line, or a column
+prinfer src/utils.ts:11:user
+prinfer src/utils.ts:11 --text user --occurrence 2
 prinfer src/utils.ts:11:33
 
 prinfer src/utils.ts:format --docs      # include JSDoc
-prinfer src/utils.ts:largeType --full   # turn off editor-style truncation
+prinfer src/utils.ts:largeType --full   # turn off TypeScript's own truncation
+prinfer src/utils.ts:largeType --max-chars 0   # print the whole type (default cap: 4000 chars)
 prinfer src/utils.ts:format --timing    # type-resolution timing
 prinfer src/utils.ts:format -p ./tsconfig.json
 
 # Completions at a cursor: the top 50, filtered by the text typed left of the cursor
 prinfer complete src/utils.ts:14:30
+prinfer complete src/utils.ts:11:user.  # cursor right after the text: members of user
 prinfer complete src/utils.ts:20:1 --prefix use --limit 20
 
 # Type errors in one file
 prinfer check src/utils.ts
 prinfer check src/utils.ts --suggestions
+
+# Annotations TypeScript would infer anyway
+prinfer annotations src/utils.ts
 ```
 
 ```text
 $ prinfer src/utils.ts:format --docs
-(value: number, digits?: number): string
+(value: number, digits?: number | undefined): string
 returns: string
 name: format
 kind: function
 docs: Formats a number with a fixed number of digits.
+
+$ prinfer src/utils.ts:11:user
+{ id: number; name: string; }
+name: user
+kind: parameter
+target: "user" at 11:33
 
 $ prinfer check src/utils.ts
 src/utils.ts:16:14 error TS2322: Type 'string' is not assignable to type 'number'.
 1 error, 0 warnings.
 ```
 
+In `<file>:<line>:<text>`, everything after the line is the text, colons and dots included; whole identifiers match first, as in the `hover` tool. All-digit text reads as a column, so pass it with `--text`. A name with a line hint on a line that uses the name, such as `prinfer src/box.ts:value:4` where line 4 reads `box.value.toUpperCase()`, gives the type there, narrowed by the code around it.
+
+Value options take `--opt value` or `--opt=value`. An unknown option, or one the command doesn't take, is an error. Single-quote any argument with a `$`: shells expand `$store`, and zsh reads `$F:r` in `"$F:root"` as a modifier.
+
 Failures print the error, `Did you mean: …?` candidates, and a suggestion on stderr, and exit 1.
+
+`prinfer annotations` exits 0 whatever it finds, and 1 only when the check itself fails.
 
 `prinfer check` exits 0 when the file has no type errors (warnings and suggestions don't count) and 1 when it has errors, so scripts and agents can branch on the exit code alone.
 
 ### JSON output
 
-`--json` prints the versioned contract on stdout and nothing on stderr. `hover`, `complete`, and `check` all support it:
+`--json` prints the versioned contract on stdout and nothing on stderr. Type lookups, `complete`, `check`, and `annotations` all support it, and it is never capped:
 
 ```bash
 $ prinfer src/utils.ts:names --json
@@ -398,12 +495,12 @@ Run `prinfer --help` or `prinfer setup --help` for the full option list.
 The library API is synchronous and uses the TypeScript 6 backend.
 
 ```typescript
-import { batchHover, completions, diagnostics, hover } from "prinfer";
+import { annotations, batchHover, completions, diagnostics, hover } from "prinfer";
 
 // By symbol name
 hover("./src/utils.ts", "format");
-// => { signature: "(value: number, digits?: number): string", returnType: "string",
-//      line: 2, column: 17, kind: "function", name: "format", documentation: undefined }
+// => { signature: "(value: number, digits?: number | undefined): string", returnType: "string",
+//      line: 2, column: 17, kind: "function", name: "format" }
 
 // By name with a line hint, for repeated names
 hover("./src/utils.ts", "names", { line: 11 });
@@ -423,17 +520,21 @@ const batch = batchHover("./src/utils.ts", [
 ]);
 // => { items: [...], successCount: 2, errorCount: 0 }
 
-// Completions at a cursor, ranked; prefix and limit are optional
+// Completions at a cursor, ranked; every entry unless you pass limit, unfiltered unless you pass prefix
 completions("./src/utils.ts", 14, 30).entries.map((entry) => entry.name);
 // => ["coffee", "tea"]
 completions("./src/utils.ts", 20, 1, { prefix: "use", limit: 20 });
-// => { entries: [...], total: 3, truncated: false, prefix: "use", ... }
+// => { entries: [{ name: "useConfig", ... }, ...], total: 4, truncated: false, prefix: "use", ... }
 
 // Type errors for one file
 const result = diagnostics("./src/utils.ts", { include_suggestions: false });
 // => { file: "/project/src/utils.ts", errorCount: 1, warningCount: 0,
 //      diagnostics: [{ line: 16, column: 14, endLine: 16, endColumn: 19, code: 2322,
 //                      category: "error", message: "Type 'string' is not assignable to type 'number'.", source: "ts" }] }
+
+// Redundant and widening annotations in one file
+annotations("./src/utils.ts").findings.map((finding) => `${finding.kind} ${finding.name}`);
+// => ["redundant format", "widening drink", "redundant label", "widening mode"]
 ```
 
 Unlike the MCP server, the library throws on failure (`batchHover` reports bad positions per item and throws only when the file can't be loaded). Pass a caught error to `contractError(error)` to get the contract shape.
@@ -451,7 +552,7 @@ bun install
 bun run ci    # typecheck, build, biome check, tests
 ```
 
-The repository type-checks with TypeScript 7 (`bun run typecheck`). The MCP server's default backend uses the TypeScript 7 native language server. `inferredCompletions` and the testing helpers' `backend: "typescript7"` mode use its unstable standalone async compiler API. The TypeScript 6 package backs the synchronous library API, the CLI's default backend, the testing helpers' default, MCP `completions`, the `typescript6` MCP backend, and declaration bundling.
+The repository type-checks with TypeScript 7 (`bun run typecheck`). The TypeScript 6 package also does declaration bundling. [Backends at a glance](#backends-at-a-glance) lists which surface uses which compiler.
 
 Releases go through changesets (`bun run changeset`). `bun run version` also copies the version into `server.json` and the Claude Code plugin manifest.
 

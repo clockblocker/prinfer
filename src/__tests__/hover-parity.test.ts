@@ -1,4 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { contractError } from "../contract.js";
@@ -250,6 +252,32 @@ describe("a line hint that misses lists where the name is declared", () => {
 		})();
 		expect(contractError(error).error.declaredAt).toBeUndefined();
 	});
+});
+
+test("alternatives and declaredAt read variable kinds on a fresh program", () => {
+	// The first lookup in a new program runs before the checker binds it.
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-kinds-"));
+	const file = path.join(dir, "kinds.ts");
+	fs.writeFileSync(
+		file,
+		"export function a() { const item = 1; return item; }\nexport function b() { let item = 2; return item; }\n",
+	);
+	expect(hover(file, "item").alternatives).toEqual([
+		{ line: 2, column: 27, kind: "let" },
+	]);
+
+	const fresh = path.join(dir, "fresh.ts");
+	fs.copyFileSync(file, fresh);
+	let declaredAt: unknown;
+	try {
+		hover(fresh, "item", { line: 9 });
+	} catch (error) {
+		declaredAt = contractError(error).error.declaredAt;
+	}
+	expect(declaredAt).toEqual([
+		{ line: 1, column: 29, kind: "const" },
+		{ line: 2, column: 27, kind: "let" },
+	]);
 });
 
 test("alternatives are capped and skip overloads of the picked symbol", () => {

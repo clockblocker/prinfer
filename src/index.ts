@@ -320,6 +320,9 @@ function hoverByNameImpl(
 		);
 	}
 
+	// Creating the checker binds the program, which sets the parent pointers
+	// the declaration kinds of alternatives and declaredAt are read from.
+	program.getTypeChecker();
 	const { node, alternatives } = lookupName(sourceFile, name, line, file);
 
 	const typeResolutionStarted = performance.now();
