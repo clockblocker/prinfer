@@ -183,7 +183,8 @@ export function parseFlags(
 			continue;
 		}
 		const value = eq >= 0 ? arg.slice(eq + 1) : args[++index];
-		if (value === undefined) {
+		// Only --prefix accepts an empty value ("" lists every entry).
+		if (value === undefined || (value === "" && name !== "--prefix")) {
 			fail(
 				name === "--prefix"
 					? '--prefix requires text (pass "" to list every entry).'

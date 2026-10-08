@@ -169,7 +169,7 @@ Generic calls show their instantiated types, the same as an editor hover. If the
 ```text
 Error [SYMBOL_NOT_FOUND]: Text "nope" not found on line 11 of /project/src/utils.ts
 Nearby identifiers: name, names, map, user, users
-Suggestion: Line 11 reads: "export const names = users.map((user) => user.name);". Copy text exactly from it, or pass column instead.
+Suggestion: Line 11 reads: "export const names = users.map((user) => user.name);". Copy text exactly from it, or give a column instead.
 ```
 
 ### batch_hover

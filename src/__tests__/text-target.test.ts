@@ -107,7 +107,7 @@ describe("resolveTextColumn", () => {
 			'Text "doubled" not found on line 1 of a.ts',
 		);
 		expect(error.suggestion).toBe(
-			'Line 1 reads: "const total = sum(items);". Copy text exactly from it, or pass column instead. "doubled" appears on line 2.',
+			'Line 1 reads: "const total = sum(items);". Copy text exactly from it, or give a column instead. "doubled" appears on line 2.',
 		);
 		const response = contractError(error);
 		expect(response.error.code).toBe("SYMBOL_NOT_FOUND");

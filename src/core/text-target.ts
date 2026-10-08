@@ -59,7 +59,7 @@ export function resolveTextColumn(
 	suggestion +=
 		matches.length > 0
 			? `, or use occurrence 1-${matches.length}.`
-			: ", or pass column instead.";
+			: ", or give a column instead.";
 	const otherLines = linesContaining(lines, text, line - 1);
 	if (otherLines.length > 0) {
 		suggestion += ` ${quoted} appears on line${otherLines.length > 1 ? "s" : ""} ${otherLines.join(", ")}.`;

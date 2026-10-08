@@ -84,6 +84,15 @@ describe("parseFlags", () => {
 	const parse = (args: string[]) =>
 		parseFlags(args, new Set(["json", "project"]), "annotations", fail);
 
+	test("rejects an empty --project", () => {
+		expect(() => parse(["a.ts", "--project", ""])).toThrow(
+			"--project requires a path argument.",
+		);
+		expect(() => parse(["a.ts", "--project="])).toThrow(
+			"--project requires a path argument.",
+		);
+	});
+
 	test("accepts --opt value and --opt=value", () => {
 		for (const args of [
 			["a.ts", "--project", "tsconfig.json"],
