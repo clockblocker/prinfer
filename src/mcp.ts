@@ -6,6 +6,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { nearbyCandidates } from "./candidates.js";
 import {
+	annotationsSuccess,
 	type BatchHoverSuccess,
 	batchHoverSuccess,
 	type ContractErrorResponse,
@@ -14,6 +15,7 @@ import {
 	hoverSuccess,
 	type McpTool,
 } from "./contract.js";
+import { formatAnnotations, getFileAnnotations } from "./core/annotations.js";
 import {
 	formatCompletions,
 	formatDiagnostics,
@@ -24,6 +26,7 @@ import { formatErrorText, reportError } from "./error-report.js";
 import { assertSourceFile, PrinferError } from "./errors.js";
 import { batchHover, diagnostics, hover } from "./index.js";
 import {
+	annotationsOutputSchema,
 	batchHoverOutputSchema,
 	compact,
 	completionsOutputSchema,
@@ -863,6 +866,38 @@ function createServer(): McpServer {
 				};
 			} catch (error) {
 				return errorResult(error, "diagnostics", { file, project });
+			}
+		},
+	);
+
+	server.registerTool(
+		"annotations",
+		{
+			description:
+				"List type annotations in one file that TypeScript would infer anyway. Use when reviewing or cleaning up TypeScript, before adding annotations, or when asked to cut redundant types. redundant: deleting it keeps the exact type. widening: the annotation is wider than the inferred type, often an intended API contract.",
+			inputSchema: compact(
+				z.object({
+					file: fileSchema,
+					project: z.string().optional().describe(PROJECT_DEFAULT),
+				}),
+			),
+			outputSchema: annotationsOutputSchema,
+		},
+		async ({ file, project }) => {
+			try {
+				assertSourceFile(file);
+				const result = getFileAnnotations(file, project);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: formatAnnotations(result, file),
+						},
+					],
+					structuredContent: annotationsSuccess(result),
+				};
+			} catch (error) {
+				return errorResult(error, "annotations", { file, project });
 			}
 		},
 	);

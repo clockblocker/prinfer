@@ -1,6 +1,7 @@
 import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import {
+	annotationsResultSchema,
 	batchHoverItemSchema,
 	batchHoverResultSchema,
 	CONTRACT_VERSION,
@@ -129,3 +130,4 @@ export const batchHoverOutputSchema = envelope(
 );
 export const completionsOutputSchema = envelope(completionResultSchema);
 export const diagnosticsOutputSchema = envelope(diagnosticsResultSchema);
+export const annotationsOutputSchema = envelope(annotationsResultSchema);

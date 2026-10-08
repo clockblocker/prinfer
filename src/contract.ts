@@ -71,6 +71,28 @@ export const diagnosticsResultSchema = z.object({
 	warningCount: z.number(),
 });
 
+export const annotationFindingSchema = z.object({
+	line: z.number(),
+	column: z.number(),
+	endLine: z.number(),
+	endColumn: z.number(),
+	name: z.string(),
+	target: z.enum(["variable", "parameter", "property", "return"]),
+	kind: z.enum(["redundant", "widening"]),
+	declared: z.string(),
+	inferred: z.string(),
+	exported: z.boolean(),
+	suggestion: z.string(),
+});
+
+export const annotationsResultSchema = z.object({
+	file: z.string(),
+	findings: z.array(annotationFindingSchema),
+	redundantCount: z.number(),
+	wideningCount: z.number(),
+	checkedCount: z.number(),
+});
+
 export const contractErrorCodeSchema = z.enum([
 	"INVALID_ARGUMENT",
 	"FILE_NOT_FOUND",
@@ -135,6 +157,12 @@ export const diagnosticsSuccessSchema = z.object({
 	result: diagnosticsResultSchema,
 });
 
+export const annotationsSuccessSchema = z.object({
+	version: z.literal(CONTRACT_VERSION),
+	ok: z.literal(true),
+	result: annotationsResultSchema,
+});
+
 export const contractErrorResponseSchema = z.object({
 	version: z.literal(CONTRACT_VERSION),
 	ok: z.literal(false),
@@ -147,6 +175,7 @@ export type HoverSuccess = z.infer<typeof hoverSuccessSchema>;
 export type BatchHoverSuccess = z.infer<typeof batchHoverSuccessSchema>;
 export type CompletionSuccess = z.infer<typeof completionSuccessSchema>;
 export type DiagnosticsSuccess = z.infer<typeof diagnosticsSuccessSchema>;
+export type AnnotationsSuccess = z.infer<typeof annotationsSuccessSchema>;
 
 export function hoverSuccess(result: unknown): HoverSuccess {
 	return hoverSuccessSchema.parse({
@@ -180,16 +209,30 @@ export function diagnosticsSuccess(result: unknown): DiagnosticsSuccess {
 	});
 }
 
+export function annotationsSuccess(result: unknown): AnnotationsSuccess {
+	return annotationsSuccessSchema.parse({
+		version: CONTRACT_VERSION,
+		ok: true,
+		result,
+	});
+}
+
 /** MCP tools that report contract errors. */
 export type McpTool =
 	| "hover_by_name"
 	| "hover"
 	| "batch_hover"
 	| "completions"
-	| "diagnostics";
+	| "diagnostics"
+	| "annotations";
 
 /** CLI modes that report contract errors. */
-export type CliCommand = "name" | "position" | "complete" | "check";
+export type CliCommand =
+	| "name"
+	| "position"
+	| "complete"
+	| "check"
+	| "annotations";
 
 /**
  * Where an error is reported, so the default recovery suggestion names
@@ -251,7 +294,9 @@ export function suggestionFor(
 
 function mcpSuggestion(code: ContractErrorCode, tool?: McpTool): string {
 	const retry =
-		tool === "completions" ? "" : ', or retry with backend "typescript6"';
+		tool === "completions" || tool === "annotations"
+			? ""
+			: ', or retry with backend "typescript6"';
 	switch (code) {
 		case "INVALID_ARGUMENT":
 			switch (tool) {
@@ -264,6 +309,7 @@ function mcpSuggestion(code: ContractErrorCode, tool?: McpTool): string {
 				case "completions":
 					return "Pass a positive 1-based line and column for the cursor, and a limit between 1 and 500.";
 				case "diagnostics":
+				case "annotations":
 					return "Pass the path of one TypeScript or JavaScript file.";
 				default:
 					return "Use positive 1-based line and column values, and exactly one of column or text.";
@@ -288,7 +334,7 @@ function mcpSuggestion(code: ContractErrorCode, tool?: McpTool): string {
 
 function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
 	const retry =
-		command === "complete"
+		command === "complete" || command === "annotations"
 			? ""
 			: ", or retry with the other --backend (typescript6 or typescript7)";
 	switch (code) {
@@ -296,6 +342,8 @@ function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
 			switch (command) {
 				case "check":
 					return "Usage: prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>].";
+				case "annotations":
+					return "Usage: prinfer annotations <file.ts> [--json] [--project <tsconfig.json>].";
 				case "complete":
 					return "Usage: prinfer complete <file.ts>:<line>:<column> [--prefix <text>] [--limit <n>] with a 1-based line and column.";
 				default:
