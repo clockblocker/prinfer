@@ -1,13 +1,14 @@
 import * as ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
 import type { HoverResult } from "../types.js";
-import { getNameNode, isArrowOrFnExpr } from "./node-match.js";
+import { getNameNode } from "./node-match.js";
 
 /**
  * Get the symbol kind as a string. Kinds follow the labels an editor hover
  * shows (and the TypeScript 7 backend reports): `const`, `let`, `var`,
  * `parameter`, `property`, `method`, and so on. A variable initialized with
- * a function is `function`.
+ * a function keeps its declaration keyword (`const`), as in the editor; a
+ * hover on the callee of a call is `call`. See HoverResult for the list.
  */
 export function getSymbolKind(node: ts.Node): string {
 	if (ts.isFunctionDeclaration(node)) return "function";
@@ -15,16 +16,8 @@ export function getSymbolKind(node: ts.Node): string {
 	if (ts.isFunctionExpression(node)) return "function";
 	if (ts.isMethodDeclaration(node)) return "method";
 	if (ts.isMethodSignature(node)) return "method";
-	if (ts.isVariableDeclaration(node)) {
-		const init = node.initializer;
-		if (
-			init &&
-			(ts.isArrowFunction(init) || ts.isFunctionExpression(init))
-		) {
-			return "function";
-		}
-		return variableKind(node);
-	}
+	if (ts.isConstructorDeclaration(node)) return "constructor";
+	if (ts.isVariableDeclaration(node)) return variableKind(node);
 	if (ts.isParameter(node)) return "parameter";
 	if (ts.isPropertyDeclaration(node)) return "property";
 	if (ts.isPropertySignature(node)) return "property";
@@ -223,85 +216,100 @@ function getHoverInfoImpl(
 	const documentation = includeDocs
 		? getDocumentation(checker, symbol)
 		: undefined;
+	const base = {
+		line: line + 1,
+		column: character + 1,
+		documentation,
+		kind,
+		name,
+	};
+	const signatureText = (signature: ts.Signature, extra = 0) =>
+		checker.signatureToString(signature, undefined, flags | extra);
+	const typeText = (type: ts.Type, extra = 0) =>
+		checker.typeToString(type, undefined, flags | extra);
 
-	// Match TypeScript's hover for an alias declaration while disabling the
-	// truncation that makes editor hovers unsuitable for type inspection.
+	// Match TypeScript's hover for an alias declaration, with its type
+	// parameters, while disabling the truncation that makes editor hovers
+	// unsuitable for type inspection.
 	if (ts.isTypeAliasDeclaration(node)) {
 		const type = checker.getTypeAtLocation(node.name);
-		const expanded = checker.typeToString(
-			type,
-			undefined,
-			flags | ts.TypeFormatFlags.InTypeAlias,
+		const expanded = typeText(type, ts.TypeFormatFlags.InTypeAlias);
+		return withExtras(
+			{
+				signature: `type ${node.name.text}${typeParameterList(checker, node, flags)} = ${expanded}`,
+				...base,
+			},
+			{ unionMembers: countUnionMembers(checker, type) },
 		);
+	}
+
+	// Interfaces and classes: the name with its type parameters, including
+	// constraints and defaults, which the type's own text leaves out.
+	if (
+		(ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node)) &&
+		node.name &&
+		node.typeParameters?.length
+	) {
 		return {
-			signature: `type ${node.name.text} = ${expanded}`,
-			line: line + 1,
-			column: character + 1,
-			documentation,
-			kind,
-			name,
+			signature: `${node.name.text}${typeParameterList(checker, node, flags)}`,
+			...base,
 		};
 	}
 
-	// Handle call expressions - get instantiated signature
+	// Call expressions: the instantiated signature, with type arguments, as
+	// the editor shows it; overloads are the callee's declared signatures.
 	if (ts.isCallExpression(node)) {
 		const sig = checker.getResolvedSignature(node);
+		const callee = checker.getTypeAtLocation(node.expression);
+		const overloads = overloadTexts(checker, callee, flags);
 		if (sig) {
-			const signature = checker.signatureToString(sig, undefined, flags);
 			const ret = checker.getReturnTypeOfSignature(sig);
-			const returnType = checker.typeToString(ret, undefined, flags);
-			return {
-				signature,
-				returnType,
-				line: line + 1,
-				column: character + 1,
-				documentation,
-				kind,
-				name,
-			};
+			return withExtras(
+				{
+					signature: signatureText(
+						sig,
+						ts.TypeFormatFlags.WriteTypeArgumentsOfSignature,
+					),
+					returnType: typeText(ret),
+					...base,
+				},
+				{ overloads },
+			);
 		}
 		// Fallback: get type of the call result
 		const t = checker.getTypeAtLocation(node);
-		return {
-			signature: checker.typeToString(t, undefined, flags),
-			line: line + 1,
-			column: character + 1,
-			documentation,
-			kind,
-			name,
-		};
+		return withExtras(
+			{ signature: typeText(t), ...base },
+			{ overloads, unionMembers: countUnionMembers(checker, t) },
+		);
 	}
 
-	let sig: ts.Signature | undefined;
-
-	// Prefer getting the signature from a declaration/expression directly
-	if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) {
-		sig = checker.getSignatureFromDeclaration(node) ?? undefined;
-	} else if (ts.isVariableDeclaration(node)) {
-		const init = node.initializer;
-		if (isArrowOrFnExpr(init))
-			sig = checker.getSignatureFromDeclaration(init) ?? undefined;
-	} else if (ts.isPropertyAssignment(node)) {
-		const init = node.initializer;
-		if (isArrowOrFnExpr(init))
-			sig = checker.getSignatureFromDeclaration(init) ?? undefined;
-	} else if (ts.isMethodSignature(node)) {
-		sig = checker.getSignatureFromDeclaration(node) ?? undefined;
-	}
-
-	if (sig) {
-		const signature = checker.signatureToString(sig, undefined, flags);
-		const ret = checker.getReturnTypeOfSignature(sig);
-		const returnType = checker.typeToString(ret, undefined, flags);
-		return {
-			signature,
-			returnType,
-			line: line + 1,
-			column: character + 1,
-			documentation,
-			kind,
-			name,
-		};
+	// Function and method declarations: their call signature. A variable or
+	// property initialized with a function is shown by its type, below.
+	if (
+		ts.isFunctionDeclaration(node) ||
+		ts.isMethodDeclaration(node) ||
+		ts.isMethodSignature(node)
+	) {
+		const sig = checker.getSignatureFromDeclaration(node);
+		if (sig) {
+			const ret = checker.getReturnTypeOfSignature(sig);
+			const ownType = symbol
+				? checker.getTypeOfSymbolAtLocation(symbol, node)
+				: undefined;
+			return withExtras(
+				{
+					signature: signatureText(sig),
+					returnType: typeText(ret),
+					...base,
+				},
+				{
+					overloads: ownType
+						? overloadTexts(checker, ownType, flags)
+						: undefined,
+				},
+			);
+		}
 	}
 
 	// Fallback: type at the node location
@@ -312,12 +320,107 @@ function getHoverInfoImpl(
 	}
 
 	const t = checker.getTypeAtLocation(targetNode);
-	return {
-		signature: checker.typeToString(t, undefined, flags),
-		line: line + 1,
-		column: character + 1,
-		documentation,
-		kind,
-		name,
-	};
+	const callSignatures = t.getCallSignatures();
+	// A function-typed value reports what its single call signature returns.
+	const single =
+		callSignatures.length === 1 && t.getProperties().length === 0
+			? callSignatures[0]
+			: undefined;
+	return withExtras(
+		{
+			signature: typeText(t),
+			...(single
+				? {
+						returnType: typeText(
+							checker.getReturnTypeOfSignature(single),
+						),
+					}
+				: {}),
+			...base,
+		},
+		{
+			overloads: overloadTexts(checker, t, flags),
+			unionMembers: countUnionMembers(checker, t),
+		},
+	);
+}
+
+function withExtras(
+	result: HoverResult,
+	extras: { overloads?: string[]; unionMembers?: number },
+): HoverResult {
+	if (extras.overloads) result.overloads = extras.overloads;
+	if (extras.unionMembers !== undefined)
+		result.unionMembers = extras.unionMembers;
+	return result;
+}
+
+/** Every call signature of `type`, when there is more than one. */
+function overloadTexts(
+	checker: ts.TypeChecker,
+	type: ts.Type,
+	flags: ts.TypeFormatFlags,
+): string[] | undefined {
+	const signatures = type.getCallSignatures();
+	if (signatures.length < 2) return undefined;
+	return signatures.map((signature) =>
+		checker.signatureToString(signature, undefined, flags),
+	);
+}
+
+/**
+ * `<R extends UnitRoute = UnitRoute>`: a declaration's type parameters with
+ * their modifiers, constraints, and defaults, or "" when it has none.
+ */
+function typeParameterList(
+	checker: ts.TypeChecker,
+	declaration: ts.DeclarationWithTypeParameterChildren,
+	flags: ts.TypeFormatFlags,
+): string {
+	const parameters = declaration.typeParameters;
+	if (!parameters?.length) return "";
+	const text = parameters.map((parameter) => {
+		const modifiers =
+			parameter.modifiers?.map((modifier) => modifier.getText()) ?? [];
+		let part = [...modifiers, parameter.name.text].join(" ");
+		if (parameter.constraint) {
+			part += ` extends ${checker.typeToString(checker.getTypeFromTypeNode(parameter.constraint), undefined, flags)}`;
+		}
+		if (parameter.default) {
+			part += ` = ${checker.typeToString(checker.getTypeFromTypeNode(parameter.default), undefined, flags)}`;
+		}
+		return part;
+	});
+	return `<${text.join(", ")}>`;
+}
+
+/**
+ * Members of a union type as TypeScript displays them: `true | false`
+ * counts once (as `boolean`), and a complete set of an enum's members
+ * counts once (as the enum). A union that displays as one member, such as
+ * `boolean` or an enum type, is not reported.
+ */
+export function countUnionMembers(
+	checker: ts.TypeChecker,
+	type: ts.Type,
+): number | undefined {
+	if (!type.isUnion() || type.flags & ts.TypeFlags.Boolean) return undefined;
+	let count = type.types.length;
+	const booleans = type.types.filter(
+		(member) => member.flags & ts.TypeFlags.BooleanLiteral,
+	);
+	if (booleans.length >= 2) count -= 1;
+	const enumMembers = new Map<ts.Symbol, number>();
+	for (const member of type.types) {
+		if (!(member.flags & ts.TypeFlags.EnumLiteral)) continue;
+		const parent = (member.symbol as { parent?: ts.Symbol } | undefined)
+			?.parent;
+		if (parent) enumMembers.set(parent, (enumMembers.get(parent) ?? 0) + 1);
+	}
+	for (const [enumSymbol, present] of enumMembers) {
+		const enumType = checker.getDeclaredTypeOfSymbol(enumSymbol);
+		const total = enumType.isUnion() ? enumType.types.length : 1;
+		if (present > 1 && present === total) count -= present - 1;
+	}
+	return count > 1 ? count : undefined;
 }

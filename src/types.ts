@@ -19,12 +19,49 @@ export interface HoverTiming {
 	resolution_ms: number;
 }
 
+/** Another declaration of a looked-up name, one that was not picked. */
+export interface HoverAlternative {
+	/** 1-based line of the declaration's name */
+	line: number;
+	/** 1-based column of the declaration's name */
+	column: number;
+	/** Declaration kind, in the same vocabulary as `HoverResult.kind` */
+	kind?: string;
+}
+
 /**
- * Result of hover lookup at a position
+ * Result of hover lookup at a position.
+ *
+ * `signature` means the same thing on every backend: the type text only,
+ * on one line with whitespace collapsed (`{ id: number; name: string; }`),
+ * without the declaration keyword, kind label, or symbol name an editor
+ * hover starts with.
+ * - functions, methods, and calls: the call signature, `<T>(value: T): T`
+ *   (a call shows the instantiated signature, with type arguments when the
+ *   callee is generic);
+ * - variables, parameters, properties: the type, `string[]` or
+ *   `(x: number) => string` for a function-typed variable;
+ * - type aliases: `type Name<T extends C = D> = Expanded`, keeping the
+ *   name and type parameters because the alias is the subject;
+ * - interfaces and classes: the name with its type parameters,
+ *   `Box<T extends string = "a">`.
+ *
+ * `kind` uses the labels of an editor hover: `function`, `method`, `const`,
+ * `let`, `var`, `using`, `await using`, `parameter`, `property`, `accessor`,
+ * `type`, `interface`, `class`, `enum`, `enum member`, `namespace`,
+ * `type parameter`, `constructor`, plus `call` for a hover on a callee of a
+ * call expression. A variable initialized with a function keeps its
+ * declaration keyword (`const`).
  */
 export interface HoverResult {
-	/** The type signature */
+	/** The type text; see the interface documentation for its exact shape */
 	signature: string;
+	/**
+	 * The hover text as an editor shows it (`const names: string[]`, object
+	 * types over several lines), when it differs from `signature`. Only the
+	 * TypeScript 7 language server backend reports it.
+	 */
+	display?: string;
 	/** The return type (for functions) */
 	returnType?: string;
 	/** 1-based line number */
@@ -39,6 +76,26 @@ export interface HoverResult {
 	name?: string;
 	/** Present when include_timing is true */
 	timing?: HoverTiming;
+	/**
+	 * Every call signature, in declaration order, when the hovered function,
+	 * method, or callee has more than one (overloads). Each entry has the
+	 * shape of a function `signature`.
+	 */
+	overloads?: string[];
+	/**
+	 * Number of members when the hovered type is a union, counted as
+	 * TypeScript displays them: `true | false` count once as `boolean`, and
+	 * all members of an enum count once as the enum. Omitted when that leaves
+	 * fewer than two members (`boolean`, an enum type).
+	 */
+	unionMembers?: number;
+	/**
+	 * Name lookups only: other declarations of the same name that were not
+	 * picked (at most 10), so a caller can tell the lookup was ambiguous and
+	 * pass `line` to choose. Overload and merged declarations of the picked
+	 * symbol are not listed.
+	 */
+	alternatives?: HoverAlternative[];
 }
 
 /**
@@ -81,6 +138,12 @@ export interface CompletionResult {
 	total: number;
 	/** True when `entries` holds fewer than `total` */
 	truncated: boolean;
+	/**
+	 * Why `entries` is empty although TypeScript would list globals: the
+	 * cursor is on an object literal key where any key is accepted (such as a
+	 * `Record<string, T>`), so there are no specific keys to offer.
+	 */
+	note?: string;
 }
 
 /**
@@ -115,6 +178,8 @@ export interface BatchHoverItem {
 		column?: number;
 		project?: string;
 		candidates?: string[];
+		/** Where the looked-up name is declared, when a line hint missed */
+		declaredAt?: HoverAlternative[];
 		suggestion?: string;
 	};
 }

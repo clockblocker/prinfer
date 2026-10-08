@@ -514,16 +514,17 @@ describe("CLI", () => {
 				).stdout,
 			),
 		);
-		expect(byName.result.signature).toBe(
-			"const multiply: (x: number, y: number) => number",
-		);
+		expect(byName.result).toMatchObject({
+			signature: "(x: number, y: number) => number",
+			display: "const multiply: (x: number, y: number) => number",
+		});
 
 		const { stdout, exitCode } = await runCli([
 			`${sampleFile}:4:17`,
 			"--backend",
 			"typescript7",
 		]);
-		expect(stdout).toContain("function add(a: number, b: number): number");
+		expect(stdout).toContain("(a: number, b: number): number");
 		expect(exitCode).toBe(0);
 	});
 

@@ -582,8 +582,10 @@ describe("MCP server over stdio", () => {
 		]) {
 			expect(listed).not.toContain(noise);
 		}
-		// tools/list was ~15K characters before the schemas were compacted.
-		expect(listed.length).toBeLessThan(12_500);
+		// tools/list was ~15K characters before the schemas were compacted;
+		// the hover fields display, overloads, unionMembers, and
+		// alternatives added ~300.
+		expect(listed.length).toBeLessThan(13_000);
 
 		const outputSchema = (name: string) => {
 			const tool = tools.find((candidate) => candidate.name === name);

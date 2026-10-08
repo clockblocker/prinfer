@@ -12,8 +12,16 @@ export const hoverPositionSchema = z.object({
 	column: z.number(),
 });
 
+/** A declaration of a looked-up name: where it is and what kind it is. */
+export const declarationLocationSchema = z.object({
+	line: z.number(),
+	column: z.number(),
+	kind: z.string().optional(),
+});
+
 export const hoverResultSchema = z.object({
 	signature: z.string(),
+	display: z.string().optional(),
 	returnType: z.string().optional(),
 	line: z.number(),
 	column: z.number(),
@@ -23,6 +31,9 @@ export const hoverResultSchema = z.object({
 	timing: hoverTimingSchema.optional(),
 	/** The queried position, after resolving a text target to a column. */
 	position: hoverPositionSchema.optional(),
+	overloads: z.array(z.string()).optional(),
+	unionMembers: z.number().optional(),
+	alternatives: z.array(declarationLocationSchema).optional(),
 });
 
 export const completionResultSchema = z.object({
@@ -44,6 +55,7 @@ export const completionResultSchema = z.object({
 	),
 	total: z.number(),
 	truncated: z.boolean(),
+	note: z.string().optional(),
 });
 
 export const diagnosticCategorySchema = z.enum([
@@ -87,6 +99,8 @@ export const contractErrorSchema = z.object({
 	column: z.number().optional(),
 	project: z.string().optional(),
 	candidates: z.array(z.string()).optional(),
+	/** Where the looked-up name is declared, when a name lookup's line missed. */
+	declaredAt: z.array(declarationLocationSchema).optional(),
 	suggestion: z.string().optional(),
 });
 
@@ -206,6 +220,7 @@ export interface ContractErrorContext {
 	column?: number;
 	project?: string;
 	candidates?: string[];
+	declaredAt?: z.infer<typeof declarationLocationSchema>[];
 	suggestion?: string;
 	surface?: ErrorSurface;
 }
@@ -231,12 +246,23 @@ export function contractError(
 			column: context.column ?? internal?.column,
 			project: context.project,
 			candidates: context.candidates,
+			declaredAt: context.declaredAt ?? declaredAtOf(source),
 			suggestion:
 				context.suggestion ??
 				prinfer?.suggestion ??
 				suggestionFor(code, context.surface),
 		},
 	});
+}
+
+/** Declarations a failed name lookup attached to its error, if any. */
+function declaredAtOf(
+	error: Error,
+): z.infer<typeof declarationLocationSchema>[] | undefined {
+	const declaredAt = (error as { declaredAt?: unknown }).declaredAt;
+	return Array.isArray(declaredAt) && declaredAt.length > 0
+		? (declaredAt as z.infer<typeof declarationLocationSchema>[])
+		: undefined;
 }
 
 /** The default recovery suggestion for an error code on a given surface. */

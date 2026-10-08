@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import type * as ts from "typescript";
+import * as ts from "typescript";
 import type { CompletionEntry, CompletionResult } from "../types.js";
 import { assertCursorPosition } from "./lines.js";
+import { findSmallestNodeAtPosition } from "./node-find.js";
 import { createProgramLanguageService, loadProgram } from "./program.js";
 
 export interface CompletionRefinement {
@@ -57,6 +58,20 @@ export function getCompletions(
 			includeCompletionsForModuleExports: true,
 			includeCompletionsWithInsertText: true,
 		});
+		if (info && isOpenObjectKey(sourceFile, position, info)) {
+			return {
+				file: entryFileAbs,
+				line,
+				column,
+				isGlobalCompletion: info.isGlobalCompletion,
+				isMemberCompletion: info.isMemberCompletion,
+				isNewIdentifierLocation: info.isNewIdentifierLocation,
+				entries: [],
+				total: 0,
+				truncated: false,
+				note: OPEN_OBJECT_KEY_NOTE,
+			};
+		}
 		const prefix =
 			refinement.prefix ??
 			(refinement.autoPrefix
@@ -86,6 +101,35 @@ export function getCompletions(
 	} finally {
 		service.dispose();
 	}
+}
+
+export const OPEN_OBJECT_KEY_NOTE =
+	"Any key is accepted here; TypeScript knows no specific keys for this object literal.";
+
+const IDENTIFIER_PART = /[\p{ID_Continue}$\u200C\u200D]/u;
+
+/**
+ * The cursor is on a key of an object literal whose contextual type names
+ * no keys (a `Record<string, T>`, an index signature, or no contextual type
+ * at all). TypeScript then offers every global, because a shorthand
+ * property `{ name }` could reference one; prinfer reports no entries and a
+ * note instead of thousands of unrelated names.
+ */
+function isOpenObjectKey(
+	sourceFile: ts.SourceFile,
+	position: number,
+	info: ts.CompletionInfo,
+): boolean {
+	if (!info.isNewIdentifierLocation || info.isMemberCompletion) return false;
+	const text = sourceFile.text;
+	let start = position;
+	while (start > 0 && IDENTIFIER_PART.test(text[start - 1] ?? "")) start--;
+	let before = start - 1;
+	while (before >= 0 && /\s/.test(text[before] ?? "")) before--;
+	const punctuation = text[before];
+	if (punctuation !== "{" && punctuation !== ",") return false;
+	const container = findSmallestNodeAtPosition(sourceFile, before);
+	return container !== undefined && ts.isObjectLiteralExpression(container);
 }
 
 function toEntry(entry: ts.CompletionEntry): CompletionEntry {
@@ -161,6 +205,7 @@ export function formatCompletions(
 		? ` matching prefix ${JSON.stringify(result.prefix)}`
 		: "";
 	if (result.entries.length === 0) {
+		if (result.note) return `No completion entries. ${result.note}`;
 		return result.prefix
 			? `No completion entries${filter}. Pass ${options.prefix} "" to list every entry.`
 			: "No completion entries.";
