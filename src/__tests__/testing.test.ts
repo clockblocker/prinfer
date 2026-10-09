@@ -162,6 +162,42 @@ describe("other modules", () => {
 	});
 });
 
+describe("explicit project", () => {
+	// tsconfig.json is strict with the ES2022 lib; tsconfig.custom.json is
+	// neither, and nothing references it.
+	const main = new URL("./fixtures/custom-project/main.ts", import.meta.url);
+	const project = path.join(
+		import.meta.dir,
+		"fixtures",
+		"custom-project",
+		"tsconfig.custom.json",
+	);
+
+	test("inferredType reads the given tsconfig on both backends", async () => {
+		const box = { name: "box" } as const;
+		expect(inferredType(main, box)).toBe("{ value: null; }");
+		expect(
+			await inferredType(main, { ...box, backend: "typescript7" }),
+		).toBe("{ value: null; }");
+		expect(inferredType(main, { ...box, project })).toBe("{ value: any; }");
+		expect(
+			await inferredType(main, {
+				...box,
+				project,
+				backend: "typescript7",
+			}),
+		).toBe("{ value: any; }");
+	});
+
+	test("inferredCompletions uses the given tsconfig's lib", async () => {
+		const members = { line: 10, text: "numbers." };
+		expect(await inferredCompletions(main, members)).toContain("includes");
+		const custom = await inferredCompletions(main, { ...members, project });
+		expect(custom).toContain("indexOf");
+		expect(custom).not.toContain("includes");
+	});
+});
+
 describe("setup errors", () => {
 	test("an unknown name lists the closest declarations", async () => {
 		const sync = thrown(() => inferredType(targets, { name: "lattes" }));

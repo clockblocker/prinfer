@@ -27,6 +27,8 @@ import {
 import {
 	API,
 	type Checker,
+	type Diagnostic as NativeDiagnostic,
+	DiagnosticCategory as NativeDiagnosticCategory,
 	NodeBuilderFlags,
 	type Project,
 	type Signature,
@@ -40,13 +42,19 @@ import {
 } from "@typescript/native/unstable/async";
 import * as ts from "typescript";
 import { getNodeName, getSymbolKind } from "./core/hover.js";
-import { stripBom } from "./core/lines.js";
+import { lineStarts, positionAt, stripBom } from "./core/lines.js";
 import { lookupName } from "./core/name-lookup.js";
 import { findNodeAtPosition as findSyntaxNode } from "./core/node-find.js";
 import { getNameNode } from "./core/node-match.js";
 import { singleLine } from "./core/signature-text.js";
 import { PrinferError } from "./errors.js";
-import type { CompletionOptions, HoverOptions, HoverResult } from "./types.js";
+import type {
+	CompletionOptions,
+	DiagnosticCategory as DiagnosticCategoryName,
+	FileDiagnostic,
+	HoverOptions,
+	HoverResult,
+} from "./types.js";
 
 const sessions = new Map<string, NativeApiSession>();
 
@@ -309,39 +317,122 @@ export async function nativeApiTypeInfo(
 	const position = sourcePosition(entryFileAbs, text, line, column);
 	return getSession(entryFileAbs, options?.project).run(
 		entryFileAbs,
-		async (project, sourceFile) => {
-			const resolutionStarted = performance.now();
-			const type = await project.checker.getTypeAtPosition(
-				entryFileAbs,
-				position,
-			);
-			if (!type) {
-				throw new PrinferError(
-					"SYMBOL_NOT_FOUND",
-					`No symbol found at ${entryFileAbs}:${line}:${column}`,
-				);
-			}
-			const result = await typeInfo(
+		(project, sourceFile) =>
+			nativeTypeInfoAt(
 				project,
-				type,
-				{
-					file: entryFileAbs,
-					sourceFile,
-					syntax: parseSyntax(entryFileAbs, text),
-					position,
-				},
-				{ ...options, line, column },
-			);
-			if (options?.include_timing) {
-				result.timing = {
-					resolution_ms: roundMs(
-						performance.now() - resolutionStarted,
-					),
-				};
-			}
-			return result;
-		},
+				sourceFile,
+				{ file: entryFileAbs, text, line, column, position },
+				options,
+			),
 	);
+}
+
+/** A validated cursor in a file a TypeScript 7 project has loaded. */
+export interface NativeCursor {
+	file: string;
+	/** The file's text as the project sees it */
+	text: string;
+	/** 1-based line */
+	line: number;
+	/** 1-based column */
+	column: number;
+	/** UTF-16 offset of line and column in `text` */
+	position: number;
+}
+
+/**
+ * Type information at a cursor, read from a loaded TypeScript 7 project with
+ * the same rules as the TypeScript 6 backend. Shared by the testing helpers
+ * and by language-server requests for an explicit project.
+ */
+export async function nativeTypeInfoAt(
+	project: Project,
+	sourceFile: SourceFile,
+	cursor: NativeCursor,
+	options?: HoverOptions,
+): Promise<HoverResult> {
+	const { file, text, line, column, position } = cursor;
+	const resolutionStarted = performance.now();
+	const type = await project.checker.getTypeAtPosition(file, position);
+	if (!type) {
+		throw new PrinferError(
+			"SYMBOL_NOT_FOUND",
+			`No symbol found at ${file}:${line}:${column}`,
+		);
+	}
+	const result = await typeInfo(
+		project,
+		type,
+		{ file, sourceFile, syntax: parseSyntax(file, text), position },
+		{ ...options, line, column },
+	);
+	if (options?.include_timing) {
+		result.timing = {
+			resolution_ms: roundMs(performance.now() - resolutionStarted),
+		};
+	}
+	return result;
+}
+
+/**
+ * One file's diagnostics from a loaded TypeScript 7 project: the syntactic,
+ * semantic and (when the project emits declarations) declaration
+ * diagnostics the language server reports, plus suggestions on request.
+ * `text` is the file as the project sees it, for line and column numbers.
+ */
+export async function nativeFileDiagnostics(
+	project: Project,
+	file: string,
+	text: string,
+	includeSuggestions: boolean,
+): Promise<FileDiagnostic[]> {
+	const { program, compilerOptions } = project;
+	const groups = await Promise.all([
+		program.getSyntacticDiagnostics(file),
+		program.getSemanticDiagnostics(file),
+		includeSuggestions ? program.getSuggestionDiagnostics(file) : [],
+		compilerOptions.declaration || compilerOptions.composite
+			? program.getDeclarationDiagnostics(file)
+			: [],
+	]);
+	const starts = lineStarts(text);
+	return groups.flat().map((diagnostic) => {
+		const start = positionAt(starts, diagnostic.pos);
+		const end = positionAt(starts, diagnostic.end);
+		return {
+			line: start.line + 1,
+			column: start.character + 1,
+			endLine: end.line + 1,
+			endColumn: end.character + 1,
+			code: diagnostic.code,
+			category: diagnosticCategory(diagnostic.category),
+			message: flattenMessage(diagnostic),
+			source: "ts",
+		};
+	});
+}
+
+/** A message and its chain, nested as ts.flattenDiagnosticMessageText does. */
+function flattenMessage(diagnostic: NativeDiagnostic, depth = 0): string {
+	const indent = depth > 0 ? `\n${"  ".repeat(depth)}` : "";
+	return `${indent}${diagnostic.text}${(diagnostic.messageChain ?? [])
+		.map((next) => flattenMessage(next, depth + 1))
+		.join("")}`;
+}
+
+function diagnosticCategory(
+	category: NativeDiagnosticCategory,
+): DiagnosticCategoryName {
+	switch (category) {
+		case NativeDiagnosticCategory.Error:
+			return "error";
+		case NativeDiagnosticCategory.Warning:
+			return "warning";
+		case NativeDiagnosticCategory.Suggestion:
+			return "suggestion";
+		default:
+			return "message";
+	}
 }
 
 /**

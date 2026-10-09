@@ -60,7 +60,8 @@ function offsetAt(starts: number[], position: LineCharacter): number {
 	return start + position.character;
 }
 
-function positionAt(starts: number[], offset: number): LineCharacter {
+/** The 0-based line and character of a UTF-16 offset, given lineStarts. */
+export function positionAt(starts: number[], offset: number): LineCharacter {
 	let low = 0;
 	let high = starts.length - 1;
 	while (low < high) {

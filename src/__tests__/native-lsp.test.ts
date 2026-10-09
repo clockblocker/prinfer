@@ -10,6 +10,7 @@ import {
 	nativeHover,
 	nativeHoverByName,
 } from "../native-lsp.js";
+import type { FileDiagnostic } from "../types.js";
 
 const fixture = path.join(import.meta.dir, "fixtures", "sample.ts");
 const jsdocFixture = path.join(import.meta.dir, "fixtures", "with-jsdoc.ts");
@@ -80,16 +81,82 @@ describe("TypeScript 7 project selection", () => {
 		);
 	}
 
-	test("rejects a tsconfig the language server would not use", async () => {
+	// tsconfig.json is strict with the ES2022 lib; tsconfig.custom.json is
+	// neither, and nothing references it.
+	const customDir = path.join(import.meta.dir, "fixtures", "custom-project");
+	const customMain = path.join(customDir, "main.ts");
+	const custom = path.join(customDir, "tsconfig.custom.json");
+
+	test("hovers in a tsconfig the language server would not pick", async () => {
+		const nearest = await nativeHover(customMain, 3, 14);
+		expect(nearest.signature).toBe("{ value: null; }");
+
+		const result = await nativeHover(customMain, 3, 14, {
+			project: custom,
+		});
+		expect(result.signature).toBe("{ value: any; }");
+		expect(result).toMatchObject({ name: "box", kind: "const" });
+		expect(result.signature).toBe(
+			hover(customMain, 3, 14, { project: custom }).signature,
+		);
+		const byName = await nativeHoverByName(customMain, "box", {
+			project: custom,
+		});
+		expect(byName.signature).toBe("{ value: any; }");
+
+		// The language server's own project for the file is unchanged.
+		const after = await nativeHover(customMain, 3, 14);
+		expect(after.signature).toBe("{ value: null; }");
+		expect(after.display).toBe(nearest.display);
+	}, 30_000);
+
+	test("checks a file in a tsconfig the language server would not pick", async () => {
+		const codes = (result: { diagnostics: FileDiagnostic[] }) =>
+			result.diagnostics.map(({ line, code }) => [line, code]);
+		// Strict: the untyped parameter is an implicit any.
+		expect(codes(await nativeDiagnostics(customMain))).toEqual([[5, 7006]]);
+		// ES5 lib: Array#includes doesn't exist.
+		const result = await nativeDiagnostics(customMain, { project: custom });
+		expect(codes(result)).toEqual([[10, 2550]]);
+		expect(result).toEqual(diagnostics(customMain, { project: custom }));
+		expect(codes(await nativeDiagnostics(customMain))).toEqual([[5, 7006]]);
+	}, 30_000);
+
+	test("sees edits in a tsconfig the language server would not pick", async () => {
 		const dir = setup({
 			"tsconfig.json": { compilerOptions, include: ["src"] },
-			"tsconfig.build.json": {
+			"tsconfig.loose.json": {
 				compilerOptions: { ...compilerOptions, strict: false },
 				include: ["src"],
 			},
 		});
 		const main = path.join(dir, "src", "main.ts");
-		const project = path.join(dir, "tsconfig.build.json");
+		const project = path.join(dir, "tsconfig.loose.json");
+		fs.writeFileSync(main, "export const box = { value: null };\n");
+		expect((await nativeHover(main, 1, 14, { project })).signature).toBe(
+			"{ value: any; }",
+		);
+		fs.writeFileSync(
+			main,
+			"export const box = { value: null, label: 'x' };\nconst n: number = 'x';\n",
+		);
+		expect((await nativeHover(main, 1, 14, { project })).signature).toBe(
+			"{ value: any; label: string; }",
+		);
+		const result = await nativeDiagnostics(main, { project });
+		expect(
+			result.diagnostics.map(({ line, code }) => [line, code]),
+		).toEqual([[2, 2322]]);
+	}, 30_000);
+
+	test("rejects a tsconfig that doesn't include the file", async () => {
+		const dir = setup({
+			"tsconfig.json": { compilerOptions, include: ["src"] },
+			"tsconfig.other.json": { compilerOptions, files: ["other.ts"] },
+		});
+		fs.writeFileSync(path.join(dir, "other.ts"), "export {};\n");
+		const main = path.join(dir, "src", "main.ts");
+		const project = path.join(dir, "tsconfig.other.json");
 		for (const run of [
 			() => nativeHover(main, 1, 14, { project }),
 			() => nativeHoverByName(main, "value", { project }),
@@ -97,10 +164,10 @@ describe("TypeScript 7 project selection", () => {
 		]) {
 			const error = await failure(run);
 			expect(error.code).toBe("INVALID_ARGUMENT");
-			expect(error.message).toContain(path.join(dir, "tsconfig.json"));
+			expect(error.message).toContain("doesn't include that file");
 			expect(error.suggestion).toContain("typescript6 backend");
 		}
-		// The TypeScript 6 backend honors the same project.
+		// The TypeScript 6 backend adds the file to the project.
 		expect(hover(main, 1, 14, { project }).name).toBe("value");
 		expect(diagnostics(main, { project }).errorCount).toBe(0);
 	}, 30_000);

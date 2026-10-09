@@ -3,9 +3,11 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { SourceFile } from "@typescript/native/unstable/ast";
 import {
 	API,
 	NodeBuilderFlags,
+	type Project,
 	SignatureKind,
 	type Snapshot,
 	TypeFlags,
@@ -30,7 +32,12 @@ import {
 	type WorkspaceScanStats,
 } from "./core/workspace-files.js";
 import { PrinferError } from "./errors.js";
-import { countNativeUnionMembers, nativeSignatureText } from "./native-api.js";
+import {
+	countNativeUnionMembers,
+	nativeFileDiagnostics,
+	nativeSignatureText,
+	nativeTypeInfoAt,
+} from "./native-api.js";
 import type {
 	DiagnosticCategory,
 	DiagnosticsOptions,
@@ -184,7 +191,6 @@ class NativeLspClient {
 	async hover(
 		file: string,
 		position: HoverPosition,
-		project?: string,
 		full = false,
 	): Promise<{
 		result: LspHover | null;
@@ -202,7 +208,6 @@ class NativeLspClient {
 			position.column,
 			file,
 		);
-		if (project) await this.assertProject(uri, file, project);
 		await this.acquireHoverLength(full);
 		try {
 			const resolutionStarted = performance.now();
@@ -333,29 +338,66 @@ class NativeLspClient {
 		return API.fromLSPConnection({ pipe: session.pipe });
 	}
 
+	/**
+	 * Hover in an explicit project. When the language server itself loads
+	 * `project` for the file, this returns undefined and the caller hovers
+	 * through the language server as usual. Any other tsconfig is opened
+	 * through the API session in this server, which shares its open
+	 * documents, and read from the checker the way the testing helpers do.
+	 */
+	async projectHover(
+		file: string,
+		position: HoverPosition,
+		project: string,
+		options?: HoverOptions,
+	): Promise<HoverResult | undefined> {
+		await this.ready;
+		const uri = pathToFileURL(file).href;
+		this.reportChanges(this.workspace.checkImports(file));
+		const { text } = this.openOrUpdate(uri, file);
+		assertCursorPosition(text, position.line, position.column, file);
+		if (await this.picksProject(uri, project)) return undefined;
+		const cursor = {
+			file,
+			text,
+			...position,
+			position: offsetOf(text, position),
+		};
+		return this.inProject(file, project, (loaded, sourceFile) =>
+			nativeTypeInfoAt(loaded, sourceFile, cursor, options),
+		);
+	}
+
+	/**
+	 * Diagnostics for one file, from the language server, or from the
+	 * project API for a tsconfig it would not pick (see projectHover).
+	 */
 	async diagnostics(
 		file: string,
-		project?: string,
-	): Promise<{ items: LspDiagnostic[]; text: string }> {
+		project: string | undefined,
+		includeSuggestions: boolean,
+	): Promise<FileDiagnostic[]> {
 		await this.ready;
+		const uri = pathToFileURL(file).href;
+		this.reportChanges(this.workspace.scanWorkspace(file));
+		const { text } = this.openOrUpdate(uri, file);
+		if (project && !(await this.picksProject(uri, project))) {
+			return this.inProject(file, project, (loaded) =>
+				nativeFileDiagnostics(loaded, file, text, includeSuggestions),
+			);
+		}
 		if (!this.supportsPullDiagnostics) {
 			throw new Error(
 				"TypeScript 7 language server does not support pull diagnostics",
 			);
 		}
-		const uri = pathToFileURL(file).href;
-		this.reportChanges(this.workspace.scanWorkspace(file));
-		const document = this.openOrUpdate(uri, file);
-		if (project) await this.assertProject(uri, file, project);
 		const report = (await this.request("textDocument/diagnostic", {
 			textDocument: { uri },
 		})) as LspDocumentDiagnosticReport | null;
 		// No previousResultId is sent, so the server must answer with a full
 		// report; treat anything else as an empty result.
-		return {
-			items: report?.kind === "full" ? (report.items ?? []) : [],
-			text: document.text,
-		};
+		const items = report?.kind === "full" ? (report.items ?? []) : [];
+		return items.map((item) => toFileDiagnostic(item, text));
 	}
 
 	get workspaceStats(): WorkspaceScanStats {
@@ -373,25 +415,82 @@ class NativeLspClient {
 	}
 
 	/**
-	 * The TypeScript 7 language server picks each file's tsconfig itself (the
-	 * nearest tsconfig.json, or a project that one references) and has no
-	 * option to override it. Fail rather than answer from another config.
+	 * Whether the language server loads `project` for the file itself: the
+	 * nearest tsconfig.json, or a project that one references. It has no
+	 * option to load another one for its own requests.
+	 *
+	 * The request also orders the document changes sent before it ahead of
+	 * any API snapshot taken after it.
 	 */
-	private async assertProject(
-		uri: string,
-		file: string,
-		project: string,
-	): Promise<void> {
+	private async picksProject(uri: string, project: string): Promise<boolean> {
 		const info = (await this.request("custom/projectInfo", {
 			textDocument: { uri },
 		})) as { configFilePath?: string } | null;
 		const actual = info?.configFilePath || undefined;
-		if (actual && samePath(actual, project)) return;
-		throw new PrinferError(
-			"INVALID_ARGUMENT",
-			`The TypeScript 7 backend can't use project ${project} for ${file}: its language server loads ${actual ?? "no tsconfig (an inferred project)"} for that file`,
-			`TypeScript 7 always uses the tsconfig.json nearest the file, or a project that tsconfig references. Use the typescript6 backend for ${path.basename(project)}, or omit project.`,
+		return actual !== undefined && samePath(actual, project);
+	}
+
+	/**
+	 * Run an operation on `project` loaded through this server's API session
+	 * (`openProjects` keeps it loaded, next to the language server's own
+	 * projects, until the session closes). The file must be part of the
+	 * project's program: unlike the TypeScript 6 backend, TypeScript 7 can't
+	 * add a file to a tsconfig that doesn't include it.
+	 */
+	private inProject<T>(
+		file: string,
+		project: string,
+		operation: (loaded: Project, sourceFile: SourceFile) => Promise<T>,
+	): Promise<T> {
+		const run = this.apiTail.then(() =>
+			this.inProjectNow(file, project, operation),
 		);
+		this.apiTail = run.catch(() => undefined);
+		return run;
+	}
+
+	private async inProjectNow<T>(
+		file: string,
+		project: string,
+		operation: (loaded: Project, sourceFile: SourceFile) => Promise<T>,
+	): Promise<T> {
+		let snapshot: Snapshot;
+		try {
+			this.api ??= this.openApi();
+			const api = await this.api.catch((error: unknown) => {
+				// Let the next request try to open a session again.
+				this.api = undefined;
+				throw error;
+			});
+			snapshot = await api.updateSnapshot({ openProjects: [project] });
+		} catch (error) {
+			throw new PrinferError(
+				"TYPESCRIPT_ERROR",
+				`TypeScript 7 could not open project ${project}: ${error instanceof Error ? error.message : String(error)}`,
+				"Check that the tsconfig is valid, or use the typescript6 backend.",
+			);
+		}
+		try {
+			const loaded = snapshot.getProject(project);
+			if (!loaded) {
+				throw new PrinferError(
+					"TYPESCRIPT_ERROR",
+					`TypeScript 7 could not load project ${project}`,
+					"Check that the tsconfig is valid, or use the typescript6 backend.",
+				);
+			}
+			const sourceFile = await loaded.program.getSourceFile(file);
+			if (!sourceFile) {
+				throw new PrinferError(
+					"INVALID_ARGUMENT",
+					`The TypeScript 7 backend can't use project ${project} for ${file}: the project doesn't include that file`,
+					`Add the file to ${path.basename(project)}'s include or files, use the typescript6 backend (which adds the file to the project), or omit project.`,
+				);
+			}
+			return await operation(loaded, sourceFile);
+		} finally {
+			await snapshot.dispose().catch(() => undefined);
+		}
 	}
 
 	private reportChanges(changes: FileChange[]): void {
@@ -537,6 +636,15 @@ export async function nativeHover(
 		throw new Error(`File not found: ${entryFileAbs}`);
 	const { root, config } = resolveProject(entryFileAbs, options?.project);
 	const client = getNativeClient(root);
+	if (config) {
+		const inProject = await client.projectHover(
+			entryFileAbs,
+			{ line, column },
+			config,
+			options,
+		);
+		if (inProject) return inProject;
+	}
 	const {
 		result: hover,
 		text,
@@ -545,7 +653,6 @@ export async function nativeHover(
 	} = await client.hover(
 		entryFileAbs,
 		{ line, column },
-		config,
 		options?.full ?? false,
 	);
 	if (!hover)
@@ -624,12 +731,12 @@ export async function nativeDiagnostics(
 	if (!fs.existsSync(entryFileAbs))
 		throw new Error(`File not found: ${entryFileAbs}`);
 	const { root, config } = resolveProject(entryFileAbs, options?.project);
+	const includeSuggestions = options?.include_suggestions ?? false;
 	const client = getNativeClient(root);
-	const { items, text } = await client.diagnostics(entryFileAbs, config);
 	return summarizeDiagnostics(
 		entryFileAbs,
-		items.map((item) => toFileDiagnostic(item, text)),
-		options?.include_suggestions ?? false,
+		await client.diagnostics(entryFileAbs, config, includeSuggestions),
+		includeSuggestions,
 	);
 }
 
@@ -665,7 +772,8 @@ function getNativeClient(root: string): NativeLspClient {
 
 /**
  * Sessions are keyed by directory: the language server chooses each file's
- * tsconfig itself. An explicit project is checked against that choice.
+ * tsconfig itself. An explicit project it would not choose is opened next to
+ * its own projects, in the session for the project's directory.
  */
 function resolveProject(
 	file: string,

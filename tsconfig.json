@@ -14,5 +14,10 @@
 		"types": ["bun-types"]
 	},
 	"include": ["src/**/*"],
-	"exclude": ["node_modules", "dist", "src/__tests__/fixtures/diagnostics"]
+	"exclude": [
+		"node_modules",
+		"dist",
+		"src/__tests__/fixtures/diagnostics",
+		"src/__tests__/fixtures/custom-project"
+	]
 }
