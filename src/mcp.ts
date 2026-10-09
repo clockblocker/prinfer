@@ -556,7 +556,7 @@ const MAX_COMPLETION_LIMIT = 500;
 const fileSchema = z
 	.string()
 	.describe("TS/JS file: absolute, or relative to the server's cwd");
-// typescript7 rejects a project its language server wouldn't use; the error
+// typescript7 rejects a project that doesn't include the file; the error
 // says to switch to typescript6, so the description stays short.
 const projectSchema = z
 	.string()

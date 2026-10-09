@@ -20,7 +20,7 @@ The compiler knows the type; look it up instead of guessing. When the inferred t
 
 An edit is done when `diagnostics` reports no errors for every file you changed.
 
-All tools accept `project`, a `tsconfig.json` path that defaults to the nearest one above the file. On `typescript7` only that tsconfig or a project it references works; for any other, also pass `backend: "typescript6"`.
+All tools accept `project`, a `tsconfig.json` path that defaults to the nearest one above the file. On `typescript7` that tsconfig must include the file; for one that doesn't, also pass `backend: "typescript6"`.
 
 ## Positions
 
