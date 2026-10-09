@@ -1,0 +1,58 @@
+name: Pages
+
+# Publishes README.md as the project homepage on GitHub Pages, so the
+# homepage never drifts from the README.
+on:
+  push:
+    branches: [master]
+    paths:
+      - README.md
+      - printfer-logo.webp
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          cp printfer-logo.webp site/
+          cat > site/_config.yml <<'EOF'
+          title: prinfer
+          description: TypeScript type inference for AI coding agents, via MCP, CLI, and API
+          theme: jekyll-theme-cayman
+          EOF
+          printf -- '---\nlayout: default\n---\n\n' > site/index.md
+          cat README.md >> site/index.md
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./site
+          destination: ./_site
+
+      - uses: actions/upload-pages-artifact@v5
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
