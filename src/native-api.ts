@@ -46,7 +46,12 @@ import { lineStarts, positionAt, stripBom } from "./core/lines.js";
 import { lookupName } from "./core/name-lookup.js";
 import { findNodeAtPosition as findSyntaxNode } from "./core/node-find.js";
 import { getNameNode } from "./core/node-match.js";
-import { singleLine } from "./core/signature-text.js";
+import {
+	canonicalOptionalsAsync,
+	type OptionalFacts,
+	type OptionalStep,
+	singleLine,
+} from "./core/signature-text.js";
 import { PrinferError } from "./errors.js";
 import type {
 	CompletionOptions,
@@ -353,7 +358,7 @@ export async function nativeTypeInfoAt(
 ): Promise<HoverResult> {
 	const { file, text, line, column, position } = cursor;
 	const resolutionStarted = performance.now();
-	const type = await project.checker.getTypeAtPosition(file, position);
+	const type = await hoveredType(project, sourceFile, file, position);
 	if (!type) {
 		throw new PrinferError(
 			"SYMBOL_NOT_FOUND",
@@ -492,7 +497,144 @@ export async function nativeSignatureText(
 	);
 	if (!declaration) return "";
 	const printed = await project.emitter.printNode(declaration);
-	return singleLine(printed).replace(/;$/, "");
+	return canonicalOptionalsAsync(
+		singleLine(printed).replace(/;$/, ""),
+		"signature",
+		(path) => nativeOptionalFacts(project.checker, { signature }, path),
+	);
+}
+
+/** typeToString, in canonical form (see core/signature-text.ts). */
+export async function nativeTypeText(
+	project: Project,
+	type: Type,
+	flags: number,
+): Promise<string> {
+	return canonicalOptionalsAsync(
+		await project.checker.typeToString(type, undefined, flags),
+		"type",
+		(path) => nativeOptionalFacts(project.checker, { type }, path),
+	);
+}
+
+type Walked = { signature: Signature } | { type: Type } | { symbol: TsSymbol };
+
+/**
+ * Follow a path from a printed signature or type to an optional slot; the
+ * TypeScript 7 counterpart of optionalFacts in core/hover.ts.
+ */
+async function nativeOptionalFacts(
+	checker: Checker,
+	root: Walked,
+	path: readonly OptionalStep[],
+): Promise<OptionalFacts | undefined> {
+	let current = root;
+	for (const step of path) {
+		if ("param" in step || "returns" in step) {
+			if (!("signature" in current)) return undefined;
+			if ("returns" in step) {
+				const type = await checker.getReturnTypeOfSignature(
+					current.signature,
+				);
+				if (!type) return undefined;
+				current = { type };
+				continue;
+			}
+			const symbol = (await current.signature.getParameters())[
+				step.param
+			];
+			if (!symbol) return undefined;
+			current = { symbol };
+			continue;
+		}
+		if ("signature" in current) return undefined;
+		const own =
+			"symbol" in current
+				? await checker.getTypeOfSymbol(current.symbol)
+				: current.type;
+		const type = own ? await checker.getNonNullableType(own) : undefined;
+		if (!type) return undefined;
+		if ("property" in step) {
+			const symbol = await checker.getPropertyOfType(type, step.property);
+			if (!symbol) return undefined;
+			current = { symbol };
+		} else {
+			const signature = (
+				await checker.getSignaturesOfType(type, SignatureKind.Call)
+			)[step.signature];
+			if (!signature) return undefined;
+			current = { signature };
+		}
+	}
+	if (!("symbol" in current)) return undefined;
+	const declaration = await current.symbol.valueDeclaration?.resolve();
+	const annotation = !declaration
+		? undefined
+		: isParameterDeclaration(declaration)
+			? declaration.questionToken && declaration.type
+			: (isPropertySignatureDeclaration(declaration) ||
+						isPropertyDeclaration(declaration)) &&
+					declaration.postfixToken?.kind === SyntaxKind.QuestionToken
+				? declaration.type
+				: undefined;
+	if (!annotation) {
+		return {
+			declaredOptional: false,
+			annotationIncludesUndefined: false,
+			addsOnlyUndefined: false,
+		};
+	}
+	const members = async (type: Type | undefined) =>
+		!type
+			? []
+			: type.flags & TypeFlags.Union
+				? await (type as UnionType).getTypes()
+				: [type];
+	const [annotated, own] = await Promise.all([
+		checker.getTypeFromTypeNode(annotation).then(members),
+		checker.getTypeOfSymbol(current.symbol).then(members),
+	]);
+	const added = own.filter((member) => !(member.flags & TypeFlags.Undefined));
+	const annotatedIds = new Set(annotated.map((member) => member.id));
+	return {
+		declaredOptional: annotated.length > 0,
+		annotationIncludesUndefined: annotated.some(
+			(member) =>
+				member.flags &
+				(TypeFlags.Undefined | TypeFlags.Any | TypeFlags.Unknown),
+		),
+		addsOnlyUndefined:
+			added.length === annotated.length &&
+			added.every((member) => annotatedIds.has(member.id)),
+	};
+}
+
+/**
+ * The type at a position as quick info reports it: an optional property
+ * has the type quick info shows (with exactOptionalPropertyTypes,
+ * `digits?: number` is a number when present), anything else its type at
+ * the position.
+ */
+export async function hoveredType(
+	project: Project,
+	sourceFile: SourceFile,
+	file: string,
+	position: number,
+): Promise<Type | undefined> {
+	const { checker } = project;
+	const [type, symbol] = await Promise.all([
+		checker.getTypeAtPosition(file, position),
+		checker.getSymbolAtPosition(file, position),
+	]);
+	if (
+		!symbol ||
+		!(symbol.flags & SymbolFlags.Property) ||
+		!(symbol.flags & SymbolFlags.Optional)
+	) {
+		return type;
+	}
+	const token = tokenAtPosition(sourceFile, position);
+	return token ? checker.getTypeOfSymbolAtLocation(symbol, token) : type;
 }
 
 /**
@@ -560,7 +702,7 @@ async function typeInfo(
 		? NodeBuilderFlags.NoTruncation
 		: NodeBuilderFlags.None;
 	const typeText = (shown: Type, extra = 0) =>
-		checker.typeToString(shown, undefined, flags | extra);
+		nativeTypeText(project, shown, flags | extra);
 	const syntaxNode = findSyntaxNodeAt(location.syntax, options);
 	const node = findNodeAtPosition(location.sourceFile, location.position);
 	let kind = syntaxNode ? getSymbolKind(syntaxNode) : "symbol";
@@ -739,9 +881,7 @@ async function typeParameterList(
 		const type = await project.checker.getTypeFromTypeNode(
 			typeNode as Parameters<Checker["getTypeFromTypeNode"]>[0],
 		);
-		return type
-			? project.checker.typeToString(type, undefined, flags)
-			: undefined;
+		return type ? nativeTypeText(project, type, flags) : undefined;
 	};
 	const parts = await Promise.all(
 		parameters.map(async (parameter, index) => {
@@ -1017,7 +1157,8 @@ function sourcePosition(
 	return position;
 }
 
-function findNodeAtPosition(
+/** The innermost node at a position. */
+function tokenAtPosition(
 	sourceFile: SourceFile,
 	position: number,
 ): Node | undefined {
@@ -1029,7 +1170,15 @@ function findNodeAtPosition(
 		node.forEachChild(visit);
 	};
 	visit(sourceFile);
+	return found;
+}
 
+/** The declaration whose name is at a position, or the innermost node. */
+function findNodeAtPosition(
+	sourceFile: SourceFile,
+	position: number,
+): Node | undefined {
+	const found = tokenAtPosition(sourceFile, position);
 	for (
 		let current = found;
 		current && current !== sourceFile;

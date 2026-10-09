@@ -50,6 +50,13 @@ export interface HoverAlternative {
  * - interfaces and classes: the name with its type parameters,
  *   `Box<T extends string = "a">`.
  *
+ * Optional parameters and properties read as `tsc` writes them in
+ * declaration emit and quick info: `digits?: number`, without the
+ * `| undefined` the `?` implies. A `| undefined` the source wrote stays
+ * (`digits?: number | undefined`), as does one the annotation does not
+ * account for (`y?: number | undefined` for `y?: T` called with a number,
+ * the properties of `Partial<T>` without exactOptionalPropertyTypes).
+ *
  * `kind` uses the labels of an editor hover: `function`, `method`, `const`,
  * `let`, `var`, `using`, `await using`, `parameter`, `property`, `accessor`,
  * `type`, `interface`, `class`, `enum`, `enum member`, `namespace`,

@@ -2,6 +2,11 @@ import * as ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
 import type { HoverResult } from "../types.js";
 import { getNameNode } from "./node-match.js";
+import {
+	canonicalOptionals,
+	type OptionalFacts,
+	type OptionalStep,
+} from "./signature-text.js";
 
 /**
  * Get the symbol kind as a string. Kinds follow the labels an editor hover
@@ -224,9 +229,9 @@ function getHoverInfoImpl(
 		name,
 	};
 	const signatureText = (signature: ts.Signature, extra = 0) =>
-		checker.signatureToString(signature, undefined, flags | extra);
+		signatureString(checker, signature, flags | extra);
 	const typeText = (type: ts.Type, extra = 0) =>
-		checker.typeToString(type, undefined, flags | extra);
+		typeString(checker, type, flags | extra);
 
 	// Match TypeScript's hover for an alias declaration, with its type
 	// parameters, while disabling the truncation that makes editor hovers
@@ -319,7 +324,12 @@ function getHoverInfoImpl(
 		targetNode = nodeWithName.name;
 	}
 
-	const t = checker.getTypeAtLocation(targetNode);
+	// An optional property shows the type quick info shows: with
+	// exactOptionalPropertyTypes, `digits?: number` is a number when present.
+	const t =
+		symbol && isOptionalProperty(node)
+			? checker.getTypeOfSymbolAtLocation(symbol, targetNode)
+			: checker.getTypeAtLocation(targetNode);
 	const callSignatures = t.getCallSignatures();
 	// A function-typed value reports what its single call signature returns.
 	const single =
@@ -364,7 +374,7 @@ function overloadTexts(
 	const signatures = type.getCallSignatures();
 	if (signatures.length < 2) return undefined;
 	return signatures.map((signature) =>
-		checker.signatureToString(signature, undefined, flags),
+		signatureString(checker, signature, flags),
 	);
 }
 
@@ -384,14 +394,127 @@ function typeParameterList(
 			parameter.modifiers?.map((modifier) => modifier.getText()) ?? [];
 		let part = [...modifiers, parameter.name.text].join(" ");
 		if (parameter.constraint) {
-			part += ` extends ${checker.typeToString(checker.getTypeFromTypeNode(parameter.constraint), undefined, flags)}`;
+			part += ` extends ${typeString(checker, checker.getTypeFromTypeNode(parameter.constraint), flags)}`;
 		}
 		if (parameter.default) {
-			part += ` = ${checker.typeToString(checker.getTypeFromTypeNode(parameter.default), undefined, flags)}`;
+			part += ` = ${typeString(checker, checker.getTypeFromTypeNode(parameter.default), flags)}`;
 		}
 		return part;
 	});
 	return `<${text.join(", ")}>`;
+}
+
+function isOptionalProperty(node: ts.Node): boolean {
+	return (
+		(ts.isPropertySignature(node) || ts.isPropertyDeclaration(node)) &&
+		node.questionToken !== undefined
+	);
+}
+
+/** signatureToString, in canonical form (see core/signature-text.ts). */
+function signatureString(
+	checker: ts.TypeChecker,
+	signature: ts.Signature,
+	flags: ts.TypeFormatFlags,
+): string {
+	return canonicalOptionals(
+		checker.signatureToString(signature, undefined, flags),
+		"signature",
+		(path) => optionalFacts(checker, { signature }, path),
+	);
+}
+
+/** typeToString, in canonical form (see core/signature-text.ts). */
+function typeString(
+	checker: ts.TypeChecker,
+	type: ts.Type,
+	flags: ts.TypeFormatFlags,
+): string {
+	return canonicalOptionals(
+		checker.typeToString(type, undefined, flags),
+		"type",
+		(path) => optionalFacts(checker, { type }, path),
+	);
+}
+
+type Walked =
+	| { signature: ts.Signature }
+	| { type: ts.Type }
+	| { symbol: ts.Symbol };
+
+/** Follow a path from a printed signature or type to an optional slot. */
+function optionalFacts(
+	checker: ts.TypeChecker,
+	root: Walked,
+	path: readonly OptionalStep[],
+): OptionalFacts | undefined {
+	let current = root;
+	for (const step of path) {
+		if ("param" in step || "returns" in step) {
+			if (!("signature" in current)) return undefined;
+			if ("returns" in step) {
+				current = {
+					type: checker.getReturnTypeOfSignature(current.signature),
+				};
+				continue;
+			}
+			const symbol = current.signature.getParameters()[step.param];
+			if (!symbol) return undefined;
+			current = { symbol };
+			continue;
+		}
+		if ("signature" in current) return undefined;
+		const type = checker.getNonNullableType(
+			"symbol" in current
+				? checker.getTypeOfSymbol(current.symbol)
+				: current.type,
+		);
+		if ("property" in step) {
+			const symbol = checker.getPropertyOfType(type, step.property);
+			if (!symbol) return undefined;
+			current = { symbol };
+		} else {
+			const signature = type.getCallSignatures()[step.signature];
+			if (!signature) return undefined;
+			current = { signature };
+		}
+	}
+	if (!("symbol" in current)) return undefined;
+	const declaration = current.symbol.valueDeclaration;
+	if (
+		!declaration ||
+		!(
+			ts.isParameter(declaration) ||
+			ts.isPropertySignature(declaration) ||
+			ts.isPropertyDeclaration(declaration)
+		) ||
+		!declaration.questionToken ||
+		!declaration.type
+	) {
+		return {
+			declaredOptional: false,
+			annotationIncludesUndefined: false,
+			addsOnlyUndefined: false,
+		};
+	}
+	const members = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
+	const annotated = members(checker.getTypeFromTypeNode(declaration.type));
+	const added = members(checker.getTypeOfSymbol(current.symbol)).filter(
+		(member) => !(member.flags & ts.TypeFlags.Undefined),
+	);
+	return {
+		declaredOptional: true,
+		annotationIncludesUndefined: annotated.some(
+			(member) =>
+				member.flags &
+				(ts.TypeFlags.Undefined |
+					ts.TypeFlags.Any |
+					ts.TypeFlags.Unknown),
+		),
+		addsOnlyUndefined:
+			added.length === annotated.length &&
+			added.every((member) => annotated.includes(member)),
+	};
 }
 
 /**
