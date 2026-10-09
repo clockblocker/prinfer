@@ -1,0 +1,42 @@
+{
+	"manifest_version": "0.3",
+	"name": "prinfer",
+	"display_name": "prinfer",
+	"version": "3.0.0",
+	"description": "TypeScript inferred types, completions and type errors for AI coding agents",
+	"long_description": "prinfer lets AI coding agents ask the TypeScript compiler what it infers (types, completions, type errors) instead of guessing. It runs locally over stdio, reads the project's own tsconfig, and needs no configuration or API keys. This bundle launches the published npm package with `npx -y prinfer@<version> mcp`, so Node.js 20 or later with npx must be on PATH.",
+	"author": {
+		"name": "clockblocker",
+		"url": "https://github.com/clockblocker"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/clockblocker/prinfer"
+	},
+	"homepage": "https://github.com/clockblocker/prinfer#readme",
+	"documentation": "https://github.com/clockblocker/prinfer#readme",
+	"support": "https://github.com/clockblocker/prinfer/issues",
+	"license": "MIT",
+	"keywords": [
+		"typescript",
+		"type-inference",
+		"hover",
+		"completions",
+		"diagnostics",
+		"coding-agent"
+	],
+	"server": {
+		"type": "node",
+		"entry_point": "server/index.js",
+		"mcp_config": {
+			"command": "npx",
+			"args": ["-y", "prinfer@3.0.0", "mcp"]
+		}
+	},
+	"compatibility": {
+		"platforms": ["darwin", "win32", "linux"],
+		"runtimes": {
+			"node": ">=20.0.0"
+		}
+	}
+}

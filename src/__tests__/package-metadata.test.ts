@@ -36,6 +36,27 @@ describe("MCP Registry manifest", () => {
 	});
 });
 
+describe("MCPB manifest (Smithery)", () => {
+	const manifest = readJson("mcpb/manifest.json");
+
+	test("matches package.json", () => {
+		expect(manifest.name).toBe(pkg.name);
+		expect(manifest.version).toBe(pkg.version);
+		expect(manifest.compatibility.runtimes.node).toBe(pkg.engines.node);
+	});
+
+	test("launches `npx -y prinfer@<version> mcp` with no user config", () => {
+		expect(manifest.server).toMatchObject({
+			type: "node",
+			mcp_config: {
+				command: "npx",
+				args: ["-y", `${pkg.name}@${pkg.version}`, "mcp"],
+			},
+		});
+		expect(manifest.user_config).toBeUndefined();
+	});
+});
+
 describe("Claude Code plugin", () => {
 	test("plugin version matches package.json", () => {
 		expect(plugin.version).toBe(pkg.version);
