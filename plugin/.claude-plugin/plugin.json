@@ -1,6 +1,6 @@
 {
 	"name": "prinfer",
-	"version": "3.0.0",
+	"version": "3.1.0",
 	"description": "Lets Claude see TypeScript's inferred types, completions and type errors through the prinfer MCP server",
 	"author": {
 		"name": "clockblocker",

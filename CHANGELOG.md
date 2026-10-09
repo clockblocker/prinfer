@@ -1,5 +1,26 @@
 # prinfer
 
+## 3.1.0
+
+### Minor Changes
+
+- 962f411: Optional parameters and properties read the same on every backend, as `tsc` writes them in declaration emit and quick info: `(value: number, digits?: number): string`, not `digits?: number | undefined`. The TypeScript 7 language server already printed them this way; the TypeScript 6 backend (the library, the CLI, and `prinfer/testing` by default) and the `prinfer/testing` TypeScript 7 API now do too, in `signature`, `returnType`, and `overloads`. Update `prinfer/testing` snapshots that hold the old form.
+
+  - A `| undefined` the source wrote stays: `digits?: number | undefined` is printed as written.
+  - A `| undefined` the annotation does not account for stays too: `y?: number | undefined` for `y?: T` in a call with a number, and the properties of `Partial<T>` without `exactOptionalPropertyTypes`.
+  - Object types inside a signature follow the same rule: `(options?: { verbose?: boolean; }): void`, `(cb?: (x?: number) => void): void`.
+  - With `exactOptionalPropertyTypes`, hovering a property declared `digits?: number` reports `number` on every backend, as quick info does. TypeScript 6 and the TypeScript 7 API used to report `number | undefined`.
+  - On the TypeScript 7 language server, `overloads` now match `signature` (they used to keep `| undefined`, so the hovered overload was listed again), and an optional method no longer reports `unionMembers`.
+
+- 02ade0b: An explicit `project` now works on the TypeScript 7 backend for any tsconfig that includes the file, not only the one the language server picks itself (the nearest `tsconfig.json`, or a project it references). An unreferenced `tsconfig.test.json` or `tsconfig.app.json` used to fail with `INVALID_ARGUMENT`; it is now opened through the TypeScript 7 API in the same warm session, so hovers, `hover_by_name`, `batch_hover` and `diagnostics` (MCP, `prinfer check --backend typescript7`) answer with that tsconfig's options. Hovers in such a project come from the checker, as in `prinfer/testing`, and have no `display`. Requests without `project`, or with the tsconfig the language server picks, are unchanged.
+
+  A tsconfig that doesn't include the file still fails with `INVALID_ARGUMENT`; the message now says so and suggests the `typescript6` backend, which adds the file to any project.
+
+### Patch Changes
+
+- f23c25a: `prinfer/testing`: TypeScript 7 sessions no longer depend silently on a private `@typescript/native` field to let the test process exit. If a future release moves the compiler process so prinfer can't unref it, prinfer prints a one-time warning to stderr naming `closeTestingSessions()` as the fix, then closes each session after 1s idle so the process still exits. The next call restarts the compiler.
+- 0bc9959: Add an MCPB manifest (`mcpb/manifest.json`) for listing the MCP server on Smithery. `bun run mcpb` packs it into `prinfer.mcpb`, a bundle that launches `npx -y prinfer@<version> mcp`. `bun run version` keeps the bundle's version and pinned package in sync. The npm package itself is unchanged.
+
 ## 3.0.0
 
 ### Major Changes
