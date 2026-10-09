@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { version as nativeVersion } from "@typescript/native";
 import {
 	type CallExpression,
 	type Node,
@@ -49,17 +50,96 @@ import type { CompletionOptions, HoverOptions, HoverResult } from "./types.js";
 
 const sessions = new Map<string, NativeApiSession>();
 
+/**
+ * Where the compiler child process of a TypeScript 7 API instance stands.
+ * `not-spawned`: the client has the expected shape but no request has
+ * started the process yet. `missing`: the client no longer has the shape
+ * prinfer reads, so the process cannot be found.
+ */
+export type CompilerProcessLookup =
+	| { status: "found"; child: ChildProcess }
+	| { status: "not-spawned" }
+	| { status: "missing"; reason: string };
+
+/**
+ * Find the compiler child process inside a TypeScript 7 API instance.
+ *
+ * `@typescript/native` 7.0 has no public handle to the process: `API` and
+ * its `Client` expose no accessor, no `ref`/`unref` and no option to spawn
+ * it detached, and `API.close()` is the only lifecycle call. The client
+ * keeps the process in the private `API.client.process` field, assigned
+ * when the first request spawns it. The canary test in
+ * src/__tests__/native-api-process.test.ts fails when that field moves.
+ */
+export function locateCompilerProcess(api: API): CompilerProcessLookup {
+	const client: unknown = Reflect.get(api, "client");
+	if (typeof client !== "object" || client === null) {
+		return { status: "missing", reason: "API.client is gone" };
+	}
+	if (!("process" in client)) {
+		return { status: "missing", reason: "API.client.process is gone" };
+	}
+	const child = client.process;
+	if (child === undefined) return { status: "not-spawned" };
+	if (
+		typeof child !== "object" ||
+		child === null ||
+		typeof (child as ChildProcess).ref !== "function" ||
+		typeof (child as ChildProcess).unref !== "function"
+	) {
+		return {
+			status: "missing",
+			reason: "API.client.process is not a child process",
+		};
+	}
+	return { status: "found", child: child as ChildProcess };
+}
+
+/** Indirection so a test can simulate a release without the private field. */
+export const compilerProcessLocator = { locate: locateCompilerProcess };
+
+/**
+ * How long a session may sit idle before the fallback closes it. Short, so
+ * a test process exits soon after its last call; a later call restarts the
+ * compiler.
+ */
+export const IDLE_CLOSE_MS = 1_000;
+
+let warnedFallback = false;
+
+function warnFallback(reason: string): void {
+	if (warnedFallback) return;
+	warnedFallback = true;
+	process.stderr.write(
+		[
+			`prinfer: cannot find the TypeScript 7 compiler process in @typescript/native ${nativeVersion} (${reason}), so idle sessions cannot be unref'd.`,
+			`prinfer now closes a session after ${IDLE_CLOSE_MS}ms idle so the process can still exit; the next call restarts the compiler.`,
+			'Fix: call `await closeTestingSessions()` from "prinfer/testing" in afterAll to shut sessions down yourself, and report this at https://github.com/clockblocker/prinfer/issues.',
+			"",
+		].join("\n"),
+	);
+}
+
 class NativeApiSession {
 	private readonly api: API;
+	private readonly key: string;
 	private readonly projectFile: string | undefined;
 	private snapshot: Snapshot | undefined;
 	private readonly documents = new Map<string, string>();
 	private tail: Promise<void> = Promise.resolve();
 	private pending = 0;
+	/** A request has reached the compiler, so its process has been spawned. */
+	private spawned = false;
+	/** The process cannot be unref'd, so idle sessions are closed instead. */
+	private fallback = false;
+	private idleTimer: ReturnType<typeof setTimeout> | undefined;
 
-	constructor(root: string, projectFile?: string) {
+	constructor(key: string, root: string, projectFile?: string) {
 		this.api = new API({ cwd: root });
+		this.key = key;
 		this.projectFile = projectFile;
+		const lookup = compilerProcessLocator.locate(this.api);
+		if (lookup.status === "missing") this.useFallback(lookup.reason);
 	}
 
 	run<T>(
@@ -67,7 +147,8 @@ class NativeApiSession {
 		operation: (project: Project, sourceFile: SourceFile) => Promise<T>,
 	): Promise<T> {
 		this.pending += 1;
-		this.keepAlive(true);
+		this.cancelIdleClose();
+		this.setReferenced(true);
 		const result = this.tail.then(() => this.runNow(file, operation));
 		this.tail = result.then(
 			() => undefined,
@@ -75,38 +156,77 @@ class NativeApiSession {
 		);
 		void this.tail.then(() => {
 			this.pending -= 1;
-			if (this.pending === 0) this.keepAlive(false);
+			if (this.pending === 0) this.idle();
 		});
 		return result;
+	}
+
+	async close(): Promise<void> {
+		this.cancelIdleClose();
+		await this.tail;
+		await this.snapshot?.dispose();
+		this.snapshot = undefined;
+		this.documents.clear();
+		await this.api.close();
 	}
 
 	/**
 	 * Hold the event loop open only while a request is in flight, so a test
 	 * process exits without teardown. The idle compiler process sees its
 	 * stdin close when the parent exits and shuts down on its own.
-	 *
-	 * The TypeScript 7 API does not expose its child process, so this reaches
-	 * into the client. If that shape changes, sessions stay referenced and
-	 * `closeNativeApiSessions` is required again.
 	 */
-	private keepAlive(active: boolean): void {
-		const child = (
-			this.api as unknown as { client?: { process?: ChildProcess } }
-		).client?.process;
-		if (!child) return;
+	private setReferenced(active: boolean): void {
+		if (this.fallback) return;
+		const lookup = compilerProcessLocator.locate(this.api);
+		if (lookup.status !== "found") return;
+		const { child } = lookup;
 		const method = active ? "ref" : "unref";
-		child[method]?.();
+		child[method]();
 		for (const stream of [child.stdin, child.stdout]) {
 			(stream as { ref?(): void; unref?(): void } | null)?.[method]?.();
 		}
 	}
 
-	async close(): Promise<void> {
-		await this.tail;
-		await this.snapshot?.dispose();
-		this.snapshot = undefined;
-		this.documents.clear();
-		await this.api.close();
+	/**
+	 * Release the event loop once no request is in flight: unref the
+	 * process or, when it cannot be found, close the session after
+	 * IDLE_CLOSE_MS. `beforeExit` would not work as the fallback: it only
+	 * fires once the loop is empty, and the referenced process keeps it busy.
+	 */
+	private idle(): void {
+		if (!this.fallback) {
+			const lookup = compilerProcessLocator.locate(this.api);
+			if (lookup.status === "found") {
+				this.setReferenced(false);
+				return;
+			}
+			// No request reached the compiler, so nothing holds the loop.
+			if (lookup.status === "not-spawned" && !this.spawned) return;
+			this.useFallback(
+				lookup.status === "missing"
+					? lookup.reason
+					: "API.client.process stays empty after a request",
+			);
+		}
+		this.idleTimer = setTimeout(() => {
+			this.idleTimer = undefined;
+			if (this.pending > 0) return;
+			if (sessions.get(this.key) === this) sessions.delete(this.key);
+			void this.close().catch(() => undefined);
+		}, IDLE_CLOSE_MS);
+		// The timer alone must not keep the process alive.
+		this.idleTimer.unref?.();
+	}
+
+	private useFallback(reason: string): void {
+		this.fallback = true;
+		warnFallback(reason);
+	}
+
+	private cancelIdleClose(): void {
+		if (this.idleTimer === undefined) return;
+		clearTimeout(this.idleTimer);
+		this.idleTimer = undefined;
 	}
 
 	private async runNow<T>(
@@ -117,6 +237,7 @@ class NativeApiSession {
 		const previousText = this.documents.get(file);
 		if (!this.snapshot || previousText !== text) {
 			const previousSnapshot = this.snapshot;
+			this.spawned = true;
 			this.snapshot = await this.api.updateSnapshot(
 				previousText === undefined
 					? {
@@ -710,7 +831,11 @@ function getSession(file: string, project?: string): NativeApiSession {
 	const resolved = resolveProject(file, project);
 	let session = sessions.get(resolved.key);
 	if (!session) {
-		session = new NativeApiSession(resolved.root, resolved.projectFile);
+		session = new NativeApiSession(
+			resolved.key,
+			resolved.root,
+			resolved.projectFile,
+		);
 		sessions.set(resolved.key, session);
 	}
 	return session;

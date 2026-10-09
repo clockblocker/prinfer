@@ -230,38 +230,87 @@ describe("setup errors", () => {
 });
 
 describe("teardown", () => {
-	const script = (entry: string) =>
+	const calls = [
+		'console.log(await inferredType(file, { name: "pick", backend: "typescript7" }));',
+		'console.log((await inferredCompletions(file, { line: 4, text: "latte." })).join(","));',
+	];
+	const script = (entry: string, setup: string[] = [], body = calls) =>
 		[
 			`import { inferredCompletions, inferredType } from ${JSON.stringify(entry)};`,
 			`const file = ${JSON.stringify(targetsPath)};`,
-			'console.log(await inferredType(file, { name: "pick", backend: "typescript7" }));',
-			'console.log((await inferredCompletions(file, { line: 4, text: "latte." })).join(","));',
+			...setup,
+			...body,
 		].join("\n");
 
-	async function exitsWithoutTeardown(command: string[]): Promise<void> {
+	/** Run a script that never calls closeTestingSessions; return its stderr. */
+	async function exitsWithoutTeardown(
+		command: string[],
+		stdout = "Drink\ndrink,size\n",
+	): Promise<string> {
 		const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
-		const timer = setTimeout(() => proc.kill(), 20_000);
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			proc.kill();
+		}, 20_000);
 		const exitCode = await proc.exited;
 		clearTimeout(timer);
-		expect(await new Response(proc.stdout).text()).toBe(
-			"Drink\ndrink,size\n",
-		);
+		const stderr = await new Response(proc.stderr).text();
+		if (timedOut) {
+			throw new Error(
+				`The process did not exit within 20s of its last TypeScript 7 call: an idle compiler session kept it alive. Check NativeApiSession in src/native-api.ts.\nstderr:\n${stderr}`,
+			);
+		}
+		expect(await new Response(proc.stdout).text()).toBe(stdout);
 		expect(exitCode).toBe(0);
+		return stderr;
 	}
 
-	function writeScript(name: string, entry: string): string {
+	function writeScript(name: string, source: string): string {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-teardown-"));
 		const file = path.join(dir, name);
-		fs.writeFileSync(file, script(entry));
+		fs.writeFileSync(file, source);
 		return file;
 	}
 
 	test("a Bun process exits after TypeScript 7 calls without closeTestingSessions", async () => {
 		const file = writeScript(
 			"script.ts",
-			path.join(packageRoot, "src", "testing.ts"),
+			script(path.join(packageRoot, "src", "testing.ts")),
 		);
-		await exitsWithoutTeardown([process.execPath, file]);
+		const stderr = await exitsWithoutTeardown([process.execPath, file]);
+		// The compiler process was found and unref'd, not closed by the fallback.
+		expect(stderr).not.toContain("prinfer:");
+	}, 30_000);
+
+	test("without the compiler process handle, a Bun process still exits and warns once", async () => {
+		const setup = [
+			`import { compilerProcessLocator } from ${JSON.stringify(path.join(packageRoot, "src", "native-api.ts"))};`,
+			'compilerProcessLocator.locate = () => ({ status: "missing", reason: "simulated by the test" });',
+		];
+		const project = path.join(path.dirname(targetsPath), "tsconfig.json");
+		// Two sessions (default project and explicit project), then a call
+		// after the fallback has closed the idle session, which restarts it.
+		const body = [
+			...calls,
+			`console.log(await inferredType(file, { name: "pick", backend: "typescript7", project: ${JSON.stringify(project)} }));`,
+			"await new Promise((resolve) => setTimeout(resolve, 1500));",
+			'console.log(await inferredType(file, { name: "pick", backend: "typescript7" }));',
+		];
+		const file = writeScript(
+			"script.ts",
+			script(path.join(packageRoot, "src", "testing.ts"), setup, body),
+		);
+		const stderr = await exitsWithoutTeardown(
+			[process.execPath, file],
+			"Drink\ndrink,size\nDrink\nDrink\n",
+		);
+		expect(stderr).toContain(
+			"prinfer: cannot find the TypeScript 7 compiler process",
+		);
+		expect(stderr).toContain("simulated by the test");
+		expect(stderr).toContain("closeTestingSessions()");
+		expect(stderr.split("prinfer: cannot find").length - 1).toBe(1);
 	}, 30_000);
 
 	test("a Node process exits after TypeScript 7 calls without closeTestingSessions", async () => {
@@ -284,6 +333,10 @@ describe("teardown", () => {
 			});
 			expect(build.exitCode).toBe(0);
 		}
-		await exitsWithoutTeardown(["node", writeScript("script.mjs", dist)]);
+		const stderr = await exitsWithoutTeardown([
+			"node",
+			writeScript("script.mjs", script(dist)),
+		]);
+		expect(stderr).not.toContain("prinfer:");
 	}, 60_000);
 });
