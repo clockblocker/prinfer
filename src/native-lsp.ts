@@ -8,6 +8,7 @@ import {
 	NodeBuilderFlags,
 	SignatureKind,
 	type Snapshot,
+	SymbolFlags,
 	TypeFlags,
 } from "@typescript/native/unstable/async";
 import * as ts from "typescript";
@@ -30,7 +31,11 @@ import {
 	type WorkspaceScanStats,
 } from "./core/workspace-files.js";
 import { PrinferError } from "./errors.js";
-import { countNativeUnionMembers, nativeSignatureText } from "./native-api.js";
+import {
+	countNativeUnionMembers,
+	hoveredType,
+	nativeSignatureText,
+} from "./native-api.js";
 import type {
 	DiagnosticCategory,
 	DiagnosticsOptions,
@@ -291,14 +296,19 @@ class NativeLspClient {
 			const flags = full
 				? NodeBuilderFlags.NoTruncation
 				: NodeBuilderFlags.None;
+			const sourceFile = await project.program.getSourceFile(file);
 			const [type, symbol] = await Promise.all([
-				checker.getTypeAtPosition(file, offset),
+				sourceFile
+					? hoveredType(project, sourceFile, file, offset)
+					: checker.getTypeAtPosition(file, offset),
 				checker.getSymbolAtPosition(file, offset),
 			]);
 			const extras: HoverExtras = {};
-			const unionMembers = type
-				? await countNativeUnionMembers(checker, type)
-				: undefined;
+			// A method shows its signature, not a union with undefined.
+			const unionMembers =
+				type && !(symbol && symbol.flags & SymbolFlags.Method)
+					? await countNativeUnionMembers(checker, type)
+					: undefined;
 			if (unionMembers !== undefined) extras.unionMembers = unionMembers;
 			const symbolType = symbol
 				? await checker.getTypeOfSymbol(symbol)

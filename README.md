@@ -210,7 +210,7 @@ Failures stay per item, including a missing file, so one bad lookup doesn't thro
 
 Every hover returns the same fields on every backend and surface:
 
-- `signature` is the type text alone, on one line, without the declaration keyword or name an editor hover starts with: `string[]` for a variable, `(value: string): number` for a function, the instantiated signature for a call. Type aliases keep their name and type parameters (`type Event = { kind: "open"; ... } | ...`), and interfaces and classes are their name (`Box<T>`).
+- `signature` is the type text alone, on one line, without the declaration keyword or name an editor hover starts with: `string[]` for a variable, `(value: string): number` for a function, the instantiated signature for a call. Type aliases keep their name and type parameters (`type Event = { kind: "open"; ... } | ...`), and interfaces and classes are their name (`Box<T>`). Optional parameters and properties read as `tsc` writes them in declarations: `digits?: number`, with `| undefined` only where the source wrote it or the type is not the annotation's (an instantiated generic, a `Partial<T>`).
 - `display` is the editor's hover text (`const names: string[]`, object types over several lines). Only the TypeScript 7 language server reports it.
 - `kind` is the editor's label: `function`, `method`, `const`, `let`, `var`, `parameter`, `property`, `type`, `interface`, `class`, `enum`, and so on, plus `call` for the callee of a call.
 - `overloads`, `unionMembers` (members of a union type), and `alternatives` appear when they apply.
@@ -360,7 +360,7 @@ Failed lookups throw (or reject) with the fix in the message: an unknown name li
 
 The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. Both backends pick the same symbol for `hover_by_name`, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
 
-- `signature` has the same shape on both (see [Hover results](#hover-results)), but the TypeScript 7 language server prints an optional parameter as `digits?: number` where TypeScript 6 prints `digits?: number | undefined`. Only the language server reports `display`.
+- `signature` has the same shape on both (see [Hover results](#hover-results)). Only the language server reports `display`.
 - TypeScript 7 always uses the tsconfig.json nearest the file, or a project that tsconfig references. A `project` it would not pick, such as an unreferenced `tsconfig.build.json`, fails with `INVALID_ARGUMENT`; use `typescript6` for it.
 - On TypeScript 7, edits to files reached by relative imports are seen immediately. `diagnostics` also rescans the tsconfig's include directories (bounded, skipping `node_modules`, build output, and dot-directories); any other unopened edit reaches the language server through its file watcher shortly after.
 
@@ -441,7 +441,7 @@ prinfer annotations src/utils.ts
 
 ```text
 $ prinfer src/utils.ts:format --docs
-(value: number, digits?: number | undefined): string
+(value: number, digits?: number): string
 returns: string
 name: format
 kind: function
@@ -499,7 +499,7 @@ import { annotations, batchHover, completions, diagnostics, hover } from "prinfe
 
 // By symbol name
 hover("./src/utils.ts", "format");
-// => { signature: "(value: number, digits?: number | undefined): string", returnType: "string",
+// => { signature: "(value: number, digits?: number): string", returnType: "string",
 //      line: 2, column: 17, kind: "function", name: "format" }
 
 // By name with a line hint, for repeated names
