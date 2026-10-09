@@ -1,6 +1,6 @@
 {
 	"name": "prinfer",
-	"version": "2.3.0",
+	"version": "3.0.0",
 	"mcpName": "io.github.clockblocker/prinfer",
 	"description": "MCP server and CLI that shows AI coding agents (Claude Code, Codex, Cursor) TypeScript's inferred types, completions and type errors",
 	"type": "module",
