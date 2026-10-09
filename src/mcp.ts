@@ -41,12 +41,7 @@ import {
 	nativeHoverByName,
 } from "./native-lsp.js";
 import type { HoverOptions, HoverPosition, HoverResult } from "./types.js";
-
-declare const __PRINFER_VERSION__: string | undefined;
-
-/** Package version, injected by tsup at build time. */
-const VERSION =
-	typeof __PRINFER_VERSION__ === "string" ? __PRINFER_VERSION__ : "0.0.0-dev";
+import { VERSION } from "./version.js";
 
 const HELP = `
 prinfer-mcp ${VERSION} - MCP server for TypeScript type inference

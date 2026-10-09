@@ -257,6 +257,18 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
+	test("prints the package version with --version", async () => {
+		const pkg = JSON.parse(
+			fs.readFileSync(
+				path.join(import.meta.dir, "../../package.json"),
+				"utf8",
+			),
+		);
+		const { stdout, exitCode } = await runCli(["--version"]);
+		expect(stdout.trim()).toBe(pkg.version);
+		expect(exitCode).toBe(0);
+	});
+
 	test("shows help with -h flag", async () => {
 		const { stdout, exitCode } = await runCli(["-h"]);
 		expect(stdout).toContain("prinfer");

@@ -29,6 +29,7 @@ import { DEFAULT_MAX_CHARS, formatHoverText } from "./hover-format.js";
 import { diagnostics, hover } from "./index.js";
 import { runSetup } from "./setup.js";
 import type { DiagnosticsResult, HoverOptions, HoverResult } from "./types.js";
+import { VERSION } from "./version.js";
 
 const HELP = `
 prinfer - TypeScript type inference inspection tool
@@ -86,6 +87,7 @@ Options:
   --backend <name>     typescript6 (default) or typescript7, for type lookups and
                        check; complete and annotations always use typescript6
   --help, -h           Show this help message (prinfer setup --help for setup options)
+  --version            Print the prinfer version
 
 Examples:
   prinfer src/utils.ts:createHandler --json
@@ -730,6 +732,10 @@ function runAnnotations(args: string[]): number {
 
 async function main(): Promise<void> {
 	const command = process.argv[2];
+	if (command === "--version") {
+		console.log(VERSION);
+		return;
+	}
 	if (command === "mcp") {
 		await startMcpServer().catch((error: unknown) => {
 			console.error(
