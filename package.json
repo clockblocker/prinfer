@@ -55,7 +55,7 @@
 		"changeset": "changeset",
 		"version": "changeset version && node scripts/sync-server-json.mjs",
 		"release": "bun run build && changeset publish",
-		"mcpb": "bunx @anthropic-ai/mcpb@2.1.2 pack mcpb prinfer.mcpb",
+		"mcpb": "bun run build && bunx @anthropic-ai/mcpb@2.1.2 validate mcpb/manifest.json && node scripts/pack-mcpb.mjs",
 		"prepublishOnly": "bun run ci",
 		"prepare": "simple-git-hooks"
 	},
@@ -87,7 +87,7 @@
 	],
 	"author": "",
 	"license": "MIT",
-	"homepage": "https://github.com/clockblocker/prinfer#readme",
+	"homepage": "https://clockblocker.github.io/prinfer/",
 	"bugs": {
 		"url": "https://github.com/clockblocker/prinfer/issues"
 	},

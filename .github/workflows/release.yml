@@ -76,3 +76,29 @@ jobs:
             sleep 30
           done
           exit 1
+
+  # Republishes the MCPB bundle on Smithery after each npm release; Smithery
+  # does not follow npm. The bundle pins `npx -y prinfer@<version> mcp`.
+  smithery:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Pack MCPB bundle
+        run: bun run mcpb
+
+      - name: Publish to Smithery
+        env:
+          SMITHERY_API_KEY: ${{ secrets.SMITHERY_API_KEY }}
+        run: npx -y smithery@1.2.0 mcp publish ./prinfer.mcpb -n clockblocker/prinfer

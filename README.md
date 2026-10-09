@@ -143,6 +143,8 @@ prinfer is a stdio server. Point your client at `npx -y prinfer mcp`:
 }
 ```
 
+prinfer is also listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.clockblocker/prinfer) as `io.github.clockblocker/prinfer`, and on [Smithery](https://smithery.ai/servers/clockblocker/prinfer) for clients that install from there.
+
 ### Setup options
 
 - `--print` shows the command or config change without applying it.
