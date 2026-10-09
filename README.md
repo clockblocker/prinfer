@@ -6,6 +6,73 @@
 
 prinfer lets AI coding agents ask the TypeScript compiler what it infers (types, completions, type errors) instead of guessing, through an MCP server, a CLI, or a library.
 
+## Type regression tests
+
+`prinfer/testing` returns an inferred type as a string, so a test can pin it with an ordinary snapshot matcher in Vitest, Jest, Bun, or any compatible runner. Use it to lock the types your public API infers: a refactor that changes one fails the test. The example is `test/users.test.ts`, next to a `src/users.ts` that exports `groupBy`, `Role`, and `User`.
+
+```typescript
+import { expect, test } from "vitest"; // or "bun:test"
+import { inferredCompletions, inferredType } from "prinfer/testing";
+import { groupBy, type Role, type User } from "../src/users";
+
+const users: User[] = [{ name: "Ada", role: "admin" }];
+const byRole = groupBy(users, (user) => user.role);
+const fallback: Role = "member";
+
+test("groupBy keys the result by the callback's return type", () => {
+  expect(inferredType(import.meta.url, { name: "byRole" }))
+    .toMatchInlineSnapshot(`"Record<Role, User[]>"`);
+});
+
+test("groupBy keeps its public signature", () => {
+  expect(inferredType(new URL("../src/users.ts", import.meta.url), { name: "groupBy" }))
+    .toMatchInlineSnapshot(`"<T, K extends PropertyKey>(items: readonly T[], key: (item: T) => K): Record<K, T[]>"`);
+});
+
+test("Role offers its members", async () => {
+  await expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
+    .resolves.toMatchInlineSnapshot(`
+    [
+      "admin",
+      "member",
+    ]
+  `);
+});
+```
+
+Write the matcher empty (`toMatchInlineSnapshot()`) and the runner fills it in; after an intended type change, update it with the runner's snapshot update (`vitest -u`, `bun test --update-snapshots`). Unlike `expectTypeOf` or `tsd`, you never write the expected type by hand: the snapshot is the type as the editor displays it, so any change shows up, including a literal union widening to `string`.
+
+The first argument is the file to inspect: `import.meta.url` for the test file itself, or `new URL("../src/users.ts", import.meta.url)` for another module. Plain string paths resolve against `process.cwd()`, not the test file. The source is read through its nearest `tsconfig.json`, or `project` when given.
+
+The second argument picks the target:
+
+- `{ name, line? }`: a declaration by name; `line` picks among repeats.
+- `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
+- `{ line, column }`: a 1-based position.
+
+`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
+
+To pin what a function infers for an argument you have no value for, declare the argument in a fixture file and point the helper at it. A `declare const` in the test file itself has no runtime value, so the test throws a `ReferenceError` as soon as it runs.
+
+```typescript
+// test/groupBy.fixture.ts, read for types only, never run
+import { groupBy, type User } from "../src/users";
+declare const input: User[];
+export const byName = groupBy(input, (user) => user.name);
+
+// test/users.test.ts
+expect(inferredType(new URL("./groupBy.fixture.ts", import.meta.url), { name: "byName" }))
+  .toMatchInlineSnapshot(`"Record<string, User[]>"`);
+```
+
+`inferredCompletions` uses TypeScript 7 and resolves to every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
+
+TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early.
+
+Failed lookups throw (or reject) with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
+
+`prinfer/vitest` remains as a deprecated alias for `prinfer/testing`.
+
 ## Install
 
 Pick your client. Every setup command below runs through `npx`, so nothing has to be installed first. If you install globally (`npm i -g prinfer`), drop the `npx -y` prefix and setup registers the `prinfer-mcp` binary, which skips npx's package check on every launch.
@@ -276,73 +343,6 @@ widening: the annotation is wider than the inferred type; keep it if the wider t
 ```
 
 A `redundant` annotation can be deleted without changing the type. A `widening` one is wider than what TypeScript infers, which is often deliberate (a variable that must accept any `Drink` later, or an exported API contract), so treat it as a question rather than a fix. Only annotations with an initializer or body to infer from are checked. Each structured finding has the range of the `: Type` text to delete, `declared`, `inferred`, `exported`, and a one-line `suggestion`. `annotations` always runs on TypeScript 6.
-
-## Type regression tests
-
-`prinfer/testing` returns an inferred type as a string, so a test can pin it with an ordinary snapshot matcher in Vitest, Jest, Bun, or any compatible runner. Use it to lock the types your public API infers: a refactor that changes one fails the test. The example is `test/users.test.ts`, next to a `src/users.ts` that exports `groupBy`, `Role`, and `User`.
-
-```typescript
-import { expect, test } from "vitest"; // or "bun:test"
-import { inferredCompletions, inferredType } from "prinfer/testing";
-import { groupBy, type Role, type User } from "../src/users";
-
-const users: User[] = [{ name: "Ada", role: "admin" }];
-const byRole = groupBy(users, (user) => user.role);
-const fallback: Role = "member";
-
-test("groupBy keys the result by the callback's return type", () => {
-  expect(inferredType(import.meta.url, { name: "byRole" }))
-    .toMatchInlineSnapshot(`"Record<Role, User[]>"`);
-});
-
-test("groupBy keeps its public signature", () => {
-  expect(inferredType(new URL("../src/users.ts", import.meta.url), { name: "groupBy" }))
-    .toMatchInlineSnapshot(`"<T, K extends PropertyKey>(items: readonly T[], key: (item: T) => K): Record<K, T[]>"`);
-});
-
-test("Role offers its members", async () => {
-  await expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
-    .resolves.toMatchInlineSnapshot(`
-    [
-      "admin",
-      "member",
-    ]
-  `);
-});
-```
-
-Write the matcher empty (`toMatchInlineSnapshot()`) and the runner fills it in; after an intended type change, update it with the runner's snapshot update (`vitest -u`, `bun test --update-snapshots`). Unlike `expectTypeOf` or `tsd`, you never write the expected type by hand: the snapshot is the type as the editor displays it, so any change shows up, including a literal union widening to `string`.
-
-The first argument is the file to inspect: `import.meta.url` for the test file itself, or `new URL("../src/users.ts", import.meta.url)` for another module. Plain string paths resolve against `process.cwd()`, not the test file. The source is read through its nearest `tsconfig.json`, or `project` when given.
-
-The second argument picks the target:
-
-- `{ name, line? }`: a declaration by name; `line` picks among repeats.
-- `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
-- `{ line, column }`: a 1-based position.
-
-`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
-
-To pin what a function infers for an argument you have no value for, declare the argument in a fixture file and point the helper at it. A `declare const` in the test file itself has no runtime value, so the test throws a `ReferenceError` as soon as it runs.
-
-```typescript
-// test/groupBy.fixture.ts, read for types only, never run
-import { groupBy, type User } from "../src/users";
-declare const input: User[];
-export const byName = groupBy(input, (user) => user.name);
-
-// test/users.test.ts
-expect(inferredType(new URL("./groupBy.fixture.ts", import.meta.url), { name: "byName" }))
-  .toMatchInlineSnapshot(`"Record<string, User[]>"`);
-```
-
-`inferredCompletions` uses TypeScript 7 and resolves to every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
-
-TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early.
-
-Failed lookups throw (or reject) with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
-
-`prinfer/vitest` remains as a deprecated alias for `prinfer/testing`.
 
 ## Backends and environment
 
