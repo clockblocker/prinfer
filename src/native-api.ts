@@ -12,16 +12,23 @@ import {
 } from "@typescript/native/unstable/ast";
 import {
 	isClassDeclaration,
+	isExpressionWithTypeArguments,
 	isFunctionDeclaration,
+	isHeritageClause,
 	isIdentifier,
+	isImportTypeNode,
 	isInterfaceDeclaration,
 	isMethodDeclaration,
 	isMethodSignatureDeclaration,
 	isParameterDeclaration,
+	isPropertyAccessExpression,
 	isPropertyAssignment,
 	isPropertyDeclaration,
 	isPropertySignatureDeclaration,
+	isQualifiedName,
 	isTypeAliasDeclaration,
+	isTypeNode,
+	isTypeQueryNode,
 	isVariableDeclaration,
 } from "@typescript/native/unstable/ast/is";
 import {
@@ -760,6 +767,13 @@ export async function hoveredType(
 		checker.getTypeAtPosition(file, position),
 		checker.getSymbolAtPosition(file, position),
 	]);
+	const token = tokenAtPosition(sourceFile, position);
+	// TypeScript 7 has no type at a name in a type position (`Holder` in
+	// `let h: Holder<1>`) and reports the error type, `any`. TypeScript 6
+	// shows the declared type of the name's symbol, `Holder<T>`.
+	if (symbol && token && isTypeReferenceName(token)) {
+		return checker.getDeclaredTypeOfSymbol(symbol);
+	}
 	if (
 		!symbol ||
 		!(symbol.flags & SymbolFlags.Property) ||
@@ -767,8 +781,52 @@ export async function hoveredType(
 	) {
 		return type;
 	}
-	const token = tokenAtPosition(sourceFile, position);
 	return token ? checker.getTypeOfSymbolAtLocation(symbol, token) : type;
+}
+
+/**
+ * Whether `name` names a type in a type position: the rule of TypeScript
+ * 6's isPartOfTypeNode for an identifier, under which getTypeAtLocation
+ * gives the declared type of the name's symbol. The right side of a
+ * qualified name (`ns.T`) or of a property access in a heritage clause
+ * (`implements ns.I`) counts; its left side, a namespace, does not.
+ */
+function isTypeReferenceName(name: Node): boolean {
+	if (!isIdentifier(name)) return false;
+	let node: Node = name;
+	const { parent } = node;
+	if (
+		(isQualifiedName(parent) && parent.right === node) ||
+		(isPropertyAccessExpression(parent) && parent.name === node)
+	) {
+		node = parent;
+	}
+	const container = node.parent;
+	if (!container || isTypeQueryNode(container)) return false;
+	if (isImportTypeNode(container)) return !container.isTypeOf;
+	// `interface A extends B<1>` and `class A implements B<1>` name types;
+	// `class A extends B<1>` names a value, the base class. (TypeScript 7
+	// counts ExpressionWithTypeArguments as a type node; TypeScript 6 does
+	// not, so it is decided first.)
+	if (isExpressionWithTypeArguments(container)) {
+		const clause = container.parent;
+		return (
+			isHeritageClause(clause) &&
+			!(
+				clause.token === SyntaxKind.ExtendsKeyword &&
+				isClassLike(clause.parent)
+			)
+		);
+	}
+	return isTypeNode(container);
+}
+
+function isClassLike(node: Node | undefined): boolean {
+	return (
+		node !== undefined &&
+		(node.kind === SyntaxKind.ClassDeclaration ||
+			node.kind === SyntaxKind.ClassExpression)
+	);
 }
 
 /**
