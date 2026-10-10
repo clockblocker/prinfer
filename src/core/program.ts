@@ -6,6 +6,8 @@ interface ProgramCacheEntry {
 	program: ts.Program;
 	files: Map<string, string>;
 	directories: Map<string, string>;
+	/** The compiler options, as JSON: programs with the same share files. */
+	options: string;
 }
 
 const programCache = new Map<string, ProgramCacheEntry>();
@@ -47,18 +49,20 @@ export function loadProgram(
 	}
 
 	if (!tsconfigPath) {
+		const options: ts.CompilerOptions = {
+			target: ts.ScriptTarget.ES2022,
+			module: ts.ModuleKind.ESNext,
+			strict: true,
+			allowJs: true,
+			checkJs: false,
+			moduleResolution: ts.ModuleResolutionKind.Bundler,
+			skipLibCheck: true,
+		};
 		const program = ts.createProgram({
 			rootNames: [entryFileAbs],
 			oldProgram: cached?.program,
-			options: {
-				target: ts.ScriptTarget.ES2022,
-				module: ts.ModuleKind.ESNext,
-				strict: true,
-				allowJs: true,
-				checkJs: false,
-				moduleResolution: ts.ModuleResolutionKind.Bundler,
-				skipLibCheck: true,
-			},
+			options,
+			host: sharingHost(options),
 		});
 		cacheProgram(cacheKey, program, [entryFileAbs], fileDir);
 		return program;
@@ -83,6 +87,7 @@ export function loadProgram(
 		rootNames,
 		options: parsed.options,
 		oldProgram: cached?.program,
+		host: sharingHost(parsed.options),
 	});
 	cacheProgram(
 		cacheKey,
@@ -144,6 +149,36 @@ export function invalidateProgramCache(
 	);
 }
 
+/**
+ * A compiler host that takes unchanged files from the cached programs with
+ * the same compiler options, so a program for another entry file of a
+ * project does not parse and bind the project and its libraries again. The
+ * programs share only source files, which depend on nothing but their text
+ * and the options; each keeps its own checker.
+ */
+function sharingHost(options: ts.CompilerOptions): ts.CompilerHost {
+	const host = ts.createCompilerHost(options);
+	const key = JSON.stringify(options);
+	const donors = [...programCache.values()].filter(
+		(entry) => entry.options === key,
+	);
+	if (donors.length === 0) return host;
+	const readSourceFile = host.getSourceFile;
+	host.getSourceFile = (fileName, ...rest) => {
+		let current: string | undefined;
+		for (const donor of donors) {
+			const signature = donor.files.get(fileName);
+			if (signature === undefined) continue;
+			current ??= statSignature(fileName) ?? "";
+			if (signature !== current) continue;
+			const sourceFile = donor.program.getSourceFile(fileName);
+			if (sourceFile) return sourceFile;
+		}
+		return readSourceFile(fileName, ...rest);
+	};
+	return host;
+}
+
 function cacheProgram(
 	cacheKey: string,
 	program: ts.Program,
@@ -167,7 +202,12 @@ function cacheProgram(
 		if (signature) directories.set(directory, signature);
 	}
 
-	programCache.set(cacheKey, { program, files, directories });
+	programCache.set(cacheKey, {
+		program,
+		files,
+		directories,
+		options: JSON.stringify(program.getCompilerOptions()),
+	});
 	if (programCache.size > MAX_CACHED_PROGRAMS) {
 		const oldestKey = programCache.keys().next().value;
 		if (oldestKey) programCache.delete(oldestKey);

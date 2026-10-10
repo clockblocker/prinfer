@@ -17,7 +17,11 @@ export {
 	getHoverInfo,
 	getSymbolKind,
 } from "./hover.js";
-export { measureHoverCost } from "./hover-cost.js";
+export {
+	type CostTarget,
+	measureHoverCost,
+	measureTargetCosts,
+} from "./hover-cost.js";
 export {
 	assertCursorPosition,
 	fromLspPosition,
