@@ -3,6 +3,12 @@ import { PrinferError, TypeScriptInternalError } from "./errors.js";
 
 export const CONTRACT_VERSION = 1 as const;
 
+export const hoverCostSchema = z.object({
+	instantiations: z.number(),
+	types: z.number(),
+});
+
+/** @deprecated `timing` is not reported since 3.2; see `hoverCostSchema`. */
 export const hoverTimingSchema = z.object({
 	resolution_ms: z.number().nonnegative(),
 });
@@ -28,7 +34,7 @@ export const hoverResultSchema = z.object({
 	documentation: z.string().optional(),
 	kind: z.string(),
 	name: z.string().optional(),
-	timing: hoverTimingSchema.optional(),
+	cost: hoverCostSchema.optional(),
 	/** The queried position, after resolving a text target to a column. */
 	position: hoverPositionSchema.optional(),
 	overloads: z.array(z.string()).optional(),

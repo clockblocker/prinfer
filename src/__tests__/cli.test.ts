@@ -28,6 +28,7 @@ const fixturesDir = path.join(import.meta.dir, "fixtures");
 const sampleFile = path.join(fixturesDir, "sample.ts");
 const jsdocFile = path.join(fixturesDir, "with-jsdoc.ts");
 const typeAliasFile = path.join(fixturesDir, "type-alias.ts");
+const typeCostFile = path.join(fixturesDir, "type-cost.ts");
 const completionsFile = path.join(fixturesDir, "completions.ts");
 const diagnosticsDir = path.join(fixturesDir, "diagnostics");
 const errorsFile = path.join(diagnosticsDir, "errors.ts");
@@ -348,16 +349,54 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
-	test("includes structured timing when requested", async () => {
+	test("--cost reports the same counts in every process", async () => {
+		const runs = await Promise.all(
+			[0, 1].map(() =>
+				runCli([`${typeCostFile}:piped`, "--cost", "--json"]),
+			),
+		);
+		const costs = runs.map(({ stdout, exitCode }) => {
+			expect(exitCode).toBe(0);
+			return hoverSuccessSchema.parse(JSON.parse(stdout)).result.cost;
+		});
+		expect(costs[0]?.instantiations).toBeGreaterThan(0);
+		expect(costs[1]).toEqual(costs[0]);
+
+		const text = await runCli([`${typeCostFile}:piped`, "--cost"]);
+		expect(text.stdout).toContain(
+			`cost: ${costs[0]?.instantiations.toLocaleString("en-US")} instantiations, `,
+		);
+	});
+
+	test("--cost refuses the typescript7 backend", async () => {
 		const { stdout, exitCode } = await runCli([
-			`${sampleFile}:4:17`,
-			"--timing",
+			`${typeCostFile}:piped`,
+			"--cost",
+			"--backend",
+			"typescript7",
 			"--json",
 		]);
-		const response = hoverSuccessSchema.parse(JSON.parse(stdout));
+		const response = contractErrorResponseSchema.parse(JSON.parse(stdout));
+		expect(response.error.code).toBe("INVALID_ARGUMENT");
+		expect(response.error.message).toContain(
+			"--cost needs the typescript6 backend",
+		);
+		expect(exitCode).toBe(1);
+	});
 
-		expect(response.result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
-		expect(exitCode).toBe(0);
+	test("--timing is accepted with a deprecation warning and reports nothing", async () => {
+		const json = await runCli([`${sampleFile}:4:17`, "--timing", "--json"]);
+		const response = hoverSuccessSchema.parse(JSON.parse(json.stdout));
+		expect(response.result.cost).toBeUndefined();
+		expect("timing" in JSON.parse(json.stdout).result).toBe(false);
+		expect(json.stderr).toBe("");
+		expect(json.exitCode).toBe(0);
+
+		const text = await runCli([`${sampleFile}:4:17`, "-t"]);
+		expect(text.stdout).not.toContain("type resolution");
+		expect(text.stderr).toContain("--timing is deprecated");
+		expect(text.stderr).toContain("--cost");
+		expect(text.exitCode).toBe(0);
 	});
 
 	test("emits contract v1 JSON errors on stdout", async () => {

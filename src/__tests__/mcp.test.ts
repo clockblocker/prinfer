@@ -211,7 +211,7 @@ describe("MCP server over stdio", () => {
 				"(a: number, b: number): number",
 			);
 			expect(parsed.result.position).toEqual({ line: 36, column: 2 });
-			expect(parsed.result.timing).toBeUndefined();
+			expect(parsed.result.cost).toBeUndefined();
 			expect(response.content[0]?.text).toContain(
 				'Target: "add" at 36:2',
 			);
@@ -643,7 +643,7 @@ describe("MCP server over stdio", () => {
 			expect(listed).not.toContain(noise);
 		}
 		// Budget for everything an agent loads per session (~4 chars/token).
-		expect(listed.length).toBeLessThan(14_400);
+		expect(listed.length).toBeLessThan(14_800);
 
 		const outputSchema = (name: string) => {
 			const tool = tools.find((candidate) => candidate.name === name);
@@ -803,52 +803,73 @@ describe("contract suggestions", () => {
 	});
 });
 
-describe("MCP server with PRINFER_INCLUDE_TIMING=1", () => {
-	let timed: StdioMcpClient;
+describe("MCP include_cost", () => {
+	let server: StdioMcpClient;
+	const costFile = path.join(fixturesDir, "type-cost.ts");
 
 	beforeAll(async () => {
-		timed = new StdioMcpClient({ PRINFER_INCLUDE_TIMING: "1" });
-		await timed.initialize();
+		// The removed timing switch must not bring timing back.
+		server = new StdioMcpClient({ PRINFER_INCLUDE_TIMING: "1" });
+		await server.initialize();
 	});
 
-	afterAll(() => timed?.close());
+	afterAll(() => server?.close());
 
-	test("adds timing to every hover tool", async () => {
-		const hover = hoverSuccessSchema.parse(
+	test("counts on TypeScript 6 when no backend is given, the same in every tool", async () => {
+		const byName = await server.call("hover_by_name", {
+			file: costFile,
+			name: "piped",
+			include_cost: true,
+		});
+		const cost = hoverSuccessSchema.parse(byName.structuredContent).result
+			.cost;
+		expect(cost?.instantiations).toBeGreaterThan(0);
+		expect(byName.content[0]?.text).toContain(
+			`Cost: ${cost?.instantiations.toLocaleString("en-US")} instantiations`,
+		);
+
+		const at = hoverSuccessSchema.parse(
 			(
-				await timed.call("hover", {
-					file: sampleFile,
-					line: 4,
-					text: "add",
+				await server.call("hover", {
+					file: costFile,
+					line: 29,
+					text: "piped",
+					include_cost: true,
 					backend: "typescript6",
 				})
 			).structuredContent,
 		);
-		expect(hover.result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
-
-		const byName = hoverSuccessSchema.parse(
-			(
-				await timed.call("hover_by_name", {
-					file: sampleFile,
-					name: "multiply",
-				})
-			).structuredContent,
-		);
-		expect(byName.result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
+		expect(at.result.cost).toEqual(cost);
 
 		const batch = batchHoverSuccessSchema.parse(
 			(
-				await timed.call("batch_hover", {
-					file: sampleFile,
-					backend: "typescript6",
-					positions: [{ line: 4, text: "add" }, { name: "multiply" }],
+				await server.call("batch_hover", {
+					file: costFile,
+					include_cost: true,
+					positions: [{ line: 29, text: "piped" }, { name: "piped" }],
 				})
 			).structuredContent,
 		);
 		for (const item of batch.result.items) {
-			expect(item.result?.timing?.resolution_ms).toBeGreaterThanOrEqual(
-				0,
-			);
+			expect(item.result?.cost).toEqual(cost);
+			expect(item.result).not.toHaveProperty("timing");
 		}
+	});
+
+	test("refuses an explicit typescript7 backend", async () => {
+		const response = await server.call("hover_by_name", {
+			file: costFile,
+			name: "piped",
+			include_cost: true,
+			backend: "typescript7",
+		});
+		expect(response.isError).toBe(true);
+		const parsed = contractErrorResponseSchema.parse(
+			response.structuredContent,
+		);
+		expect(parsed.error.code).toBe("INVALID_ARGUMENT");
+		expect(parsed.error.message).toContain(
+			'include_cost needs backend "typescript6"',
+		);
 	});
 });

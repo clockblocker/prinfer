@@ -115,7 +115,7 @@ describe("test-runner snapshot integration", () => {
 		);
 	});
 
-	test("uses the explicit TypeScript 7 project and reports timing", async () => {
+	test("uses the explicit TypeScript 7 project", async () => {
 		const fixture = new URL(
 			"./fixtures/native-fidelity.ts",
 			import.meta.url,
@@ -124,12 +124,10 @@ describe("test-runner snapshot integration", () => {
 			name: "nullable",
 			project: new URL("./fixtures/tsconfig.loose.json", import.meta.url)
 				.pathname,
-			include_timing: true,
 			backend: "typescript7",
 		});
 
 		expect(result.signature).toBe("any");
-		expect(result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
 	});
 
 	test("returns TypeScript 7 symbol metadata by position", async () => {

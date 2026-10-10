@@ -50,7 +50,7 @@ interface Labels {
 	kind: string;
 	position?: string;
 	docs: string;
-	timing: string;
+	cost: string;
 	overloads: string;
 	target: string;
 }
@@ -62,7 +62,7 @@ const LABELS: Record<HoverTextSurface, Labels> = {
 		name: "name: ",
 		kind: "kind: ",
 		docs: "docs: ",
-		timing: "type resolution: ",
+		cost: "cost: ",
 		overloads: "overloads:",
 		target: "target: ",
 	},
@@ -73,7 +73,7 @@ const LABELS: Record<HoverTextSurface, Labels> = {
 		kind: "Kind: ",
 		position: "Position: ",
 		docs: "Documentation: ",
-		timing: "Type resolution: ",
+		cost: "Cost: ",
 		overloads: "Overloads:",
 		target: "Target: ",
 	},
@@ -156,8 +156,10 @@ export function formatHoverText(
 	if (ambiguity) lines.push(ambiguity);
 	if (result.documentation)
 		lines.push(`${labels.docs}${result.documentation}`);
-	if (result.timing) {
-		lines.push(`${labels.timing}${result.timing.resolution_ms} ms`);
+	if (result.cost) {
+		lines.push(
+			`${labels.cost}${formatCount(result.cost.instantiations)} instantiations, ${formatCount(result.cost.types)} types`,
+		);
 	}
 	if (options.target) {
 		const { text, line, column } = options.target;

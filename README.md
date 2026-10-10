@@ -85,6 +85,25 @@ Failed lookups throw (or reject) with the fix in the message: an unknown name li
 
 `prinfer/vitest` remains as a deprecated alias for `prinfer/testing`.
 
+### Type cost budgets
+
+`inferredTypeCost` counts the work TypeScript does for a type, so a test can stop an expensive type from getting more expensive:
+
+```typescript
+import { inferredTypeCost } from "prinfer/testing";
+
+test("userSchema stays cheap to infer", () => {
+  expect(inferredTypeCost(import.meta.url, { name: "userSchema" }).instantiations)
+    .toBeLessThan(5_000);
+});
+```
+
+It returns `{ instantiations, types }`: the type instantiations (what `tsc --extendedDiagnostics` reports as `Instantiations`) and the types that a fresh TypeScript 6 checker creates while it resolves the target and writes out its untruncated type. Each count gets a new checker, so no earlier lookup has done part of the work. The numbers are the same on every run, in every process, in any test order, and with any display option. Only the code, the compiler options, and the TypeScript version change them, so pin `typescript` in a project that budgets types. prinfer reports no wall-clock time: identical runs of the same lookup differ by several times.
+
+The count covers what the target's type takes: for `const x = expr`, checking `expr`; for a function without a return type annotation, inferring the return type from its `return` statements. Code the type doesn't depend on is not counted, such as an initializer under an annotation (`const x: T = expr` takes its type from `T`). Target that expression with `{ line, text }` to count it.
+
+TypeScript 7 exposes no instantiation counts, so costs are TypeScript 6 only: with `backend: "typescript7"`, `inferredTypeCost` and `include_cost` throw. The other surfaces take `include_cost` (MCP, library) or `--cost` (CLI) and add the same numbers to the hover result as `cost`.
+
 ## Install
 
 Pick your client. Every setup command below runs through `npx`, so nothing has to be installed first. If you install globally (`npm i -g prinfer`), drop the `npx -y` prefix and setup registers the `prinfer-mcp` binary, which skips npx's package check on every launch.
@@ -295,6 +314,7 @@ Every hover returns the same fields on every backend and surface:
 - `display` is the editor's hover text (`const names: string[]`, object types over several lines). Only the TypeScript 7 language server reports it.
 - `kind` is the editor's label: `function`, `method`, `const`, `let`, `var`, `parameter`, `property`, `type`, `interface`, `class`, `enum`, and so on, plus `call` for the callee of a call.
 - `overloads`, `unionMembers` (members of a union type), and `alternatives` appear when they apply.
+- `cost` is `{ instantiations, types }` when the call passes `include_cost: true`: the checker work the type takes, the same on every run (see [Type cost budgets](#type-cost-budgets)). It is counted on TypeScript 6, so a hover with `include_cost` and no `backend` runs there, and one with `backend: "typescript7"` fails with `INVALID_ARGUMENT`. The text adds `Cost: 195 instantiations, 212 types`.
 
 ### completions
 
@@ -371,6 +391,7 @@ A `redundant` annotation can be deleted without changing the type. A `widening` 
 
 - `typescript7` runs the native TypeScript 7 language server (the testing helpers use its standalone compiler API). One warm session per project is shared across requests, and its output is closest to what your editor shows.
 - `typescript6` uses the TypeScript 6 compiler API in-process. If a lookup fails or looks wrong on TypeScript 7, retry that call with `typescript6`.
+- [Type costs](#type-cost-budgets) (`include_cost`, `--cost`, `inferredTypeCost`) are counted on TypeScript 6 on every surface.
 
 The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. Both backends pick the same symbol for `hover_by_name`, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
 
@@ -382,10 +403,9 @@ Environment variables on the server process:
 
 | Variable | Effect |
 | :- | :- |
-| `PRINFER_BACKEND=typescript6` | Default backend for `hover_by_name`, `hover`, `batch_hover`, and `diagnostics`. An explicit `backend` argument still wins. |
-| `PRINFER_INCLUDE_TIMING=1` | Add type-resolution timing to every hover result (`1` or `true`). |
+| `PRINFER_BACKEND=typescript6` | Default backend for `hover_by_name`, `hover`, `batch_hover`, and `diagnostics`. An explicit `backend` argument, or `include_cost`, still wins. |
 
-Timing appears as `Type resolution: 82.06 ms` in text and `timing: { resolution_ms }` in structured content. It covers only the type lookup itself: the in-process checker call on TypeScript 6, the language-server hover exchange on TypeScript 7. Startup, project loading, file reads, and name or text resolution are excluded. In `batch_hover` each successful item gets its own timing.
+`PRINFER_INCLUDE_TIMING` is no longer read; pass `include_cost` for [type costs](#type-cost-budgets) instead.
 
 ## Error contract
 
@@ -438,7 +458,7 @@ prinfer src/utils.ts:format --docs      # include JSDoc
 prinfer src/utils.ts:largeType --full   # turn off TypeScript's own truncation
 prinfer src/utils.ts:status --sort-unions  # union members in a fixed order, the same on both backends
 prinfer src/utils.ts:largeType --max-chars 0   # print the whole type (default cap: 4000 chars)
-prinfer src/utils.ts:format --timing    # type-resolution timing
+prinfer src/utils.ts:format --cost      # type instantiations, the same every run (TS6)
 prinfer src/utils.ts:format -p ./tsconfig.json
 
 # Completions at a cursor: the top 50, filtered by the text typed left of the cursor
@@ -524,9 +544,11 @@ hover("./src/utils.ts", "names", { line: 11 });
 hover("./src/utils.ts", 11, 33);
 // => { signature: "{ id: number; name: string; }", line: 11, column: 33, kind: "parameter", name: "user", ... }
 
-// Options: include_docs, full (no truncation), sort_unions, include_timing, project
+// Options: include_docs, full (no truncation), sort_unions, include_cost, project
 hover("./src/utils.ts", "format", { include_docs: true }).documentation;
 // => "Formats a number with a fixed number of digits."
+hover("./src/utils.ts", "names", { include_cost: true }).cost;
+// => { instantiations, types }, the same on every run; see Type cost budgets
 
 // Several positions in one file, one program load
 const batch = batchHover("./src/utils.ts", [

@@ -30,13 +30,9 @@ describe("TypeScript 7 native LSP", () => {
 	});
 
 	test("reuses the session for name-based hover", async () => {
-		const result = await nativeHoverByName(fixture, "multiply", {
-			include_timing: true,
-		});
+		const result = await nativeHoverByName(fixture, "multiply");
 		expect(result.signature).toContain("(x: number, y: number) => number");
 		expect(result.name).toBe("multiply");
-		expect(result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
-		expect(Object.keys(result.timing ?? {})).toEqual(["resolution_ms"]);
 	});
 
 	test("keeps documentation out of the signature", async () => {

@@ -6,7 +6,12 @@ export interface HoverOptions {
 	project?: string;
 	/** Include JSDoc/TSDoc documentation */
 	include_docs?: boolean;
-	/** Include the hovered symbol's type-resolution timing */
+	/** Count the checker work behind the hovered type; see `HoverCost` */
+	include_cost?: boolean;
+	/**
+	 * @deprecated No effect since 3.2: wall-clock timing varied too much
+	 * between identical runs to compare. Use `include_cost`.
+	 */
 	include_timing?: boolean;
 	/** Disable TypeScript's own type truncation (`{ ...; }`). Default false */
 	full?: boolean;
@@ -35,6 +40,23 @@ export interface HoverOptions {
 	backend?: "typescript6" | "typescript7";
 }
 
+/**
+ * The checker work behind a hovered type, counted on TypeScript 6 by a
+ * fresh checker over the same program while it resolves the type and
+ * expands it into its untruncated text. A warm checker would reuse earlier
+ * lookups, so counting from a fresh one makes the numbers the same on every
+ * run, in any process, whatever was looked up before. Display options
+ * (`full`, `include_docs`) do not change them. Only the files, the compiler
+ * options, and the TypeScript version do.
+ */
+export interface HoverCost {
+	/** Type instantiations, the count `tsc --extendedDiagnostics` reports */
+	instantiations: number;
+	/** Types created */
+	types: number;
+}
+
+/** @deprecated Not reported since 3.2; see `HoverCost`. */
 export interface HoverTiming {
 	/** Time spent resolving the hovered symbol's type */
 	resolution_ms: number;
@@ -102,7 +124,9 @@ export interface HoverResult {
 	kind: string;
 	/** Symbol name if available */
 	name?: string;
-	/** Present when include_timing is true */
+	/** Present when include_cost is true */
+	cost?: HoverCost;
+	/** @deprecated Not reported since 3.2; use `include_cost` and `cost`. */
 	timing?: HoverTiming;
 	/**
 	 * Every call signature, in declaration order, when the hovered function,

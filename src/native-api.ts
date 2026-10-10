@@ -446,7 +446,6 @@ export async function nativeTypeInfoAt(
 	options?: HoverOptions,
 ): Promise<HoverResult> {
 	const { file, text, line, column, position } = cursor;
-	const resolutionStarted = performance.now();
 	const type = await hoveredType(project, sourceFile, file, position);
 	if (!type) {
 		throw new PrinferError(
@@ -461,11 +460,6 @@ export async function nativeTypeInfoAt(
 		{ ...options, line, column },
 	);
 	if (options?.sort_unions) sortResultUnions(result);
-	if (options?.include_timing) {
-		result.timing = {
-			resolution_ms: roundMs(performance.now() - resolutionStarted),
-		};
-	}
 	return result;
 }
 
@@ -1332,8 +1326,4 @@ function nodeNameText(node: Node): string | undefined {
 	if (isIdentifier(node)) return node.text;
 	const name = nodeName(node);
 	return name && isIdentifier(name) ? name.text : undefined;
-}
-
-function roundMs(value: number): number {
-	return Math.round(value * 100) / 100;
 }

@@ -198,7 +198,6 @@ class NativeLspClient {
 	): Promise<{
 		result: LspHover | null;
 		text: string;
-		resolutionMs: number;
 		extras: HoverExtras;
 	}> {
 		await this.ready;
@@ -213,7 +212,6 @@ class NativeLspClient {
 		);
 		await this.acquireHoverLength(full);
 		try {
-			const resolutionStarted = performance.now();
 			const result = (await this.request("textDocument/hover", {
 				textDocument: { uri },
 				position: toLspPosition(document.text, {
@@ -221,7 +219,6 @@ class NativeLspClient {
 					character: position.column - 1,
 				}),
 			})) as LspHover | null;
-			const resolutionMs = roundMs(performance.now() - resolutionStarted);
 			const extras = result
 				? await this.hoverExtras(
 						file,
@@ -229,7 +226,7 @@ class NativeLspClient {
 						full,
 					)
 				: {};
-			return { result, text: document.text, resolutionMs, extras };
+			return { result, text: document.text, extras };
 		} finally {
 			this.releaseHoverLength();
 		}
@@ -656,7 +653,6 @@ export async function nativeHover(
 	const {
 		result: hover,
 		text,
-		resolutionMs,
 		extras,
 	} = await client.hover(
 		entryFileAbs,
@@ -683,9 +679,6 @@ export async function nativeHover(
 	if (extras.unionMembers !== undefined)
 		result.unionMembers = extras.unionMembers;
 	if (options?.sort_unions) sortResultUnions(result);
-	if (options?.include_timing) {
-		result.timing = { resolution_ms: resolutionMs };
-	}
 	return result;
 }
 
@@ -1222,8 +1215,4 @@ function matchBracket(text: string, open: number): number {
 /** UTF-16 offset of a 1-based TypeScript-rules position in `text`. */
 function offsetOf(text: string, position: HoverPosition): number {
 	return (lineStarts(text)[position.line - 1] ?? 0) + position.column - 1;
-}
-
-function roundMs(value: number): number {
-	return Math.round(value * 1000) / 1000;
 }

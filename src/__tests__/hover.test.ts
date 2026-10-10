@@ -174,15 +174,11 @@ describe("hover", () => {
 		}).toThrow();
 	});
 
-	test("optionally reports only TypeScript 6 type-resolution timing", () => {
+	test("omits cost unless requested; the deprecated include_timing does nothing", () => {
+		expect(hover(sampleFile, 4, 17).cost).toBeUndefined();
 		const result = hover(sampleFile, 4, 17, { include_timing: true });
-
-		expect(result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
-		expect(Object.keys(result.timing ?? {})).toEqual(["resolution_ms"]);
-	});
-
-	test("omits timing unless requested", () => {
-		expect(hover(sampleFile, 4, 17).timing).toBeUndefined();
+		expect(result.cost).toBeUndefined();
+		expect(result.timing).toBeUndefined();
 	});
 });
 
@@ -211,20 +207,24 @@ describe("batchHover", () => {
 		});
 	});
 
-	test("reports type-resolution timing per item", () => {
-		const result = batchHover(
-			sampleFile,
-			[
-				{ line: 4, column: 17 },
-				{ line: 9, column: 14 },
-			],
-			{ include_timing: true },
-		);
+	test("reports each item's cost as a single hover would", () => {
+		const positions = [
+			{ line: 4, column: 17 },
+			{ line: 9, column: 14 },
+		];
+		const result = batchHover(sampleFile, positions, {
+			include_cost: true,
+		});
 
-		expect(
-			result.items[0]?.result?.timing?.resolution_ms,
-		).toBeGreaterThanOrEqual(0);
-		expect("timing" in result).toBe(false);
+		expect(result.items.map((item) => item.result?.cost)).toEqual(
+			positions.map(
+				(position) =>
+					hover(sampleFile, position.line, position.column, {
+						include_cost: true,
+					}).cost,
+			),
+		);
+		expect("cost" in result).toBe(false);
 	});
 });
 
