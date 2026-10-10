@@ -1,6 +1,6 @@
 {
 	"name": "typeprobe",
-	"version": "3.4.0",
+	"version": "4.0.0",
 	"mcpName": "io.github.clockblocker/typeprobe",
 	"description": "TypeScript inferred types, completions and type errors for AI coding agents and type tests: an MCP server, a CLI, and snapshot-test helpers",
 	"type": "module",

@@ -9,13 +9,13 @@
 		"id": "1147042513"
 	},
 	"websiteUrl": "https://clockblocker.github.io/typeprobe/",
-	"version": "3.4.0",
+	"version": "4.0.0",
 	"packages": [
 		{
 			"registryType": "npm",
 			"registryBaseUrl": "https://registry.npmjs.org",
 			"identifier": "typeprobe",
-			"version": "3.4.0",
+			"version": "4.0.0",
 			"runtimeHint": "npx",
 			"transport": {
 				"type": "stdio"
