@@ -1,5 +1,28 @@
 # prinfer
 
+## 3.4.0
+
+### Minor Changes
+
+- 1704d78: `expectType` takes `costCompiler` (`"bundled"`, `"project"`, or `"auto"`; default `compiler`'s) to count budgets on another TypeScript 6 than the one that prints: `{ backend: "typescript7", costCompiler: "project" }` prints on the bundled TypeScript 7 and counts on the project's TypeScript 6. A failed budget now names both compilers (`counted on typescript 5.9.3, project; printed on typescript 7.0.2, bundled`, or `counted and printed on ...` when they are the same), and a passing `expectType` result names the printing one in its non-enumerable `compiler`. `inferredTypeCost`, which only counts, throws on `costCompiler`: its `compiler` already picks the counting one.
+- 1704d78: New `expectTypes` in `prinfer/testing` runs `expectType` on several targets of one file, with a budget for all of them together, and throws one `TypeExpectationError` listing every failed check: each entry's, with its `index`, and the group budget's, with every entry's own count.
+
+  ```ts
+  expectTypes(import.meta.url, {
+    types: [
+      { name: "userSchema", maxInstantiations: 3_000 },
+      { name: "User", printed: "{ id: string; }" },
+    ],
+    maxInstantiations: 8_000,
+  });
+  ```
+
+  The group budget counts one fresh TypeScript 6 checker resolving every target, so work they share is counted once, as a type check of the module counts it. Targets are resolved in source order, so the total doesn't depend on the order of `types` (a checker's count can otherwise differ by a type with the order it meets them in). `project`, `compiler`, and `costCompiler` go on the group; `backend`, `full`, `sort_unions`, `readable`, and `timeout` there are defaults for every entry.
+
+- 1704d78: `compiler: "project"` also finds a project's `@typescript/native` (an alias of `typescript` 7, the name prinfer itself installs it under) for the TypeScript 7 backend. The nearest install wins, as before; side by side, `typescript` 7 comes first, then `@typescript/native`, then `@typescript/native-preview`. A dev build under any name is held to the same 7.0.0-dev.20260624.1 minimum.
+
+  Fixed: when a package manager hoists prinfer's own `typescript` or `@typescript/native` into the project's node_modules, `"project"` no longer runs it as if it were the project's. It counts only if the project's nearest package.json, or its workspace root's, declares the package; otherwise `"project"` throws, naming the copy it skipped, and `"auto"` uses the bundled compiler.
+
 ## 3.3.0
 
 ### Minor Changes
