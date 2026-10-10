@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { contractError } from "./contract.js";
 import { resolveTextColumn } from "./core/text-target.js";
-import { PrinferError } from "./errors.js";
+import { COST_NEEDS_TYPESCRIPT6, PrinferError } from "./errors.js";
 import { hover } from "./index.js";
 import {
 	closeNativeApiSessions,
@@ -12,7 +12,7 @@ import {
 	nativeApiTypeInfo,
 	nativeApiTypeInfoByName,
 } from "./native-api.js";
-import type { HoverOptions, HoverResult } from "./types.js";
+import type { HoverCost, HoverOptions, HoverResult } from "./types.js";
 
 /**
  * A source file for the testing helpers. Pass `import.meta.url` for the test
@@ -221,6 +221,35 @@ export function inferredTypeInfo(
 }
 
 /**
+ * Count the checker work behind a type, for a test that keeps it within a
+ * budget. The counts come from a fresh TypeScript 6 checker (see
+ * `HoverCost`), so they are the same on every run, in any test order, and
+ * change only when the code, the compiler options, or the TypeScript
+ * version does. Synchronous; TypeScript 6 only.
+ *
+ * @example
+ * ```ts
+ * expect(
+ *   inferredTypeCost(import.meta.url, { name: "userSchema" }).instantiations,
+ * ).toBeLessThan(2_000);
+ * ```
+ */
+export function inferredTypeCost(
+	file: TestingFile,
+	selector: TypeScript6InferredTypeSelector,
+): HoverCost {
+	const request = createRequest("inferredTypeCost", file, selector);
+	if (request.backend === "typescript7") {
+		throw costNeedsTypeScript6(request.helper);
+	}
+	const result = inferredTypeInfoImpl("inferredTypeCost", file, {
+		...selector,
+		include_cost: true,
+	}) as HoverResult;
+	return result.cost as HoverCost;
+}
+
+/**
  * Close the shared TypeScript 7 compiler sessions used by the testing helpers.
  * Optional: idle sessions do not keep the process alive. Call it to release
  * the compiler processes early, e.g. from `afterAll`.
@@ -237,6 +266,7 @@ function inferredTypeInfoImpl(
 	const request = createRequest(helper, file, selector);
 	if (request.backend === "typescript7") {
 		return (async () => {
+			if (selector.include_cost) throw costNeedsTypeScript6(helper);
 			try {
 				const target = resolveTarget(request, selector, "start");
 				const options = hoverOptions(selector);
@@ -376,8 +406,8 @@ function resolveTarget(
 
 /** Snapshots default to untruncated types, so a change anywhere in a type fails. */
 function hoverOptions(selector: InferredTypeSelector): HoverOptions {
-	const { project, include_docs, include_timing, full = true } = selector;
-	return { project, include_docs, include_timing, full };
+	const { project, include_docs, include_cost, full = true } = selector;
+	return { project, include_docs, include_cost, full };
 }
 
 function assertPositive(helper: string, field: string, value: unknown): void {
@@ -403,6 +433,14 @@ function invalidSelector(helper: string): PrinferError {
 		"INVALID_ARGUMENT",
 		`${helper} needs exactly one target.`,
 		shapes,
+	);
+}
+
+function costNeedsTypeScript6(helper: string): PrinferError {
+	return testingError(
+		"INVALID_ARGUMENT",
+		`${helper} cannot count type costs on backend "typescript7". ${COST_NEEDS_TYPESCRIPT6}`,
+		"Omit backend to count on TypeScript 6.",
 	);
 }
 

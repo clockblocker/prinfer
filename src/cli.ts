@@ -24,7 +24,11 @@ import {
 	resolveTextColumn,
 } from "./core/index.js";
 import { formatErrorText, reportError } from "./error-report.js";
-import { assertSourceFile, PrinferError } from "./errors.js";
+import {
+	assertSourceFile,
+	COST_NEEDS_TYPESCRIPT6,
+	PrinferError,
+} from "./errors.js";
 import { DEFAULT_MAX_CHARS, formatHoverText } from "./hover-format.js";
 import { diagnostics, hover } from "./index.js";
 import { runSetup } from "./setup.js";
@@ -74,7 +78,8 @@ Options:
   --text <text>        Target text on <file>:<line>, instead of a :<text> suffix
   --occurrence <n>     Which match of the text on the line (default 1)
   --docs, -d           Include JSDoc/TSDoc documentation
-  --timing, -t         Include type-resolution timing
+  --cost               Count the type instantiations and types a fresh checker
+                       needs for the type: the same on every run. typescript6 only
   --full, -f           Disable TypeScript's type truncation ("... 12 more ...")
   --max-chars <n>      Print at most n characters of type text (default ${DEFAULT_MAX_CHARS};
                        0 for no limit). Applies to text output; --json is never cut
@@ -93,6 +98,7 @@ Examples:
   prinfer src/utils.ts:createHandler --json
   prinfer src/utils.ts:createHandler:75
   prinfer src/utils.ts:75:user --docs
+  prinfer src/schema.ts:userSchema --cost
   prinfer src/utils.ts:75 --text user --occurrence 2
   prinfer src/utils.ts:75:10
   prinfer complete src/utils.ts:75:user.
@@ -140,7 +146,7 @@ interface CliHoverOptions {
 	file: string;
 	target: HoverTarget;
 	includeDocs: boolean;
-	includeTiming: boolean;
+	includeCost: boolean;
 	full: boolean;
 	maxChars: number;
 	json: boolean;
@@ -170,6 +176,7 @@ const CHECK_USAGE =
 
 const HOVER_KEYS = new Set([
 	"docs",
+	"cost",
 	"timing",
 	"full",
 	"json",
@@ -411,13 +418,24 @@ function parseArgs(argv: string[]): CliOptions | null {
 		};
 	}
 
+	const includeCost = values.has("cost");
+	if (includeCost && backend === "typescript7") {
+		fail(`--cost needs the typescript6 backend. ${COST_NEEDS_TYPESCRIPT6}`);
+	}
+	// --json keeps stderr empty.
+	if (values.has("timing") && !json) {
+		console.error(
+			"Warning: --timing is deprecated and reports nothing; wall-clock timing varied too much between identical runs to compare. Use --cost for counts that do not.",
+		);
+	}
+
 	return {
 		mode: "hover",
 		arg,
 		file: parsed.file,
 		target,
 		includeDocs: values.has("docs"),
-		includeTiming: values.has("timing"),
+		includeCost,
 		full: values.has("full"),
 		maxChars:
 			parseInteger(values.get("maxChars"), "--max-chars", 0, fail) ??
@@ -491,7 +509,7 @@ async function runHover(
 	assertSourceFile(options.file);
 	const hoverOptions: HoverOptions = {
 		include_docs: options.includeDocs,
-		include_timing: options.includeTiming,
+		include_cost: options.includeCost,
 		full: options.full,
 		project: options.project,
 	};
