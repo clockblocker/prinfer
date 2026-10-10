@@ -865,6 +865,16 @@ const EXTRA_SELECTOR_KEYS: Record<string, string[]> = {
 /** The keys of one target in a batched inferredTypeCost. */
 const TARGET_KEYS = ["name", "line", "column", "text", "occurrence"];
 
+/** The keys of a batched inferredTypeCost (see InferredTypeCostNames). */
+const BATCH_SELECTOR_KEYS = [
+	"names",
+	"targets",
+	"project",
+	"compiler",
+	"backend",
+	"strict",
+];
+
 /** A selector example that shows options sitting next to the target. */
 function selectorExample(helper: string): string {
 	if (helper === "inferredCompletions") {
@@ -931,11 +941,7 @@ function assertKnownKeys(
 	selector: object,
 	keys?: string[],
 ): void {
-	const known =
-		keys ??
-		(helper === "inferredCompletions"
-			? COMPLETIONS_SELECTOR_KEYS
-			: [...TYPE_SELECTOR_KEYS, ...(EXTRA_SELECTOR_KEYS[helper] ?? [])]);
+	const known = keys ?? selectorKeys(helper, selector);
 	const unknown = Object.keys(selector).find((key) => !known.includes(key));
 	if (unknown === undefined) return;
 	const closest = [...known].sort(
@@ -951,6 +957,21 @@ function assertKnownKeys(
 		`${helper} got unknown ${keys ? "target" : "selector"} key ${JSON.stringify(unknown)}.`,
 		`${guess}${keys ? "Target" : "Selector"} keys: ${known.join(", ")}.`,
 	);
+}
+
+/** The keys a helper's selector takes, by its shape. */
+function selectorKeys(helper: string, selector: object): string[] {
+	if (helper === "inferredCompletions") return COMPLETIONS_SELECTOR_KEYS;
+	// A batch takes only its own options. Mixed with a target, it is left
+	// to inferredTypeCost's own, clearer error.
+	if (
+		helper === "inferredTypeCost" &&
+		("names" in selector || "targets" in selector) &&
+		!TARGET_KEYS.some((key) => key in selector)
+	) {
+		return BATCH_SELECTOR_KEYS;
+	}
+	return [...TYPE_SELECTOR_KEYS, ...(EXTRA_SELECTOR_KEYS[helper] ?? [])];
 }
 
 function resolveTarget(
