@@ -52,6 +52,7 @@ import {
 	type OptionalStep,
 	singleLine,
 } from "./core/signature-text.js";
+import { sortResultUnions } from "./core/union-order.js";
 import { PrinferError } from "./errors.js";
 import type {
 	CompletionOptions,
@@ -459,6 +460,7 @@ export async function nativeTypeInfoAt(
 		{ file, sourceFile, syntax: parseSyntax(file, text), position },
 		{ ...options, line, column },
 	);
+	if (options?.sort_unions) sortResultUnions(result);
 	if (options?.include_timing) {
 		result.timing = {
 			resolution_ms: roundMs(performance.now() - resolutionStarted),

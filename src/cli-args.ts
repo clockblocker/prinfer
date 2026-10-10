@@ -140,6 +140,7 @@ export const FLAGS: Record<string, { key: string; value?: true }> = {
 	"-t": { key: "timing" },
 	"--full": { key: "full" },
 	"-f": { key: "full" },
+	"--sort-unions": { key: "sortUnions" },
 	"--json": { key: "json" },
 	"--suggestions": { key: "suggestions" },
 	"--text": { key: "text", value: true },

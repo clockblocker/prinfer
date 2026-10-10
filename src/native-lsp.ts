@@ -27,6 +27,7 @@ import { lookupName } from "./core/name-lookup.js";
 import { findNodeAtPosition } from "./core/node-find.js";
 import { getNameNode } from "./core/node-match.js";
 import { singleLine } from "./core/signature-text.js";
+import { sortResultUnions } from "./core/union-order.js";
 import {
 	type FileChange,
 	WorkspaceFiles,
@@ -681,6 +682,7 @@ export async function nativeHover(
 	if (extras.overloads) result.overloads = extras.overloads;
 	if (extras.unionMembers !== undefined)
 		result.unionMembers = extras.unionMembers;
+	if (options?.sort_unions) sortResultUnions(result);
 	if (options?.include_timing) {
 		result.timing = { resolution_ms: resolutionMs };
 	}

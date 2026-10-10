@@ -11,6 +11,7 @@ import {
 	getHoverInfo,
 	loadProgram,
 	lookupName,
+	sortResultUnions,
 } from "./core/index.js";
 import type {
 	AnnotationFinding,
@@ -259,7 +260,12 @@ function hoverByPositionImpl(
 	column: number,
 	options?: HoverOptions,
 ): HoverResult {
-	const { project, include_docs = false, full = false } = options ?? {};
+	const {
+		project,
+		include_docs = false,
+		full = false,
+		sort_unions = false,
+	} = options ?? {};
 	const includeTiming = options?.include_timing ?? false;
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
@@ -285,6 +291,7 @@ function hoverByPositionImpl(
 
 	const typeResolutionStarted = performance.now();
 	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
+	if (sort_unions) sortResultUnions(result);
 	const typeResolutionMs = performance.now() - typeResolutionStarted;
 	if (includeTiming) {
 		result.timing = { resolution_ms: roundMs(typeResolutionMs) };
@@ -302,6 +309,7 @@ function hoverByNameImpl(
 		include_docs = false,
 		include_timing = false,
 		full = false,
+		sort_unions = false,
 		line,
 	} = options ?? {};
 
@@ -327,6 +335,7 @@ function hoverByNameImpl(
 
 	const typeResolutionStarted = performance.now();
 	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
+	if (sort_unions) sortResultUnions(result);
 	const typeResolutionMs = performance.now() - typeResolutionStarted;
 	if (include_timing) {
 		result.timing = { resolution_ms: roundMs(typeResolutionMs) };
@@ -369,6 +378,7 @@ export function batchHover(
 		include_docs = false,
 		include_timing = false,
 		full = false,
+		sort_unions = false,
 	} = options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
@@ -425,6 +435,7 @@ export function batchHover(
 				include_docs,
 				full,
 			);
+			if (sort_unions) sortResultUnions(result);
 			const typeResolutionMs = performance.now() - typeResolutionStarted;
 			if (include_timing) {
 				result.timing = {

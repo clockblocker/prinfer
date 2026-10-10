@@ -496,8 +496,14 @@ function resolveTarget(
 
 /** Snapshots default to untruncated types, so a change anywhere in a type fails. */
 function hoverOptions(selector: InferredTypeSelector): HoverOptions {
-	const { project, include_docs, include_timing, full = true } = selector;
-	return { project, include_docs, include_timing, full };
+	const {
+		project,
+		include_docs,
+		include_timing,
+		full = true,
+		sort_unions,
+	} = selector;
+	return { project, include_docs, include_timing, full, sort_unions };
 }
 
 function assertPositive(helper: string, field: string, value: unknown): void {

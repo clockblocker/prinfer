@@ -11,6 +11,23 @@ export interface HoverOptions {
 	/** Disable TypeScript's own type truncation (`{ ...; }`). Default false */
 	full?: boolean;
 	/**
+	 * Print union members in a fixed order, so the same type reads the same
+	 * on TypeScript 6 and TypeScript 7, which order members differently
+	 * (`"b" | "a"` and `"a" | "b"`). Default false: members print in the
+	 * order TypeScript prints them.
+	 *
+	 * Every union in `signature`, `returnType`, and `overloads` is sorted, at
+	 * any depth (object properties, parameters, return types, type arguments,
+	 * constraints): `null` and then `undefined` last, the other members by
+	 * their printed text, compared by UTF-16 code unit, so
+	 * `"b" | 2 | -1 | A | string | null | undefined` becomes
+	 * `"b" | -1 | 2 | A | string | null | undefined`. Numbers compare as
+	 * text (`1 | 10 | 2`). Only the order changes; `display` keeps the
+	 * editor's text, and a type TypeScript truncated (without `full`) is
+	 * left as printed.
+	 */
+	sort_unions?: boolean;
+	/**
 	 * Ignored by the library's `hover()` and `batchHover()`, which always use
 	 * TypeScript 6. (The MCP hover tools default to `PRINFER_BACKEND` or
 	 * typescript7; the CLI and `prinfer/testing` default to typescript6.)

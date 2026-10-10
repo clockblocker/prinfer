@@ -52,3 +52,4 @@ export {
 export { singleLine } from "./signature-text.js";
 export { resolveTextColumn, type TextTarget } from "./text-target.js";
 export { getTypeInfo, type InferredTypeResult } from "./type-info.js";
+export { sortResultUnions, sortUnionMembers } from "./union-order.js";
