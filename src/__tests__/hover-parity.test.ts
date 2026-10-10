@@ -149,6 +149,37 @@ const cases: Array<[string, number | undefined, Partial<HoverResult>]> = [
 			],
 		},
 	],
+	// Type parameter modifiers: `const`, `in`, `out`.
+	[
+		"Holder",
+		undefined,
+		{ signature: "Holder<const T extends 1 | 2>", kind: "class" },
+	],
+	["hold", undefined, { signature: "<const U>(item: U): U", kind: "method" }],
+	[
+		"holdAll",
+		undefined,
+		{
+			signature: "<const T extends readonly unknown[]>(items: T): T",
+			kind: "function",
+		},
+	],
+	[
+		"Sink",
+		undefined,
+		{ signature: "type Sink<in T> = (item: T) => void", kind: "type" },
+	],
+	[
+		"Source",
+		undefined,
+		{ signature: "type Source<out T> = () => T", kind: "type" },
+	],
+	["Cell", undefined, { signature: "Cell<in out T>", kind: "interface" }],
+	[
+		"Channel",
+		undefined,
+		{ signature: "Channel<in out K, const V>", kind: "class" },
+	],
 ];
 
 describe("backends agree on the canonical hover result", () => {

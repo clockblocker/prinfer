@@ -558,12 +558,20 @@ async function nativeOptionalFacts(
 			const symbol = await checker.getPropertyOfType(type, step.property);
 			if (!symbol) return undefined;
 			current = { symbol };
-		} else {
-			const signature = (
-				await checker.getSignaturesOfType(type, SignatureKind.Call)
-			)[step.signature];
+		} else if ("signature" in step || "construct" in step) {
+			const [kind, index] =
+				"signature" in step
+					? [SignatureKind.Call, step.signature]
+					: [SignatureKind.Construct, step.construct];
+			const signature = (await checker.getSignaturesOfType(type, kind))[
+				index
+			];
 			if (!signature) return undefined;
 			current = { signature };
+		} else {
+			const next = await nativeInnerType(checker, type, step);
+			if (!next) return undefined;
+			current = { type: next };
 		}
 	}
 	if (!("symbol" in current)) return undefined;
@@ -607,6 +615,48 @@ async function nativeOptionalFacts(
 			added.length === annotated.length &&
 			added.every((member) => annotatedIds.has(member.id)),
 	};
+}
+
+/**
+ * The type an index, element, type argument, or member step leads to; the
+ * TypeScript 7 counterpart of innerType in core/hover.ts.
+ */
+async function nativeInnerType(
+	checker: Checker,
+	type: Type,
+	step: OptionalStep,
+): Promise<Type | undefined> {
+	if ("index" in step) {
+		return (await checker.getIndexInfosOfType(type))[step.index]?.valueType;
+	}
+	if ("member" in step) {
+		if (!(type.flags & (TypeFlags.Union | TypeFlags.Intersection))) {
+			return undefined;
+		}
+		const types = (await (type as UnionType).getTypes()) ?? [];
+		const booleans = types.filter(
+			(member) => member.flags & TypeFlags.BooleanLiteral,
+		);
+		// Printed members: `true | false` once, as `boolean`.
+		const members =
+			type.flags & TypeFlags.Union && booleans.length >= 2
+				? types.filter((member) => member !== booleans[1])
+				: types;
+		return members.length === step.members
+			? members[step.member]
+			: undefined;
+	}
+	const alias =
+		"typeArgument" in step ? await type.getAliasSymbol() : undefined;
+	const typeArguments =
+		alias && "of" in step && alias.name === step.of
+			? await type.getAliasTypeArguments()
+			: type.isTypeReference()
+				? await checker.getTypeArguments(type)
+				: [];
+	if ("element" in step) return typeArguments[step.element];
+	if ("typeArgument" in step) return typeArguments[step.typeArgument];
+	return undefined;
 }
 
 /**

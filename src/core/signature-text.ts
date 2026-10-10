@@ -3,10 +3,220 @@ import * as ts from "typescript";
 /**
  * Collapse a multi-line type, as an editor hover prints it, onto one line
  * the way TypeScript 6's typeToString writes it:
- * `{\n    id: number;\n}` becomes `{ id: number; }`.
+ * `{\n    id: number;\n}` becomes `{ id: number; }`, and a tuple printed
+ * one element per line, `[\n    string,\n    number\n]`, becomes
+ * `[string, number]`.
  */
 export function singleLine(text: string): string {
-	return text.replace(/[^\S\n]*\n\s*/g, " ").trim();
+	return text
+		.replace(/\[\s*\n\s*/g, "[")
+		.replace(/\s*\n\s*\]/g, "]")
+		.replace(/[^\S\n]*\n\s*/g, " ")
+		.trim();
+}
+
+/**
+ * `Array<T>` and `ReadonlyArray<T>` written the way typeToString writes
+ * them, `T[]` and `readonly T[]`, with the parentheses it adds:
+ * `Array<string | number>` becomes `(string | number)[]`. The TypeScript 7
+ * language server reuses a declaration's annotation, so its hover keeps
+ * whichever spelling the source used; the checker backends print `T[]`.
+ */
+export function arraySyntax(text: string): string {
+	if (!/\b(?:Readonly)?Array</.test(text)) return text;
+	const tokens = scanTokens(text);
+	let result = "";
+	let copied = 0;
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index] as Token;
+		const readonly = token.text === "ReadonlyArray";
+		if (
+			(token.text !== "Array" && !readonly) ||
+			tokens[index - 1]?.kind === ts.SyntaxKind.DotToken ||
+			tokens[index + 1]?.kind !== ts.SyntaxKind.LessThanToken
+		) {
+			continue;
+		}
+		const close = singleTypeArgumentEnd(tokens, index + 1);
+		if (close === undefined) continue;
+		const after = tokens[close + 1]?.kind;
+		// `Array<T>(…)` is a method named Array, not the array type.
+		if (after === ts.SyntaxKind.OpenParenToken) continue;
+		const element = arraySyntax(
+			text
+				.slice(
+					(tokens[index + 2] as Token).start,
+					(tokens[close] as Token).start,
+				)
+				.trim(),
+		);
+		let array = `${needsParentheses(element) ? `(${element})` : element}[]`;
+		if (readonly) {
+			array = `readonly ${array}`;
+			// `ReadonlyArray<T>[]` is `(readonly T[])[]`.
+			if (after === ts.SyntaxKind.OpenBracketToken) array = `(${array})`;
+		}
+		result += text.slice(copied, token.start) + array;
+		copied = (tokens[close] as Token).end;
+		index = close;
+	}
+	return result + text.slice(copied);
+}
+
+/** A declared type parameter's name and its `const`, `in`, `out` modifiers. */
+export interface TypeParameterModifiers {
+	name: string;
+	modifiers: readonly string[];
+}
+
+/**
+ * The heading of a type alias, `type Name<T> = …`, or of a class or
+ * interface, `Name<T>`, with the type parameter modifiers the declaration
+ * has: `Holder<T extends 1 | 2>` becomes `Holder<const T extends 1 | 2>`.
+ * The TypeScript 7 language server leaves `const`, `in`, and `out` out of
+ * these hovers (not out of function and method signatures).
+ */
+export function withTypeParameterModifiers(
+	text: string,
+	parameters: readonly TypeParameterModifiers[],
+): string {
+	if (!parameters.some((parameter) => parameter.modifiers.length > 0)) {
+		return text;
+	}
+	const alias = text.startsWith("type ");
+	const prefix = alias ? "" : "interface ";
+	const declaration = parse(`${prefix}${text}${alias ? ";" : " {}"}`)
+		.statements[0];
+	if (
+		!declaration ||
+		!(
+			ts.isTypeAliasDeclaration(declaration) ||
+			ts.isInterfaceDeclaration(declaration)
+		)
+	) {
+		return text;
+	}
+	const insertions: Array<[number, string]> = [];
+	declaration.typeParameters?.forEach((printed, index) => {
+		const declared = parameters[index];
+		if (
+			!declared?.modifiers.length ||
+			printed.modifiers?.length ||
+			printed.name.text !== declared.name
+		) {
+			return;
+		}
+		insertions.push([
+			printed.name.getStart() - prefix.length,
+			`${declared.modifiers.join(" ")} `,
+		]);
+	});
+	let result = text;
+	for (const [at, modifiers] of insertions.reverse()) {
+		result = result.slice(0, at) + modifiers + result.slice(at);
+	}
+	return result;
+}
+
+interface Token {
+	kind: ts.SyntaxKind;
+	text: string;
+	start: number;
+	end: number;
+}
+
+/** The tokens of printed type text, template literal types included. */
+function scanTokens(text: string): Token[] {
+	const scanner = ts.createScanner(
+		ts.ScriptTarget.Latest,
+		true,
+		ts.LanguageVariant.Standard,
+		text,
+	);
+	const tokens: Token[] = [];
+	// Open braces, and `${` of template literal types, still unclosed.
+	const braces: boolean[] = [];
+	for (
+		let kind = scanner.scan();
+		kind !== ts.SyntaxKind.EndOfFileToken;
+		kind = scanner.scan()
+	) {
+		if (kind === ts.SyntaxKind.CloseBraceToken && braces.at(-1)) {
+			kind = scanner.reScanTemplateToken(false);
+			if (kind === ts.SyntaxKind.TemplateTail) braces.pop();
+		} else if (kind === ts.SyntaxKind.CloseBraceToken) {
+			braces.pop();
+		} else if (kind === ts.SyntaxKind.OpenBraceToken) {
+			braces.push(false);
+		} else if (kind === ts.SyntaxKind.TemplateHead) {
+			braces.push(true);
+		}
+		tokens.push({
+			kind,
+			text: scanner.getTokenText(),
+			start: scanner.getTokenStart(),
+			end: scanner.getTokenEnd(),
+		});
+	}
+	return tokens;
+}
+
+/**
+ * The index of the `>` closing the `<` at `open`, when the brackets hold
+ * a single type argument; undefined when unbalanced or there are several.
+ */
+function singleTypeArgumentEnd(
+	tokens: readonly Token[],
+	open: number,
+): number | undefined {
+	let depth = 0;
+	for (let index = open; index < tokens.length; index++) {
+		switch ((tokens[index] as Token).kind) {
+			case ts.SyntaxKind.LessThanToken:
+			case ts.SyntaxKind.OpenParenToken:
+			case ts.SyntaxKind.OpenBracketToken:
+			case ts.SyntaxKind.OpenBraceToken:
+			case ts.SyntaxKind.TemplateHead:
+				depth++;
+				break;
+			case ts.SyntaxKind.GreaterThanToken:
+			case ts.SyntaxKind.CloseParenToken:
+			case ts.SyntaxKind.CloseBracketToken:
+			case ts.SyntaxKind.CloseBraceToken:
+			case ts.SyntaxKind.TemplateTail:
+				depth--;
+				if (depth === 0) {
+					const kind = (tokens[index] as Token).kind;
+					return kind === ts.SyntaxKind.GreaterThanToken &&
+						index > open + 1
+						? index
+						: undefined;
+				}
+				break;
+			case ts.SyntaxKind.CommaToken:
+				if (depth === 1) return undefined;
+		}
+	}
+	return undefined;
+}
+
+/** Whether `T[]` needs `(T)[]` for this element type, as printers add. */
+function needsParentheses(element: string): boolean {
+	const alias = parse(`type T = ${element};`).statements[0];
+	if (!alias || !ts.isTypeAliasDeclaration(alias)) return false;
+	switch (alias.type.kind) {
+		case ts.SyntaxKind.UnionType:
+		case ts.SyntaxKind.IntersectionType:
+		case ts.SyntaxKind.FunctionType:
+		case ts.SyntaxKind.ConstructorType:
+		case ts.SyntaxKind.ConditionalType:
+		case ts.SyntaxKind.TypeOperator:
+		case ts.SyntaxKind.TypeQuery:
+		case ts.SyntaxKind.InferType:
+			return true;
+		default:
+			return false;
+	}
 }
 
 /*
@@ -39,7 +249,23 @@ export type OptionalStep =
 	/** A property of a type, without its null and undefined */
 	| { property: string }
 	/** The nth call signature of a type, without its null and undefined */
-	| { signature: number };
+	| { signature: number }
+	/** The nth construct signature of a type, without its null and undefined */
+	| { construct: number }
+	/** The value type of the nth index signature of a type */
+	| { index: number }
+	/** The element type of an array (0) or the nth element of a tuple */
+	| { element: number }
+	/**
+	 * The nth type argument of `Name<...>`: the type alias's when the type
+	 * is an instance of an alias called `of`, else the class's or interface's
+	 */
+	| { typeArgument: number; of: string }
+	/**
+	 * The nth of `members` printed members of a union or intersection, not
+	 * counting null and undefined, with `true | false` printed as `boolean`
+	 */
+	| { member: number; members: number };
 
 /** An optional parameter or property printed with `| undefined`. */
 export interface OptionalSlot {
@@ -73,9 +299,11 @@ export function impliedUndefined(facts: OptionalFacts | undefined): boolean {
 
 /**
  * The optional parameters and properties in printed text whose type ends
- * in `| undefined`, with the path to each. Looks into parameters, return
- * types, object type literals, function types, and a union with one member
- * besides null and undefined; other types are left alone.
+ * in `| undefined`, with the path to each. Looks wherever an object type
+ * literal or a function type can be printed: parameters and return types,
+ * properties, call, construct, and index signatures, arrays and tuples,
+ * type arguments, and union and intersection members. Other types
+ * (conditional, mapped, indexed access) are left alone.
  */
 export function optionalSlots(
 	text: string,
@@ -228,20 +456,77 @@ function slotsOfType(
 ): void {
 	if (ts.isParenthesizedTypeNode(node)) {
 		slotsOfType(node.type, path, context);
-	} else if (ts.isUnionTypeNode(node)) {
-		const members = node.types.filter((member) => !isNullish(member));
-		if (members.length === 1)
+	} else if (
+		ts.isTypeOperatorNode(node) &&
+		node.operator === ts.SyntaxKind.ReadonlyKeyword
+	) {
+		slotsOfType(node.type, path, context);
+	} else if (ts.isUnionTypeNode(node) || ts.isIntersectionTypeNode(node)) {
+		const members = ts.isUnionTypeNode(node)
+			? node.types.filter((member) => !isNullish(member))
+			: node.types;
+		if (members.length === 1) {
 			slotsOfType(members[0] as ts.TypeNode, path, context);
+			return;
+		}
+		members.forEach((member, index) => {
+			slotsOfType(
+				member,
+				[...path, { member: index, members: members.length }],
+				context,
+			);
+		});
+	} else if (ts.isArrayTypeNode(node)) {
+		slotsOfType(node.elementType, [...path, { element: 0 }], context);
+	} else if (ts.isTupleTypeNode(node)) {
+		node.elements.forEach((element, index) => {
+			slotsOfType(
+				tupleElementType(element),
+				[...path, { element: index }],
+				context,
+			);
+		});
+	} else if (ts.isTypeReferenceNode(node)) {
+		const of = ts.isIdentifier(node.typeName)
+			? node.typeName.text
+			: node.typeName.right.text;
+		node.typeArguments?.forEach((argument, index) => {
+			slotsOfType(
+				argument,
+				[...path, { typeArgument: index, of }],
+				context,
+			);
+		});
 	} else if (ts.isFunctionTypeNode(node)) {
 		slotsOfSignature(node, [...path, { signature: 0 }], context);
+	} else if (ts.isConstructorTypeNode(node)) {
+		slotsOfSignature(node, [...path, { construct: 0 }], context);
 	} else if (ts.isTypeLiteralNode(node)) {
 		const methods = new Map<string, number>();
 		let calls = 0;
+		let constructs = 0;
+		let indexes = 0;
 		for (const member of node.members) {
 			if (ts.isCallSignatureDeclaration(member)) {
 				slotsOfSignature(
 					member,
 					[...path, { signature: calls++ }],
+					context,
+				);
+				continue;
+			}
+			if (ts.isConstructSignatureDeclaration(member)) {
+				slotsOfSignature(
+					member,
+					[...path, { construct: constructs++ }],
+					context,
+				);
+				continue;
+			}
+			if (ts.isIndexSignatureDeclaration(member)) {
+				slotsOfType(
+					member.type,
+					[...path, { index: indexes++ }],
 					context,
 				);
 				continue;
@@ -301,6 +586,25 @@ function addSlot(
 		edits.push([start, start + 1], [at(rest.end) - 1, at(rest.end)]);
 	}
 	slots.push({ path, edits });
+}
+
+/**
+ * The type of a tuple element: `X` for `X`, `name: X`, and `X?`, and the
+ * element type `X` of a rest element `...X[]`, which is the tuple's type
+ * argument.
+ */
+function tupleElementType(node: ts.TypeNode): ts.TypeNode {
+	let rest = false;
+	let type = node;
+	if (ts.isNamedTupleMember(type)) {
+		rest = type.dotDotDotToken !== undefined;
+		type = type.type;
+	} else if (ts.isRestTypeNode(type)) {
+		rest = true;
+		type = type.type;
+	}
+	if (ts.isOptionalTypeNode(type)) type = type.type;
+	return rest && ts.isArrayTypeNode(type) ? type.elementType : type;
 }
 
 function isNullish(node: ts.TypeNode): boolean {
