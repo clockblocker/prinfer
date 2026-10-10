@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	MessageChannel,
 	type MessagePort,
@@ -16,7 +16,8 @@ import type { CompletionOptions, HoverOptions, HoverResult } from "./types.js";
  *
  * `@typescript/native` only has an async API under Bun (its `unstable/sync`
  * entry reads a stdout file descriptor Bun doesn't expose), so the async
- * sessions in native-api.ts run in a worker thread (native-worker.ts) and
+ * sessions in native-api.ts run in a worker thread (native-worker.ts,
+ * loaded by native-worker-boot.ts so a failed load is reported) and
  * the calling thread blocks in `Atomics.wait` until the worker answers. The
  * answer itself travels over a MessageChannel and is read with
  * `receiveMessageOnPort`; the shared counter only says one is there.
@@ -81,6 +82,11 @@ export type NativeResponse =
 			error: SerializedError;
 			/** The worker hit an uncaught exception and must be replaced. */
 			fatal?: boolean;
+			/**
+			 * The worker module failed to load (id 0): native-worker-boot.ts
+			 * reports it so the waiting call fails now, not at its timeout.
+			 */
+			startup?: true;
 	  };
 
 /** What the worker receives on startup. */
@@ -88,6 +94,8 @@ export interface NativeWorkerData {
 	port: MessagePort;
 	/** Int32 counter the worker bumps after posting each response. */
 	signal: SharedArrayBuffer;
+	/** URL of native-worker, which native-worker-boot.ts imports. */
+	entry: string;
 }
 
 /**
@@ -171,15 +179,23 @@ export function deserializeError(serialized: SerializedError): Error {
 }
 
 /**
- * The worker entry next to this module: src/native-worker.ts when running
- * from source, dist/native-worker.js or .cjs from the ESM or CJS build
+ * Where the worker's modules are: next to this module, so src/*.ts when
+ * running from source and dist/*.js or .cjs from the ESM or CJS build
  * (where this module is bundled into testing.js, vitest.js and so on).
- * tsup's shims give the CJS build an `import.meta.url`.
+ * tsup's shims give the CJS build an `import.meta.url`. Tests replace
+ * `locate` to simulate a worker that fails to load.
  */
-function workerPath(): string {
-	const self = fileURLToPath(import.meta.url);
-	return path.join(path.dirname(self), `native-worker${path.extname(self)}`);
-}
+export const nativeWorkerLocator = {
+	locate(): { boot: string; entry: string } {
+		const self = fileURLToPath(import.meta.url);
+		const file = (name: string) =>
+			path.join(path.dirname(self), `${name}${path.extname(self)}`);
+		return {
+			boot: file("native-worker-boot"),
+			entry: file("native-worker"),
+		};
+	},
+};
 
 class NativeWorker {
 	private readonly worker: Worker;
@@ -190,20 +206,26 @@ class NativeWorker {
 	broken = false;
 
 	constructor() {
-		const entry = workerPath();
+		const { boot, entry } = nativeWorkerLocator.locate();
 		// A missing entry would only surface as an error event, which this
 		// thread can't see while it waits.
-		if (!fs.existsSync(entry)) {
-			throw new PrinferError(
-				"INTERNAL_ERROR",
-				`Cannot find the prinfer TypeScript 7 worker at ${entry}.`,
-				"prinfer/testing loads it from next to its own module, so import prinfer/testing from the installed package rather than a bundle. Omit backend to use TypeScript 6 meanwhile.",
-			);
+		for (const file of [boot, entry]) {
+			if (!fs.existsSync(file)) {
+				throw new PrinferError(
+					"INTERNAL_ERROR",
+					`Cannot find the prinfer TypeScript 7 worker at ${file}.`,
+					"prinfer/testing loads it from next to its own module, so import prinfer/testing from the installed package rather than a bundle. Omit backend to use TypeScript 6 meanwhile.",
+				);
+			}
 		}
 		const { port1, port2 } = new MessageChannel();
 		const signal = new SharedArrayBuffer(4);
-		const workerData: NativeWorkerData = { port: port2, signal };
-		this.worker = new Worker(entry, {
+		const workerData: NativeWorkerData = {
+			port: port2,
+			signal,
+			entry: pathToFileURL(entry).href,
+		};
+		this.worker = new Worker(boot, {
 			workerData,
 			transferList: [port2],
 		});
@@ -242,6 +264,11 @@ class NativeWorker {
 			const received = receiveMessageOnPort(this.port);
 			if (received) {
 				const response = received.message as NativeResponse;
+				// The worker never started: no request will be answered.
+				if (!response.ok && response.startup) {
+					this.broken = true;
+					return response;
+				}
 				// Older ids answer requests that already timed out.
 				if (response.id === id) return response;
 				continue;
@@ -289,8 +316,23 @@ export function callNative<K extends Exclude<keyof NativeOperations, "close">>(
 		);
 	}
 	if (response.ok) return response.value as NativeResults[K];
+	if (response.startup) {
+		void target.terminate();
+		throw startupError(deserializeError(response.error));
+	}
 	if (response.fatal) recycle(target);
 	throw deserializeError(response.error);
+}
+
+/** The worker module, and so `@typescript/native`, failed to load. */
+function startupError(cause: Error): PrinferError {
+	const error = new PrinferError(
+		"TYPESCRIPT_ERROR",
+		`prinfer could not start its TypeScript 7 worker: loading the TypeScript 7 compiler API failed (${cause.message}).`,
+		"Check that @typescript/native is installed next to prinfer (it is a dependency) and supports this platform; reinstalling dependencies usually fixes a partial install. Omit backend to use TypeScript 6 meanwhile.",
+	);
+	error.cause = cause;
+	return error;
 }
 
 /** Replace a worker that timed out: kill its compilers, then the thread. */

@@ -13,7 +13,9 @@ export default defineConfig({
     testing: "src/testing.ts",
     vitest: "src/vitest.ts",
     // Worker thread behind the synchronous TypeScript 7 testing helpers;
-    // src/native-sync.ts loads it from next to the bundle that imports it.
+    // src/native-sync.ts starts native-worker-boot from next to the bundle
+    // that imports it, and the boot module imports native-worker.
+    "native-worker-boot": "src/native-worker-boot.ts",
     "native-worker": "src/native-worker.ts",
   },
   format: ["esm", "cjs"],

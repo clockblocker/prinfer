@@ -5,6 +5,7 @@ import path from "node:path";
 import { contractError } from "../contract.js";
 import { NameNotFoundError } from "../core/name-lookup.js";
 import { PrinferError } from "../errors.js";
+import { nativeWorkerLocator } from "../native-sync.js";
 import {
 	closeTestingSessions,
 	type InferredCompletionsSelector,
@@ -540,6 +541,46 @@ describe("TypeScript 7 results are plain values", () => {
 		}
 	});
 
+	test("a worker that can't load @typescript/native fails at once, not at the timeout", async () => {
+		// The worker module imports @typescript/native; a broken install
+		// makes that import throw and the thread die at startup.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-worker-"));
+		const entry = path.join(dir, "native-worker.ts");
+		fs.writeFileSync(
+			entry,
+			'import "@typescript/native/prinfer-simulated-missing";\nexport {};\n',
+		);
+		await closeTestingSessions();
+		const { locate } = nativeWorkerLocator;
+		nativeWorkerLocator.locate = () => ({ ...locate(), entry });
+		try {
+			// Every call starts a new worker, and each one fails fast.
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const started = Date.now();
+				const error = thrown(() =>
+					inferredType(targets, { ...pick, timeout: 30_000 }),
+				);
+				expect(Date.now() - started).toBeLessThan(5_000);
+				expect(error.code).toBe("TYPESCRIPT_ERROR");
+				expect(error.message).toContain(
+					"prinfer could not start its TypeScript 7 worker: loading the TypeScript 7 compiler API failed (",
+				);
+				// The loader's own reason, in the message and as the cause.
+				expect(error.message).toContain("@typescript/native");
+				expect(error.suggestion).toContain(
+					"Check that @typescript/native is installed",
+				);
+				expect((error.cause as Error).message).toContain(
+					"@typescript/native",
+				);
+			}
+		} finally {
+			nativeWorkerLocator.locate = locate;
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+		expect(inferredType(targets, pick)).toBe("Drink");
+	});
+
 	test("timeout must be a positive number of milliseconds", () => {
 		for (const timeout of [0, -1, Number.NaN, "5000"]) {
 			const error = thrown(() =>
@@ -624,6 +665,7 @@ describe("teardown", () => {
 			"native-api",
 			"native-sync",
 			"native-worker",
+			"native-worker-boot",
 		].map((source) => path.join(packageRoot, "src", `${source}.ts`));
 		const stale =
 			!fs.existsSync(dist) ||
@@ -703,6 +745,41 @@ describe("teardown", () => {
 			writeScript("script.cjs", script("", [], calls, load)),
 		]);
 		expect(stderr).not.toContain("prinfer:");
+	}, 60_000);
+
+	test("the built worker fails fast on Node when @typescript/native can't load", async () => {
+		// A copy of the build whose worker module can't import the
+		// compiler API, under the package so typescript still resolves.
+		const built = path.dirname(builtEntry("testing.js"));
+		const dir = fs.mkdtempSync(
+			path.join(packageRoot, "node_modules", ".prinfer-broken-worker-"),
+		);
+		try {
+			for (const name of ["testing.js", "native-worker-boot.js"]) {
+				fs.copyFileSync(path.join(built, name), path.join(dir, name));
+			}
+			fs.writeFileSync(
+				path.join(dir, "native-worker.js"),
+				'import "@typescript/native/prinfer-simulated-missing";\n',
+			);
+			const body = [
+				"const started = Date.now();",
+				'try { inferredType(file, { name: "pick", backend: "typescript7" }); } catch (error) { console.log(error.code, Date.now() - started < 5000, error.message.includes("could not start its TypeScript 7 worker")); }',
+				"await closeTestingSessions();",
+			];
+			await exitsWithoutTeardown(
+				[
+					"node",
+					writeScript(
+						"broken.mjs",
+						script(path.join(dir, "testing.js"), [], body),
+					),
+				],
+				"TYPESCRIPT_ERROR true true\n",
+			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	}, 60_000);
 
 	test("a top-level await closeTestingSessions() settles on Node and Bun", async () => {

@@ -4,7 +4,7 @@
 
 `prinfer/testing`: the TypeScript 7 helpers are now synchronous. `inferredType` and `inferredTypeInfo` with `backend: "typescript7"`, and `inferredCompletions`, return a plain value instead of a promise. Before, a missing `await` under `bun test` made `toMatchInlineSnapshot()` record `Promise {}`, and the test passed. Now the snapshot records the type.
 
-The TypeScript 7 compiler runs in a worker thread, and each call blocks until it answers. The worker and its compiler don't keep the process alive. The CLI, the MCP server and the library still use the async client.
+The TypeScript 7 compiler runs in a worker thread, and each call blocks until it answers. The worker and its compiler don't keep the process alive. If `@typescript/native` fails to load, the call throws a `TYPESCRIPT_ERROR` with the loader's reason right away instead of waiting for the timeout. The CLI, the MCP server and the library still use the async client.
 
 New `timeout` selector option (milliseconds, default 60000). A test runner's own timeout can't interrupt a blocked call. A TypeScript 7 call that gets no answer in time throws a `TYPESCRIPT_ERROR` and stops that compiler. The next call starts a new one, so a hung compiler fails one test instead of the whole run.
 
