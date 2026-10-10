@@ -3,6 +3,13 @@ import { PrinferError, TypeScriptInternalError } from "./errors.js";
 
 export const CONTRACT_VERSION = 1 as const;
 
+/** The compiler that produced a result; see `CompilerInfo`. */
+export const compilerInfoSchema = z.object({
+	name: z.string(),
+	version: z.string(),
+	source: z.enum(["bundled", "project"]),
+});
+
 export const hoverCostSchema = z.object({
 	instantiations: z.number(),
 	types: z.number(),
@@ -40,6 +47,7 @@ export const hoverResultSchema = z.object({
 	overloads: z.array(z.string()).optional(),
 	unionMembers: z.number().optional(),
 	alternatives: z.array(declarationLocationSchema).optional(),
+	compiler: compilerInfoSchema.optional(),
 });
 
 export const completionResultSchema = z.object({
@@ -62,6 +70,7 @@ export const completionResultSchema = z.object({
 	total: z.number(),
 	truncated: z.boolean(),
 	note: z.string().optional(),
+	compiler: compilerInfoSchema.optional(),
 });
 
 export const diagnosticCategorySchema = z.enum([
@@ -87,6 +96,7 @@ export const diagnosticsResultSchema = z.object({
 	diagnostics: z.array(fileDiagnosticSchema),
 	errorCount: z.number(),
 	warningCount: z.number(),
+	compiler: compilerInfoSchema.optional(),
 });
 
 export const annotationFindingSchema = z.object({
@@ -109,6 +119,7 @@ export const annotationsResultSchema = z.object({
 	redundantCount: z.number(),
 	wideningCount: z.number(),
 	checkedCount: z.number(),
+	compiler: compilerInfoSchema.optional(),
 });
 
 export const contractErrorCodeSchema = z.enum([

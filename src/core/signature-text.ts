@@ -1,3 +1,6 @@
+// Printed text is parsed with the bundled TypeScript, never a project's
+// (see ts-runtime.ts): the text is the same whichever compiler printed it,
+// and the syntax kinds compared here are the bundled package's.
 import * as ts from "typescript";
 
 /**

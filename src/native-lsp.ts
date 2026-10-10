@@ -1,19 +1,15 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { SourceFile } from "@typescript/native/unstable/ast";
+import type { Project, Snapshot } from "@typescript/native/unstable/async";
 import {
-	API,
-	NodeBuilderFlags,
-	type Project,
-	SignatureKind,
-	type Snapshot,
-	SymbolFlags,
-	TypeFlags,
-} from "@typescript/native/unstable/async";
-import * as ts from "typescript";
+	compilerDirectory,
+	compilerMode,
+	resolveTypeScript7,
+	withCompilerInfo,
+} from "./compiler.js";
 import { summarizeDiagnostics } from "./core/diagnostics.js";
 import {
 	assertCursorPosition,
@@ -31,6 +27,7 @@ import {
 	singleLine,
 	withTypeParameterModifiers,
 } from "./core/signature-text.js";
+import { ts } from "./core/ts-runtime.js";
 import { sortResultUnions } from "./core/union-order.js";
 import {
 	type FileChange,
@@ -45,6 +42,16 @@ import {
 	nativeSignatureText,
 	nativeTypeInfoAt,
 } from "./native-api.js";
+import {
+	API,
+	activeNativeCompiler,
+	NodeBuilderFlags,
+	onNativeCompilerSwitch,
+	SignatureKind,
+	SymbolFlags,
+	TypeFlags,
+	withNativeCompiler,
+} from "./native-runtime.js";
 import type {
 	DiagnosticCategory,
 	DiagnosticsOptions,
@@ -110,24 +117,10 @@ export interface HoverExtras {
 	unionMembers?: number;
 }
 
-const require = createRequire(resolveFromScript());
-const nativePackage = require.resolve("@typescript/native/package.json");
-const nativeTsc = path.join(path.dirname(nativePackage), "bin", "tsc");
 const sessions = new Map<string, NativeLspClient>();
 
-/**
- * Global installs run bins through symlinks such as <prefix>/bin/prinfer-mcp,
- * where no node_modules is reachable; resolve from the real script location.
- */
-function resolveFromScript(): string {
-	const script = process.argv[1];
-	if (!script) return path.join(process.cwd(), "package.json");
-	try {
-		return fs.realpathSync(script);
-	} catch {
-		return path.resolve(script);
-	}
-}
+// A language server runs the compiler it was started with.
+onNativeCompilerSwitch(() => closeNativeSessions());
 
 class NativeLspClient {
 	private readonly child: ChildProcessWithoutNullStreams;
@@ -152,10 +145,11 @@ class NativeLspClient {
 	private apiTail: Promise<unknown> = Promise.resolve();
 	readonly ready: Promise<void>;
 
-	constructor(root: string) {
+	/** `lspBin`: the compiler package's bin script (see NativeCompiler). */
+	constructor(root: string, lspBin: string) {
 		// Files edited after this moment may be stale in the server.
 		this.workspace = new WorkspaceFiles(root, Date.now());
-		this.child = spawn(process.execPath, [nativeTsc, "--lsp", "--stdio"], {
+		this.child = spawn(process.execPath, [lspBin, "--lsp", "--stdio"], {
 			cwd: root,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
@@ -634,6 +628,25 @@ class NativeLspClient {
 	}
 }
 
+/**
+ * Run a call on the TypeScript 7 compiler its options select (see
+ * `CompilerMode`), loading it on first use, and mark the result with it.
+ */
+async function onCompiler<T extends object>(
+	file: string,
+	options: Pick<HoverOptions, "project" | "compiler"> | undefined,
+	run: () => Promise<T>,
+): Promise<T> {
+	const compiler = await resolveTypeScript7(
+		compilerMode(options?.compiler),
+		compilerDirectory(file, options?.project),
+	);
+	return withCompilerInfo(
+		await withNativeCompiler(compiler, run),
+		compiler.info,
+	);
+}
+
 export async function nativeHover(
 	file: string,
 	line: number,
@@ -643,6 +656,17 @@ export async function nativeHover(
 	const entryFileAbs = path.resolve(process.cwd(), file);
 	if (!fs.existsSync(entryFileAbs))
 		throw new Error(`File not found: ${entryFileAbs}`);
+	return onCompiler(entryFileAbs, options, () =>
+		hoverAt(entryFileAbs, line, column, options),
+	);
+}
+
+async function hoverAt(
+	entryFileAbs: string,
+	line: number,
+	column: number,
+	options?: HoverOptions,
+): Promise<HoverResult> {
 	const { root, config } = resolveProject(entryFileAbs, options?.project);
 	const client = getNativeClient(root);
 	if (config) {
@@ -746,9 +770,16 @@ export async function nativeHoverByName(
 	const { line, character } = sourceFile.getLineAndCharacterOfPosition(
 		getNameNode(node).getStart(sourceFile),
 	);
-	const result = await nativeHover(file, line + 1, character + 1, options);
-	if (alternatives) result.alternatives = alternatives;
-	return result;
+	return onCompiler(entryFileAbs, options, async () => {
+		const result = await hoverAt(
+			entryFileAbs,
+			line + 1,
+			character + 1,
+			options,
+		);
+		if (alternatives) result.alternatives = alternatives;
+		return result;
+	});
 }
 
 /**
@@ -764,11 +795,16 @@ export async function nativeDiagnostics(
 		throw new Error(`File not found: ${entryFileAbs}`);
 	const { root, config } = resolveProject(entryFileAbs, options?.project);
 	const includeSuggestions = options?.include_suggestions ?? false;
-	const client = getNativeClient(root);
-	return summarizeDiagnostics(
-		entryFileAbs,
-		await client.diagnostics(entryFileAbs, config, includeSuggestions),
-		includeSuggestions,
+	return onCompiler(entryFileAbs, options, async () =>
+		summarizeDiagnostics(
+			entryFileAbs,
+			await getNativeClient(root).diagnostics(
+				entryFileAbs,
+				config,
+				includeSuggestions,
+			),
+			includeSuggestions,
+		),
 	);
 }
 
@@ -793,10 +829,18 @@ export function closeNativeSessions(): void {
 	parsedSources.clear();
 }
 
+/** The session for `root`, on the active compiler (see onCompiler). */
 function getNativeClient(root: string): NativeLspClient {
 	let client = sessions.get(root);
 	if (!client) {
-		client = new NativeLspClient(root);
+		const compiler = activeNativeCompiler();
+		if (!compiler) {
+			throw new PrinferError(
+				"INTERNAL_ERROR",
+				"No TypeScript 7 compiler is active for a language server.",
+			);
+		}
+		client = new NativeLspClient(root, compiler.lspBin);
 		sessions.set(root, client);
 	}
 	return client;

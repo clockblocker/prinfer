@@ -1,8 +1,40 @@
 /**
- * Options for hover lookup
+ * Which compilers prinfer prints and counts with.
+ * - `"bundled"` (default): the TypeScript 6 and TypeScript 7 packages
+ *   prinfer depends on, the same on every machine.
+ * - `"project"`: the project's own: `typescript` 5.0 to 6.x for the
+ *   TypeScript 6 backend; `typescript` 7 or `@typescript/native-preview`
+ *   for the TypeScript 7 backend. They are resolved the way Node resolves
+ *   an import from the directory of the file's tsconfig.json (or of
+ *   `project`). Throws when the project has none, or an unsupported one.
+ * - `"auto"`: the project's when it has a supported one, otherwise the
+ *   bundled one (with a warning on stderr when the project's is
+ *   unsupported).
+ *
+ * When omitted: the `PRINFER_COMPILER` environment variable, then
+ * `"bundled"`. A result's `compiler` says which one ran.
  */
+export type CompilerMode = "bundled" | "project" | "auto";
+
+/**
+ * The compiler that produced a result. Results carry it as a
+ * non-enumerable `compiler` property: read it directly; snapshots,
+ * equality checks, and JSON.stringify leave it out, so they don't change
+ * when only the compiler does. The CLI's --json output and the MCP tools'
+ * structured output report it next to the result.
+ */
+export interface CompilerInfo {
+	/** Package name: `typescript` or `@typescript/native-preview` */
+	name: string;
+	/** Package version, e.g. `6.0.3` */
+	version: string;
+	/** `bundled`: prinfer's own dependency; `project`: the project's */
+	source: "bundled" | "project";
+}
+
+/** Options for `hover()` and `batchHover()`. */
 export interface HoverOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
 	/** Include JSDoc/TSDoc documentation */
 	include_docs?: boolean;
@@ -16,20 +48,14 @@ export interface HoverOptions {
 	/** Disable TypeScript's own type truncation (`{ ...; }`). Default false */
 	full?: boolean;
 	/**
-	 * Print union members in a fixed order, so the same type reads the same
-	 * on TypeScript 6 and TypeScript 7, which order members differently
-	 * (`"b" | "a"` and `"a" | "b"`). Default false: members print in the
-	 * order TypeScript prints them.
+	 * Print union members in a fixed order, the same on TypeScript 6 and
+	 * TypeScript 7, which order them differently. Default false.
 	 *
 	 * Every union in `signature`, `returnType`, and `overloads` is sorted, at
-	 * any depth (object properties, parameters, return types, type arguments,
-	 * constraints): `null` and then `undefined` last, the other members by
-	 * their printed text, compared by UTF-16 code unit, so
-	 * `"b" | 2 | -1 | A | string | null | undefined` becomes
-	 * `"b" | -1 | 2 | A | string | null | undefined`. Numbers compare as
-	 * text (`1 | 10 | 2`). Only the order changes; `display` keeps the
-	 * editor's text, and a type TypeScript truncated (without `full`) is
-	 * left as printed.
+	 * any depth: members by their printed text (UTF-16 code units, so
+	 * numbers compare as text: `1 | 10 | 2`), then `null`, then `undefined`.
+	 * `display` keeps the editor's text, and a type TypeScript truncated
+	 * (without `full`) is left as printed.
 	 */
 	sort_unions?: boolean;
 	/**
@@ -38,6 +64,8 @@ export interface HoverOptions {
 	 * typescript7; the CLI and `prinfer/testing` default to typescript6.)
 	 */
 	backend?: "typescript6" | "typescript7";
+	/** Which compilers to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 /**
@@ -54,6 +82,8 @@ export interface HoverCost {
 	instantiations: number;
 	/** Types created */
 	types: number;
+	/** The TypeScript 6 compiler that counted; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 /** @deprecated Not reported since 3.2; see `HoverCost`. */
@@ -148,18 +178,18 @@ export interface HoverResult {
 	 * symbol are not listed.
 	 */
 	alternatives?: HoverAlternative[];
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
-/**
- * Options for hover lookup by name
- */
+/** Options for `hover()` by name. */
 export interface HoverByNameOptions extends HoverOptions {
-	/** Optional line number to narrow search */
+	/** 1-based line that picks among same-named declarations */
 	line?: number;
 }
 
 export interface CompletionOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
 	/**
 	 * Keep only entries whose name starts with this text (case-insensitive).
@@ -172,6 +202,8 @@ export interface CompletionOptions {
 	 * default: all. (The MCP tool and `prinfer complete` default to 50.)
 	 */
 	limit?: number;
+	/** Which compiler to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 export interface CompletionEntry {
@@ -203,6 +235,8 @@ export interface CompletionResult {
 	 * `Record<string, T>`), so there are no specific keys to offer.
 	 */
 	note?: string;
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 /**
@@ -253,13 +287,17 @@ export interface BatchHoverResult {
 	successCount: number;
 	/** Number of failed lookups */
 	errorCount: number;
+	/** The compiler that produced the results; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 export interface DiagnosticsOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
 	/** Also return suggestion and message diagnostics, such as unused-variable hints */
 	include_suggestions?: boolean;
+	/** Which compilers to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 export type DiagnosticCategory = "error" | "warning" | "suggestion" | "message";
@@ -291,11 +329,15 @@ export interface DiagnosticsResult {
 	diagnostics: FileDiagnostic[];
 	errorCount: number;
 	warningCount: number;
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 export interface AnnotationsOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
+	/** Which compiler to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 /**
@@ -339,4 +381,6 @@ export interface AnnotationsResult {
 	wideningCount: number;
 	/** Annotations examined: those with an initializer or body to infer from */
 	checkedCount: number;
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }

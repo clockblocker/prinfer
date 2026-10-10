@@ -1,4 +1,3 @@
-import * as ts from "typescript";
 import {
 	getLineNumber,
 	getNameNode,
@@ -7,6 +6,7 @@ import {
 	isNamedNode,
 	isOtherDeclarationNamed,
 } from "./node-match.js";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Find the first function-like node with the given name in a source file

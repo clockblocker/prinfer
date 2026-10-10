@@ -1,4 +1,3 @@
-import * as ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
 import type { HoverResult } from "../types.js";
 import { getNameNode } from "./node-match.js";
@@ -7,6 +6,7 @@ import {
 	type OptionalFacts,
 	type OptionalStep,
 } from "./signature-text.js";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Get the symbol kind as a string. Kinds follow the labels an editor hover
@@ -156,7 +156,23 @@ export function getHoverInfo(
 	includeDocs: boolean,
 	full = false,
 ): HoverResult {
-	const checker = program.getTypeChecker();
+	return getCheckerHoverInfo(
+		program.getTypeChecker(),
+		node,
+		sourceFile,
+		includeDocs,
+		full,
+	);
+}
+
+/** `getHoverInfo` on a given checker instead of the program's own. */
+export function getCheckerHoverInfo(
+	checker: ts.TypeChecker,
+	node: ts.Node,
+	sourceFile: ts.SourceFile,
+	includeDocs: boolean,
+	full = false,
+): HoverResult {
 	const sf = sourceFile;
 	const { line, character } = sf.getLineAndCharacterOfPosition(
 		node.getStart(sf),

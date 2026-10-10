@@ -33,7 +33,7 @@ export default defineConfig({
   // the worker entry.
   shims: true,
   splitting: false,
-  sourcemap: true,
+  sourcemap: false,
   clean: true,
   external: ["@typescript/native", "typescript"],
   onSuccess: async () => {

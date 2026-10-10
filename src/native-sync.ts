@@ -7,9 +7,15 @@ import {
 	receiveMessageOnPort,
 	Worker,
 } from "node:worker_threads";
+import { withCompilerInfo } from "./compiler.js";
 import { NameNotFoundError } from "./core/name-lookup.js";
 import { PrinferError, TypeScriptInternalError } from "./errors.js";
-import type { CompletionOptions, HoverOptions, HoverResult } from "./types.js";
+import type {
+	CompilerInfo,
+	CompletionOptions,
+	HoverOptions,
+	HoverResult,
+} from "./types.js";
 
 /**
  * Synchronous TypeScript 7 lookups for `prinfer/testing`.
@@ -75,7 +81,13 @@ export type NativeRequest = {
 }[keyof NativeOperations];
 
 export type NativeResponse =
-	| { id: number; ok: true; value: unknown }
+	| {
+			id: number;
+			ok: true;
+			value: unknown;
+			/** The non-enumerable `compiler` of the value, which a clone drops. */
+			compiler?: CompilerInfo;
+	  }
 	| {
 			id: number;
 			ok: false;
@@ -315,7 +327,14 @@ export function callNative<K extends Exclude<keyof NativeOperations, "close">>(
 			`A cold load of a large project can take that long: raise the limit with timeout (in ms) in the selector, e.g. { timeout: ${timeoutMs * 2} }. If every call times out, check the tsconfig.json that includes the file, or omit backend to use TypeScript 6.`,
 		);
 	}
-	if (response.ok) return response.value as NativeResults[K];
+	if (response.ok) {
+		const { value, compiler } = response;
+		return (
+			compiler && typeof value === "object" && value !== null
+				? withCompilerInfo(value, compiler)
+				: value
+		) as NativeResults[K];
+	}
 	if (response.startup) {
 		void target.terminate();
 		throw startupError(deserializeError(response.error));
@@ -324,7 +343,7 @@ export function callNative<K extends Exclude<keyof NativeOperations, "close">>(
 	throw deserializeError(response.error);
 }
 
-/** The worker module, and so `@typescript/native`, failed to load. */
+/** The worker module failed to load, as from a broken install. */
 function startupError(cause: Error): PrinferError {
 	const error = new PrinferError(
 		"TYPESCRIPT_ERROR",

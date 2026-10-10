@@ -8,11 +8,13 @@ import { PrinferError } from "../errors.js";
 import { nativeWorkerLocator } from "../native-sync.js";
 import {
 	closeTestingSessions,
+	expectType,
 	type InferredCompletionsSelector,
 	inferredCompletions,
 	inferredType,
 	inferredTypeCost,
 	inferredTypeInfo,
+	inferredTypeIssues,
 } from "../testing.js";
 
 // The first lookup per backend loads a compiler program.
@@ -391,7 +393,7 @@ describe("misplaced options", () => {
 		);
 		expect(error.message).toContain('unknown selector key "full"');
 		expect(error.message).toContain(
-			"Selector keys: line, column, text, occurrence, cursor, project, backend, timeout, strict.",
+			"Selector keys: line, column, text, occurrence, cursor, project, compiler, backend, timeout, strict.",
 		);
 	});
 
@@ -450,6 +452,129 @@ describe("misplaced options", () => {
 			'inferredTypeCost got unknown selector key "sortUnions".',
 		);
 		expect(error.message).toContain("Did you mean sort_unions?");
+	});
+
+	test("strict: true takes each helper's own keys and no other's", () => {
+		const rejects = (run: () => unknown, key: string) =>
+			expect(thrown(run).message).toContain(
+				`unknown selector key "${key}"`,
+			);
+		const pick = { name: "pick", strict: true } as const;
+		const cost = inferredTypeCost(targets, { name: "pick" });
+
+		expect(inferredType(targets, { ...pick, compiler: "bundled" })).toBe(
+			"Drink",
+		);
+		for (const key of [
+			"printed",
+			"readable",
+			"rules",
+			"names",
+			"maxTypes",
+		]) {
+			rejects(
+				() => inferredType(targets, { ...pick, [key]: true } as never),
+				key,
+			);
+		}
+
+		expect(
+			inferredTypeIssues(targets, {
+				...pick,
+				compiler: "bundled",
+				rules: { truncation: false },
+			}),
+		).toEqual([]);
+		for (const key of ["printed", "readable", "targets"]) {
+			rejects(
+				() =>
+					inferredTypeIssues(targets, {
+						...pick,
+						[key]: true,
+					} as never),
+				key,
+			);
+		}
+
+		expect(
+			expectType(targets, {
+				...pick,
+				compiler: "bundled",
+				printed: "Drink",
+				maxInstantiations: 10_000,
+				maxTypes: 10_000,
+				readable: { allow: [] },
+			}),
+		).toEqual({ printed: "Drink", cost });
+		for (const key of ["rules", "names", "targets"]) {
+			rejects(
+				() =>
+					expectType(targets, {
+						...pick,
+						printed: "Drink",
+						[key]: [],
+					} as never),
+				key,
+			);
+		}
+
+		expect(
+			inferredTypeCost(targets, { ...pick, compiler: "bundled" }),
+		).toEqual(cost);
+		rejects(
+			() => inferredTypeCost(targets, { ...pick, printed: "x" } as never),
+			"printed",
+		);
+		const batch = {
+			names: ["pick"],
+			project: path.join(path.dirname(targetsPath), "tsconfig.json"),
+			compiler: "bundled",
+			backend: "typescript6",
+			strict: true,
+		} as const;
+		expect(inferredTypeCost(targets, batch)).toEqual({ pick: cost });
+		expect(
+			inferredTypeCost(targets, {
+				targets: [{ name: "pick" }],
+				compiler: "bundled",
+				strict: true,
+			}),
+		).toEqual([cost]);
+		// A batch counts; display and TypeScript 7 options don't apply.
+		for (const key of ["full", "sort_unions", "include_cost", "timeout"]) {
+			rejects(
+				() =>
+					inferredTypeCost(targets, { ...batch, [key]: 1 } as never),
+				key,
+			);
+		}
+		expect(
+			thrown(() =>
+				inferredTypeCost(targets, {
+					targets: [{ name: "pick", compiler: "bundled" }],
+					strict: true,
+				} as never),
+			).message,
+		).toContain('unknown target key "compiler"');
+
+		expect(
+			inferredCompletions(targets, {
+				line: 4,
+				text: "latte.",
+				compiler: "bundled",
+				strict: true,
+			}),
+		).toEqual(["drink", "size"]);
+		rejects(
+			() =>
+				inferredCompletions(targets, {
+					line: 4,
+					text: "latte.",
+					printed: "x",
+					strict: true,
+				} as never),
+			"printed",
+		);
 	});
 
 	test("a third argument to inferredTypeCost throws", () => {

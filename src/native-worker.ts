@@ -1,4 +1,5 @@
 import { workerData } from "node:worker_threads";
+import { compilerOf } from "./compiler.js";
 import {
 	closeNativeApiSessions,
 	killNativeApiSessions,
@@ -32,7 +33,13 @@ port.on("message", (request: NativeRequest) => {
 		return;
 	}
 	run(request).then(
-		(value) => respond({ id: request.id, ok: true, value }),
+		(value) =>
+			respond({
+				id: request.id,
+				ok: true,
+				value,
+				compiler: compilerOf(value),
+			}),
 		(error: unknown) =>
 			respond({
 				id: request.id,

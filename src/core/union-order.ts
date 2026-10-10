@@ -1,3 +1,6 @@
+// Printed text is parsed with the bundled TypeScript, never a project's
+// (see ts-runtime.ts): the text is the same whichever compiler printed it,
+// and the syntax kinds compared here are the bundled package's.
 import * as ts from "typescript";
 import type { HoverResult } from "../types.js";
 
@@ -43,15 +46,27 @@ export function sortResultUnions(result: HoverResult): HoverResult {
  */
 export function sortUnionMembers(text: string): string {
 	if (!text.includes("|")) return text;
+	const parsed = parsePrintedType(text);
+	return parsed ? sortedText(parsed.source, parsed.shape) : text;
+}
+
+/**
+ * Printed type text parsed as one statement, in the first shape it fits
+ * without errors (see sortUnionMembers); undefined when none fits. The
+ * text sits in `source` at `shape.prefix.length`.
+ */
+export function parsePrintedType(
+	text: string,
+): { source: ts.SourceFile; shape: Shape } | undefined {
 	for (const shape of SHAPES) {
 		const source = parseShape(text, shape);
-		if (source) return sortedText(source, shape);
+		if (source) return { source, shape };
 	}
-	return text;
+	return undefined;
 }
 
 /** A statement that holds printed text between a prefix and a suffix. */
-interface Shape {
+export interface Shape {
 	prefix: string;
 	suffix: string;
 	kind: ts.SyntaxKind;

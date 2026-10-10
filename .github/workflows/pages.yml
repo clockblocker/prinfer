@@ -32,7 +32,7 @@ jobs:
           cp printfer-logo.webp site/
           cat > site/_config.yml <<'EOF'
           title: prinfer
-          description: TypeScript type inference for AI coding agents, via MCP, CLI, and API
+          description: TypeScript inferred types, completions and type errors for AI coding agents and type tests
           theme: jekyll-theme-cayman
           EOF
           printf -- '---\nlayout: default\n---\n\n' > site/index.md
