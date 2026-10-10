@@ -1,8 +1,8 @@
 {
 	"mcpServers": {
-		"prinfer": {
+		"typeprobe": {
 			"command": "npx",
-			"args": ["-y", "prinfer", "mcp"]
+			"args": ["-y", "typeprobe", "mcp"]
 		}
 	}
 }

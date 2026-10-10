@@ -14,7 +14,7 @@ import { ts } from "./ts-runtime.js";
  *
  * For each explicit type annotation that has something to infer from (a
  * variable, parameter, or class property initializer, or a function body),
- * prinfer asks TypeScript what the type would be without the annotation, by
+ * typeprobe asks TypeScript what the type would be without the annotation, by
  * type-checking a probe: a copy of the initializer or function, minus the
  * annotation, inserted into the same scope of a scratch copy of the file. The
  * probe and the original live in one program, so their types compare with
@@ -30,7 +30,7 @@ import { ts } from "./ts-runtime.js";
  * initializer is contextually typed) is not reported.
  */
 
-const PROBE_PREFIX = "__prinfer_probe_";
+const PROBE_PREFIX = "__typeprobe_probe_";
 const PROBE_NAME = new RegExp(`${PROBE_PREFIX}\\d+`, "g");
 /** Extra programs spent narrowing down a failed verification. */
 const VERIFY_BUDGET = 12;

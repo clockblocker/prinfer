@@ -26,7 +26,7 @@ let root: string;
 let counter = 0;
 
 beforeAll(() => {
-	root = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-annotations-"));
+	root = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-annotations-"));
 });
 
 afterAll(() => {
@@ -206,7 +206,7 @@ export const exportedSame: number = 2 * 3;
 			inferred: "Color.Red",
 		});
 		expect(map.get("variable symbolWide")?.inferred).not.toContain(
-			"__prinfer",
+			"__typeprobe",
 		);
 		expect(map.get("variable exportedSame")?.exported).toBe(true);
 	});
@@ -521,7 +521,7 @@ async function runCli(args: string[]) {
 	return { stdout, stderr, exitCode: await proc.exited };
 }
 
-describe("prinfer annotations", () => {
+describe("typeprobe annotations", () => {
 	test("prints findings and exits 0", async () => {
 		const file = project("let same: number = 1;\n");
 		const { stdout, exitCode } = await runCli(["annotations", file]);

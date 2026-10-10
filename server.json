@@ -1,20 +1,20 @@
 {
 	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-	"name": "io.github.clockblocker/prinfer",
-	"title": "prinfer",
+	"name": "io.github.clockblocker/typeprobe",
+	"title": "typeprobe",
 	"description": "TypeScript inferred types, completions and type errors for AI coding agents",
 	"repository": {
-		"url": "https://github.com/clockblocker/prinfer",
+		"url": "https://github.com/clockblocker/typeprobe",
 		"source": "github",
 		"id": "1147042513"
 	},
-	"websiteUrl": "https://clockblocker.github.io/prinfer/",
+	"websiteUrl": "https://clockblocker.github.io/typeprobe/",
 	"version": "3.4.0",
 	"packages": [
 		{
 			"registryType": "npm",
 			"registryBaseUrl": "https://registry.npmjs.org",
-			"identifier": "prinfer",
+			"identifier": "typeprobe",
 			"version": "3.4.0",
 			"runtimeHint": "npx",
 			"transport": {
@@ -28,15 +28,15 @@
 			],
 			"environmentVariables": [
 				{
-					"name": "PRINFER_BACKEND",
+					"name": "TYPEPROBE_BACKEND",
 					"description": "Backend for the hover and diagnostics tools. Use typescript6 if the native TypeScript 7 backend fails in your project.",
 					"format": "string",
 					"default": "typescript7",
 					"choices": ["typescript7", "typescript6"]
 				},
 				{
-					"name": "PRINFER_COMPILER",
-					"description": "Which TypeScript compilers to use: prinfer's bundled ones, the project's own (typescript 5.0 to 6.x; typescript 7 or @typescript/native-preview), or auto: the project's when supported, else bundled.",
+					"name": "TYPEPROBE_COMPILER",
+					"description": "Which TypeScript compilers to use: typeprobe's bundled ones, the project's own (typescript 5.0 to 6.x; typescript 7 or @typescript/native-preview), or auto: the project's when supported, else bundled.",
 					"format": "string",
 					"default": "bundled",
 					"choices": ["bundled", "project", "auto"]

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createRequire } from "node:module";
 import * as ts from "typescript";
-import { PrinferError } from "../errors.js";
+import { TypeprobeError } from "../errors.js";
 import {
 	closeTestingSessions,
 	type ExpectTypeSelector,
@@ -174,7 +174,7 @@ describe("expectType", () => {
 			} catch (caught) {
 				error = caught;
 			}
-			expect(error).toBeInstanceOf(PrinferError);
+			expect(error).toBeInstanceOf(TypeprobeError);
 			expect(error).toMatchObject({ code: "INVALID_ARGUMENT" });
 			expect((error as Error).message).toMatch(pattern);
 		};
@@ -427,7 +427,7 @@ describe("expectTypes", () => {
 			} catch (caught) {
 				error = caught;
 			}
-			expect(error).toBeInstanceOf(PrinferError);
+			expect(error).toBeInstanceOf(TypeprobeError);
 			expect(error).toMatchObject({ code: "INVALID_ARGUMENT" });
 			expect((error as Error).message).toMatch(pattern);
 		};

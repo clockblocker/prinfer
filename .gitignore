@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.mcpb
+*.tgz
 *.log
 .DS_Store
 

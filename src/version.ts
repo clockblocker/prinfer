@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 
-declare const __PRINFER_VERSION__: string | undefined;
+declare const __TYPEPROBE_VERSION__: string | undefined;
 
 /**
  * Package version: injected by tsup at build time, read from package.json
  * when running from source (src/ and dist/ both sit next to it).
  */
 export const VERSION: string =
-	typeof __PRINFER_VERSION__ === "string"
-		? __PRINFER_VERSION__
+	typeof __TYPEPROBE_VERSION__ === "string"
+		? __TYPEPROBE_VERSION__
 		: readPackageVersion();
 
 function readPackageVersion(): string {

@@ -9,7 +9,7 @@ import {
 	type TypeScript,
 	withTypeScript,
 } from "../core/ts-runtime.js";
-import { PrinferError } from "../errors.js";
+import { TypeprobeError } from "../errors.js";
 import {
 	batchHover,
 	clearProgramCache,
@@ -266,7 +266,7 @@ describe("programs of one project", () => {
 	});
 
 	test("read a file rewritten within one timestamp tick", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-tick-"));
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-tick-"));
 		// A coarse clock (Linux without multigrain timestamps, HFS+, FAT):
 		// a same-size rewrite keeps mtime, ctime, size, and inode.
 		const statSync = fs.statSync;
@@ -312,7 +312,7 @@ describe("programs of one project", () => {
 	});
 
 	test("read a changed file again", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-share-"));
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-share-"));
 		try {
 			fs.writeFileSync(
 				path.join(dir, "tsconfig.json"),
@@ -388,7 +388,7 @@ describe("inferredTypeCost", () => {
 			try {
 				run();
 			} catch (error) {
-				expect(error).toBeInstanceOf(PrinferError);
+				expect(error).toBeInstanceOf(TypeprobeError);
 				return (error as Error).message;
 			}
 			throw new Error("did not throw");
@@ -456,7 +456,7 @@ describe("inferredTypeCost", () => {
 		} catch (caught) {
 			error = caught;
 		}
-		expect(error).toBeInstanceOf(PrinferError);
+		expect(error).toBeInstanceOf(TypeprobeError);
 		expect(error).toMatchObject({ code: "INVALID_ARGUMENT" });
 		expect((error as Error).message).toContain("Omit backend");
 	});

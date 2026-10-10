@@ -2,8 +2,17 @@ import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 
-const coldSamples = Number(process.env.PRINFER_BENCH_COLD_SAMPLES ?? 3);
-const hotSamples = Number(process.env.PRINFER_BENCH_HOT_SAMPLES ?? 7);
+// PRINFER_BENCH_*: the names before the rename, still read.
+const coldSamples = Number(
+	process.env.TYPEPROBE_BENCH_COLD_SAMPLES ??
+		process.env.PRINFER_BENCH_COLD_SAMPLES ??
+		3,
+);
+const hotSamples = Number(
+	process.env.TYPEPROBE_BENCH_HOT_SAMPLES ??
+		process.env.PRINFER_BENCH_HOT_SAMPLES ??
+		7,
+);
 const fixture = "src/__tests__/fixtures/sample.ts";
 const cliArgs = ["dist/cli.js", `${fixture}:add`, "--json"];
 
@@ -142,7 +151,7 @@ async function initializeMcp(session) {
 	await session.request("initialize", {
 		protocolVersion: "2025-11-25",
 		capabilities: {},
-		clientInfo: { name: "prinfer-benchmark", version: "1.0.0" },
+		clientInfo: { name: "typeprobe-benchmark", version: "1.0.0" },
 	});
 	session.notify("notifications/initialized");
 	return performance.now() - started;

@@ -1,4 +1,4 @@
-import { PrinferError } from "../errors.js";
+import { TypeprobeError } from "../errors.js";
 import { splitLines, stripBom } from "./lines.js";
 
 /** A token addressed by text on a line instead of by column. */
@@ -25,7 +25,7 @@ const IDENTIFIER_CHAR = /[\p{ID_Continue}$\u200C\u200D]/u;
  * identifier character on that side count, so "user" skips the start of
  * "users". If the line has no such match, plain substring matches are used.
  *
- * @throws PrinferError INVALID_ARGUMENT when the line is outside the file,
+ * @throws TypeprobeError INVALID_ARGUMENT when the line is outside the file,
  * SYMBOL_NOT_FOUND when the text (or that occurrence) is not on the line.
  * Suggestions quote the actual line so callers can correct the request.
  */
@@ -39,7 +39,7 @@ export function resolveTextColumn(
 	const lines = splitLines(stripBom(sourceText));
 	const lineText = lines[line - 1];
 	if (lineText === undefined) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			`Line ${line} is outside ${file}, which has ${lines.length} lines`,
 			`Use a line between 1 and ${lines.length}.`,
@@ -64,7 +64,7 @@ export function resolveTextColumn(
 	if (otherLines.length > 0) {
 		suggestion += ` ${quoted} appears on line${otherLines.length > 1 ? "s" : ""} ${otherLines.join(", ")}.`;
 	}
-	throw new PrinferError("SYMBOL_NOT_FOUND", message, suggestion);
+	throw new TypeprobeError("SYMBOL_NOT_FOUND", message, suggestion);
 }
 
 /**

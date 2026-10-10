@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { PrinferError, TypeScriptInternalError } from "./errors.js";
+import { TypeprobeError, TypeScriptInternalError } from "./errors.js";
 
 export const CONTRACT_VERSION = 1 as const;
 
@@ -292,7 +292,7 @@ export function contractError(
 	const source = error instanceof Error ? error : new Error(String(error));
 	const internal =
 		source instanceof TypeScriptInternalError ? source : undefined;
-	const prinfer = source instanceof PrinferError ? source : undefined;
+	const typeprobe = source instanceof TypeprobeError ? source : undefined;
 	const code = context.code ?? classifyError(source);
 
 	return contractErrorResponseSchema.parse({
@@ -309,7 +309,7 @@ export function contractError(
 			declaredAt: context.declaredAt ?? declaredAtOf(source),
 			suggestion:
 				context.suggestion ??
-				prinfer?.suggestion ??
+				typeprobe?.suggestion ??
 				suggestionFor(code, context.surface),
 		},
 	});
@@ -384,13 +384,13 @@ function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
 		case "INVALID_ARGUMENT":
 			switch (command) {
 				case "check":
-					return "Usage: prinfer check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>].";
+					return "Usage: typeprobe check <file.ts> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>].";
 				case "annotations":
-					return "Usage: prinfer annotations <file.ts> [--json] [--project <tsconfig.json>].";
+					return "Usage: typeprobe annotations <file.ts> [--json] [--project <tsconfig.json>].";
 				case "complete":
-					return "Usage: prinfer complete <file.ts>:<line>:<text|column> [--prefix <text>] [--limit <n>] with a 1-based line; text puts the cursor right after it.";
+					return "Usage: typeprobe complete <file.ts>:<line>:<text|column> [--prefix <text>] [--limit <n>] with a 1-based line; text puts the cursor right after it.";
 				default:
-					return "Use <file>:<name>, <file>:<name>:<line>, <file>:<line>:<text>, or <file>:<line>:<column> with 1-based numbers; run prinfer --help for options.";
+					return "Use <file>:<name>, <file>:<name>:<line>, <file>:<line>:<text>, or <file>:<line>:<column> with 1-based numbers; run typeprobe --help for options.";
 			}
 		case "FILE_NOT_FOUND":
 			return `Check the path. Relative paths resolve against the current directory (${process.cwd()}).`;
@@ -409,7 +409,7 @@ function cliSuggestion(code: ContractErrorCode, command?: CliCommand): string {
 }
 
 function classifyError(error: Error): ContractErrorCode {
-	if (error instanceof PrinferError) return error.code;
+	if (error instanceof TypeprobeError) return error.code;
 	if (error instanceof TypeScriptInternalError) return "TYPESCRIPT_ERROR";
 	if (
 		error.message.startsWith("TypeScript LSP:") ||

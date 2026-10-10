@@ -48,7 +48,7 @@ function positions(result: DiagnosticsResult) {
 
 function tempProject(files: Record<string, string>): string {
 	const dir = fs.realpathSync(
-		fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-diagnostics-")),
+		fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-diagnostics-")),
 	);
 	fs.writeFileSync(
 		path.join(dir, "tsconfig.json"),
@@ -315,7 +315,7 @@ describe("diagnostics MCP tool", () => {
 			await request("initialize", {
 				protocolVersion: "2025-06-18",
 				capabilities: {},
-				clientInfo: { name: "prinfer-test", version: "0.0.0" },
+				clientInfo: { name: "typeprobe-test", version: "0.0.0" },
 			});
 			child.stdin.write(
 				`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,

@@ -19,7 +19,7 @@ afterAll(closeNativeSessions);
 
 function tempDir(files: Record<string, string>): string {
 	const dir = fs.realpathSync(
-		fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-sync-")),
+		fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-sync-")),
 	);
 	for (const [name, text] of Object.entries(files)) {
 		fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });

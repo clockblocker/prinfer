@@ -1,7 +1,7 @@
 /**
  * Line and column handling shared by both backends.
  *
- * prinfer reports lines the way the TypeScript compiler counts them: CRLF,
+ * typeprobe reports lines the way the TypeScript compiler counts them: CRLF,
  * LF, lone CR, U+2028, and U+2029 each end a line, and a leading UTF-8 BOM is
  * not part of the text (TypeScript strips it when reading files). The language
  * server protocol only breaks lines on CRLF, LF, and CR, so the TypeScript 7
@@ -9,7 +9,7 @@
  * {@link fromLspPosition}.
  */
 
-import { PrinferError } from "../errors.js";
+import { TypeprobeError } from "../errors.js";
 
 /** A 0-based line and UTF-16 character offset, as in LSP and TypeScript. */
 export interface LineCharacter {
@@ -110,7 +110,7 @@ export function assertCursorPosition(
 ): void {
 	const lines = splitLines(text);
 	if (!Number.isInteger(line) || line < 1 || line > lines.length) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			`Line ${line} is outside ${file}, which has ${lines.length} line${lines.length === 1 ? "" : "s"}`,
 			`Use a line between 1 and ${lines.length}.`,
@@ -118,7 +118,7 @@ export function assertCursorPosition(
 	}
 	const length = (lines[line - 1] ?? "").length;
 	if (!Number.isInteger(column) || column < 1 || column > length + 1) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			`Column ${column} is outside line ${line} of ${file}`,
 			`Line ${line} has ${length} character${length === 1 ? "" : "s"}; use a column between 1 and ${length + 1}.`,

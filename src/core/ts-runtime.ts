@@ -63,7 +63,7 @@ export declare namespace ts {
 	export type VariableDeclaration = bundled.VariableDeclaration;
 }
 
-/** The `typescript` package prinfer depends on. */
+/** The `typescript` package typeprobe depends on. */
 export const bundledTypeScript: TypeScript = bundled;
 
 const instanceIds = new WeakMap<TypeScript, number>([[bundled, 0]]);

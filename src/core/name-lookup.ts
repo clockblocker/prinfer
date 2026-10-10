@@ -1,4 +1,4 @@
-import { PrinferError } from "../errors.js";
+import { TypeprobeError } from "../errors.js";
 import type { HoverAlternative } from "../types.js";
 import { getSymbolKind } from "./hover.js";
 import { findNodeByNameAndLine } from "./node-find.js";
@@ -19,7 +19,7 @@ const MAX_LISTED = 20;
  * the requested line, `declaredAt` lists where it is, and the suggestion
  * names those lines.
  */
-export class NameNotFoundError extends PrinferError {
+export class NameNotFoundError extends TypeprobeError {
 	readonly declaredAt?: HoverAlternative[];
 
 	constructor(

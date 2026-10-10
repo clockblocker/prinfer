@@ -1,20 +1,20 @@
 /**
- * Which compilers prinfer prints and counts with.
+ * Which compilers typeprobe prints and counts with.
  * - `"bundled"` (default): the TypeScript 6 and TypeScript 7 packages
- *   prinfer depends on, the same on every machine.
+ *   typeprobe depends on, the same on every machine.
  * - `"project"`: the project's own: `typescript` 5.0 to 6.x for the
  *   TypeScript 6 backend; `typescript` 7, `@typescript/native`, or
  *   `@typescript/native-preview` for the TypeScript 7 backend (the nearest
  *   install, in that order when side by side). They are resolved the way
  *   Node resolves an import from the directory of the file's tsconfig.json
- *   (or of `project`); prinfer's own copies, hoisted there, count only if
+ *   (or of `project`); typeprobe's own copies, hoisted there, count only if
  *   the project declares them. Throws when the project has none, or an
  *   unsupported one.
  * - `"auto"`: the project's when it has a supported one, otherwise the
  *   bundled one (with a warning on stderr when the project's is
  *   unsupported).
  *
- * When omitted: the `PRINFER_COMPILER` environment variable, then
+ * When omitted: the `TYPEPROBE_COMPILER` environment variable, then
  * `"bundled"`. A result's `compiler` says which one ran.
  */
 export type CompilerMode = "bundled" | "project" | "auto";
@@ -31,7 +31,7 @@ export interface CompilerInfo {
 	name: string;
 	/** Package version, e.g. `6.0.3` */
 	version: string;
-	/** `bundled`: prinfer's own dependency; `project`: the project's */
+	/** `bundled`: typeprobe's own dependency; `project`: the project's */
 	source: "bundled" | "project";
 }
 
@@ -63,8 +63,8 @@ export interface HoverOptions {
 	sort_unions?: boolean;
 	/**
 	 * Ignored by the library's `hover()` and `batchHover()`, which always use
-	 * TypeScript 6. (The MCP hover tools default to `PRINFER_BACKEND` or
-	 * typescript7; the CLI and `prinfer/testing` default to typescript6.)
+	 * TypeScript 6. (The MCP hover tools default to `TYPEPROBE_BACKEND` or
+	 * typescript7; the CLI and `typeprobe/testing` default to typescript6.)
 	 */
 	backend?: "typescript6" | "typescript7";
 	/** Which compilers to use; see `CompilerMode`. */
@@ -197,12 +197,12 @@ export interface CompletionOptions {
 	/**
 	 * Keep only entries whose name starts with this text (case-insensitive).
 	 * Library default: no filter. (The MCP `completions` tool and
-	 * `prinfer complete` default to the text typed left of the cursor.)
+	 * `typeprobe complete` default to the text typed left of the cursor.)
 	 */
 	prefix?: string;
 	/**
 	 * Return at most this many entries; `total` counts every match. Library
-	 * default: all. (The MCP tool and `prinfer complete` default to 50.)
+	 * default: all. (The MCP tool and `typeprobe complete` default to 50.)
 	 */
 	limit?: number;
 	/** Which compiler to use; see `CompilerMode`. */

@@ -90,6 +90,7 @@ export {
 	invalidateProgramCache,
 	loadProgram,
 } from "./core/index.js";
+export { PrinferError, TypeprobeError } from "./errors.js";
 // Re-export types
 export type {
 	AnnotationFinding,
@@ -145,7 +146,7 @@ export function completions(
  *
  * @example
  * ```ts
- * import { diagnostics } from "prinfer";
+ * import { diagnostics } from "typeprobe";
  *
  * const result = diagnostics("./src/utils.ts");
  * for (const d of result.diagnostics) {
@@ -176,7 +177,7 @@ export function diagnostics(
  *
  * @example
  * ```ts
- * import { annotations } from "prinfer";
+ * import { annotations } from "typeprobe";
  *
  * for (const f of annotations("./src/utils.ts").findings) {
  *   console.log(`${f.line}:${f.column} ${f.kind} ${f.name}: ${f.declared} -> ${f.inferred}`);
@@ -198,7 +199,7 @@ export function annotations(
  *
  * @example
  * ```ts
- * import { hover } from "prinfer";
+ * import { hover } from "typeprobe";
  *
  * hover("./src/utils.ts", 75, 10).signature;
  * // => "(x: number): string"
@@ -220,7 +221,7 @@ export function hover(
  *
  * @example
  * ```ts
- * import { hover } from "prinfer";
+ * import { hover } from "typeprobe";
  *
  * hover("./src/utils.ts", "createHandler").signature;
  * // => "(config: Config): Handler"
@@ -357,7 +358,7 @@ function hoverByNameImpl(
  *
  * @example
  * ```ts
- * import { batchHover } from "prinfer";
+ * import { batchHover } from "typeprobe";
  *
  * const result = batchHover("./src/utils.ts", [
  *   { line: 75, column: 10 },

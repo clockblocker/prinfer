@@ -2,7 +2,7 @@ import * as ts from "typescript";
 import { parsePrintedType } from "./union-order.js";
 
 /*
- * Readability checks on printed type text (`prinfer/testing`'s
+ * Readability checks on printed type text (`typeprobe/testing`'s
  * `readable` option and `typeReadabilityIssues`).
  *
  * A type can be correct and still print in a form a reader has to work
@@ -53,7 +53,7 @@ export interface ReadabilityRules {
 	objectIntersections?: boolean;
 	/**
 	 * Flag TypeScript's truncation: `... 3 more ...`, `{ ...; }`, a `...`
-	 * placeholder, and text cut at the length limit. `prinfer/testing`
+	 * placeholder, and text cut at the length limit. `typeprobe/testing`
 	 * prints untruncated types unless `full: false`. Default true.
 	 */
 	truncation?: boolean;

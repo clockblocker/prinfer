@@ -3,15 +3,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const SERVER_NAME = "prinfer";
-const NPX_COMMAND = ["npx", "-y", "prinfer", "mcp"];
+const SERVER_NAME = "typeprobe";
+/**
+ * The server name setup wrote before the package was renamed from prinfer.
+ * Setup replaces such an entry instead of adding a second server.
+ */
+const LEGACY_SERVER_NAME = "prinfer";
+const NPX_COMMAND = ["npx", "-y", "typeprobe", "mcp"];
 
 export const SETUP_HELP = `
-prinfer setup - configure an agent to use the prinfer MCP server
+typeprobe setup - configure an agent to use the typeprobe MCP server
 
 Usage:
-  prinfer setup <client> [--scope <scope>] [--npx] [--print]
-  prinfer setup agents-md [--file <path>] [--print]
+  typeprobe setup <client> [--scope <scope>] [--npx] [--print]
+  typeprobe setup agents-md [--file <path>] [--print]
 
 Clients:
   codex       Codex: runs codex mcp add
@@ -19,20 +24,22 @@ Clients:
   cursor      Cursor: ~/.cursor/mcp.json (project: .cursor/mcp.json)
   vscode      VS Code: runs code --add-mcp (project: .vscode/mcp.json)
   gemini      Gemini CLI: ~/.gemini/settings.json (project: .gemini/settings.json)
-  agents-md   Adds prinfer usage instructions to ./AGENTS.md
+  agents-md   Adds typeprobe usage instructions to ./AGENTS.md
 
 Options:
   --scope <scope>  user (default) or project; claude also accepts local
-  --npx            Launch the server with 'npx -y prinfer mcp'
+  --npx            Launch the server with 'npx -y typeprobe mcp'
   --file <path>    Instructions file for agents-md, e.g. CLAUDE.md
   --print          Show the command or file change without applying it
 
-The server command is 'prinfer-mcp' when prinfer is installed globally,
-otherwise 'npx -y prinfer mcp'. Use --npx if the client cannot find
-prinfer-mcp (editors started outside a shell may miss nvm, fnm, or volta
+The server command is 'typeprobe-mcp' when typeprobe is installed globally,
+otherwise 'npx -y typeprobe mcp'. Use --npx if the client cannot find
+typeprobe-mcp (editors started outside a shell may miss nvm, fnm, or volta
 paths).
-Re-running setup updates the prinfer entry's command; JSON configs keep any
-other keys you added to it, such as env.
+Re-running setup updates the typeprobe entry's command; JSON configs keep any
+other keys you added to it, such as env. A 'prinfer' entry left from before
+the rename is replaced by the typeprobe one (JSON configs carry its other
+keys over, with PRINFER_* env names renamed to TYPEPROBE_*).
 On Windows the server is launched through 'cmd /c' so npx and npm's .cmd
 shims resolve.
 `.trim();
@@ -55,7 +62,7 @@ interface CliClient {
 	commands(
 		server: string[],
 		scope: Scope,
-	): { remove?: string[]; add: string[] };
+	): { remove?: string[][]; add: string[] };
 }
 
 interface JsonClient {
@@ -78,7 +85,12 @@ const CLIENTS: Record<string, Client> = {
 		restart: "Restart Codex to load the MCP server.",
 		binary: "codex",
 		commands: (server) => ({
-			remove: ["codex", "mcp", "remove", SERVER_NAME],
+			remove: [LEGACY_SERVER_NAME, SERVER_NAME].map((name) => [
+				"codex",
+				"mcp",
+				"remove",
+				name,
+			]),
 			add: ["codex", "mcp", "add", SERVER_NAME, "--", ...server],
 		}),
 	},
@@ -90,7 +102,14 @@ const CLIENTS: Record<string, Client> = {
 			"Restart Claude Code (or run /mcp in a session) to load the MCP server.",
 		binary: "claude",
 		commands: (server, scope) => ({
-			remove: ["claude", "mcp", "remove", "--scope", scope, SERVER_NAME],
+			remove: [LEGACY_SERVER_NAME, SERVER_NAME].map((name) => [
+				"claude",
+				"mcp",
+				"remove",
+				"--scope",
+				scope,
+				name,
+			]),
 			add: [
 				"claude",
 				"mcp",
@@ -159,24 +178,26 @@ const VSCODE_PROJECT: JsonClient = {
 
 const CLIENT_NAMES = [...Object.keys(CLIENTS), "vscode", "agents-md"];
 
-const AGENTS_START = "<!-- prinfer:start -->";
-const AGENTS_END = "<!-- prinfer:end -->";
+const AGENTS_START = "<!-- typeprobe:start -->";
+const AGENTS_END = "<!-- typeprobe:end -->";
+const LEGACY_AGENTS_START = `<!-- ${LEGACY_SERVER_NAME}:start -->`;
+const LEGACY_AGENTS_END = `<!-- ${LEGACY_SERVER_NAME}:end -->`;
 
 export const AGENTS_BLOCK = `${AGENTS_START}
-## TypeScript types (prinfer)
+## TypeScript types (typeprobe)
 
-The prinfer MCP server reports what the TypeScript compiler infers. Reach for it when:
+The typeprobe MCP server reports what the TypeScript compiler infers. Reach for it when:
 - Adding a type annotation, or unsure what a variable, generic or call infers: \`hover_by_name(file, name)\`; for a token without a unique name, \`hover(file, line, text)\` with text copied from the line. Several lookups go in one \`batch_hover\`. Annotate only when inference is wrong or too wide; \`annotations(file)\` lists annotations TypeScript would infer anyway.
 - Choosing a value for a typed slot (union member, option key, overload): \`completions(file, line, column, prefix?)\` lists what TypeScript accepts there.
 - Finishing an edit to .ts/.tsx files: run \`diagnostics(file)\` on each; the edit is done when none reports an error.
-- Writing type regression tests: \`prinfer/testing\` (dev dependency \`prinfer\`) snapshots an inferred type: \`expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot()\`.
-- Working without MCP: \`npx prinfer file.ts:name --json\` (type), \`npx prinfer complete file.ts:line:col --json\` (completions), \`npx prinfer check file.ts --json\` (type errors).
+- Writing type regression tests: \`typeprobe/testing\` (dev dependency \`typeprobe\`) snapshots an inferred type: \`expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot()\`.
+- Working without MCP: \`npx typeprobe file.ts:name --json\` (type), \`npx typeprobe complete file.ts:line:col --json\` (completions), \`npx typeprobe check file.ts --json\` (type errors).
 ${AGENTS_END}`;
 
 class SetupError extends Error {}
 
 /**
- * Runs `prinfer setup ...` (args exclude "setup") and returns an exit code.
+ * Runs `typeprobe setup ...` (args exclude "setup") and returns an exit code.
  * platform is injectable so Windows behaviour can be tested anywhere.
  */
 export function runSetup(
@@ -252,12 +273,12 @@ function parseSetupArgs(
 	}
 	if (target !== undefined && !CLIENT_NAMES.includes(target)) {
 		throw new SetupError(
-			`Unknown setup client "${target}". Supported clients: ${CLIENT_NAMES.join(", ")}.\nRun 'prinfer setup --help' for details.`,
+			`Unknown setup client "${target}". Supported clients: ${CLIENT_NAMES.join(", ")}.\nRun 'typeprobe setup --help' for details.`,
 		);
 	}
 	if (options.file !== undefined && target !== "agents-md") {
 		throw new SetupError(
-			"--file only applies to 'prinfer setup agents-md'.",
+			"--file only applies to 'typeprobe setup agents-md'.",
 		);
 	}
 	return [target, options];
@@ -286,7 +307,7 @@ function resolveClient(name: string, scope: Scope | undefined): Client {
 
 /**
  * The command an MCP client should launch, without absolute paths. A
- * prinfer-mcp found only in a node_modules/.bin directory (the npx or bunx
+ * typeprobe-mcp found only in a node_modules/.bin directory (the npx or bunx
  * cache, or a project-local install) is not on the client's PATH, so it falls
  * back to npx.
  */
@@ -296,11 +317,11 @@ export function serverCommand(
 ): string[] {
 	const server =
 		!forceNpx &&
-		findOnPath("prinfer-mcp", { skipPackageBins: true, platform })
-			? ["prinfer-mcp"]
+		findOnPath("typeprobe-mcp", { skipPackageBins: true, platform })
+			? ["typeprobe-mcp"]
 			: [...NPX_COMMAND];
 	// MCP clients spawn the command without a shell, which on Windows cannot
-	// run npx.cmd or npm's prinfer-mcp.cmd shim; cmd /c resolves them.
+	// run npx.cmd or npm's typeprobe-mcp.cmd shim; cmd /c resolves them.
 	return platform === "win32" ? ["cmd", "/c", ...server] : server;
 }
 
@@ -379,9 +400,11 @@ function runCliClient(
 		execFileSync(spec.file, spec.args, { ...spec.options, stdio });
 	};
 
-	if (remove) {
+	// Drop the prinfer-era entry and the current one before adding; either
+	// may be missing, which these clients report as a failure.
+	for (const argv of remove ?? []) {
 		try {
-			run(remove, "ignore");
+			run(argv, "ignore");
 		} catch {
 			// The server was not previously configured.
 		}
@@ -395,7 +418,7 @@ function runCliClient(
 		);
 	}
 	console.log(
-		`[ok] Configured prinfer for ${client.label}: ${server.join(" ")}`,
+		`[ok] Configured typeprobe for ${client.label}: ${server.join(" ")}`,
 	);
 	console.log(client.restart);
 }
@@ -416,8 +439,13 @@ function writeJsonClient(
 		return;
 	}
 
-	mergeJsonConfig(file, client.key, entry);
-	console.log(`[ok] Configured prinfer for ${client.label} in ${file}`);
+	const migrated = mergeJsonConfig(file, client.key, entry);
+	console.log(`[ok] Configured typeprobe for ${client.label} in ${file}`);
+	if (migrated) {
+		console.log(
+			`Replaced the "${LEGACY_SERVER_NAME}" entry from before the rename.`,
+		);
+	}
 	console.log(`Server command: ${server.join(" ")}`);
 	console.log(client.restart);
 }
@@ -426,7 +454,7 @@ function mergeJsonConfig(
 	file: string,
 	key: string,
 	entry: Record<string, unknown>,
-): void {
+): boolean {
 	const manual = JSON.stringify({ [key]: { [SERVER_NAME]: entry } }, null, 2);
 	const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
 	let config: unknown = {};
@@ -451,19 +479,48 @@ function mergeJsonConfig(
 		);
 	}
 	// Update what setup owns (command, args, type) and keep keys the user
-	// added to the entry, such as env or cwd.
+	// added to the entry, such as env or cwd. A prinfer-era entry is
+	// replaced in place: its keys carry over unless a typeprobe entry
+	// already exists.
 	const existing = servers[SERVER_NAME];
-	config[key] = {
-		...servers,
-		[SERVER_NAME]: isPlainObject(existing)
-			? { ...existing, ...entry }
-			: entry,
-	};
+	const legacy = servers[LEGACY_SERVER_NAME];
+	const migrated = LEGACY_SERVER_NAME in servers;
+	const base = isPlainObject(existing)
+		? existing
+		: isPlainObject(legacy)
+			? renameLegacyEnv(legacy)
+			: {};
+	const next: Record<string, unknown> = {};
+	for (const [name, value] of Object.entries(servers)) {
+		if (name === LEGACY_SERVER_NAME) {
+			if (!(SERVER_NAME in servers)) next[SERVER_NAME] = undefined;
+		} else {
+			next[name] = value;
+		}
+	}
+	next[SERVER_NAME] = { ...base, ...entry };
+	config[key] = next;
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(
 		file,
 		`${JSON.stringify(config, null, detectIndent(text))}\n`,
 	);
+	return migrated;
+}
+
+/** A prinfer-era entry with its PRINFER_* env names renamed. */
+function renameLegacyEnv(
+	entry: Record<string, unknown>,
+): Record<string, unknown> {
+	if (!isPlainObject(entry.env)) return entry;
+	const env: Record<string, unknown> = {};
+	for (const [name, value] of Object.entries(entry.env)) {
+		const renamed = name.startsWith("PRINFER_")
+			? `TYPEPROBE_${name.slice("PRINFER_".length)}`
+			: name;
+		if (!(renamed in env)) env[renamed] = value;
+	}
+	return { ...entry, env };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -491,8 +548,19 @@ function setupAgentsMd(options: SetupOptions): void {
 	}
 
 	const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
-	const start = existing.indexOf(AGENTS_START);
-	const end = existing.indexOf(AGENTS_END);
+	// A block written before the rename has prinfer markers; replace it
+	// unless the file already has a typeprobe block.
+	const hasCurrent =
+		existing.includes(AGENTS_START) || existing.includes(AGENTS_END);
+	const legacy =
+		!hasCurrent &&
+		(existing.includes(LEGACY_AGENTS_START) ||
+			existing.includes(LEGACY_AGENTS_END));
+	const [startMarker, endMarker] = legacy
+		? [LEGACY_AGENTS_START, LEGACY_AGENTS_END]
+		: [AGENTS_START, AGENTS_END];
+	const start = existing.indexOf(startMarker);
+	const end = existing.indexOf(endMarker);
 	let next: string;
 	if (start === -1 && end === -1) {
 		const separator =
@@ -502,21 +570,23 @@ function setupAgentsMd(options: SetupOptions): void {
 		next =
 			existing.slice(0, start) +
 			AGENTS_BLOCK +
-			existing.slice(end + AGENTS_END.length);
+			existing.slice(end + endMarker.length);
 	} else {
 		throw new SetupError(
-			`${file} has an unmatched ${start === -1 ? AGENTS_END : AGENTS_START} marker. It was left unchanged; fix the markers or remove them and re-run.`,
+			`${file} has an unmatched ${start === -1 ? endMarker : startMarker} marker. It was left unchanged; fix the markers or remove them and re-run.`,
 		);
 	}
 
 	if (next === existing) {
-		console.log(`[ok] ${file} already has the current prinfer block.`);
+		console.log(`[ok] ${file} already has the current typeprobe block.`);
 		return;
 	}
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(file, next);
 	console.log(
-		`[ok] ${start === -1 ? "Added" : "Updated"} the prinfer block in ${file}`,
+		legacy
+			? `[ok] Replaced the prinfer block with the typeprobe block in ${file}`
+			: `[ok] ${start === -1 ? "Added" : "Updated"} the typeprobe block in ${file}`,
 	);
 }
 

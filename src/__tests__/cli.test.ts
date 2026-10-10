@@ -155,7 +155,7 @@ describe("CLI", () => {
 
 	test("inspects a type with Bun 1.3.14's hoisted TypeScript 7 layout", async () => {
 		const consumerDir = fs.mkdtempSync(
-			path.join(os.tmpdir(), "prinfer-typescript-7-"),
+			path.join(os.tmpdir(), "typeprobe-typescript-7-"),
 		);
 
 		try {
@@ -168,7 +168,7 @@ describe("CLI", () => {
 					"pack",
 					"--ignore-scripts",
 					"--filename",
-					path.join(consumerDir, "prinfer.tgz"),
+					path.join(consumerDir, "typeprobe.tgz"),
 				],
 				{
 					cwd: packageRoot,
@@ -183,7 +183,7 @@ describe("CLI", () => {
 				JSON.stringify({
 					private: true,
 					dependencies: {
-						prinfer: "./prinfer.tgz",
+						typeprobe: "./typeprobe.tgz",
 						typescript: "^7.0.2",
 					},
 				}),
@@ -233,7 +233,7 @@ describe("CLI", () => {
 			}
 
 			const result = Bun.spawnSync(
-				["bunx", "prinfer", `${targetFile}:test`],
+				["bunx", "typeprobe", `${targetFile}:test`],
 				{
 					cwd: consumerDir,
 					stdout: "pipe",
@@ -253,7 +253,7 @@ describe("CLI", () => {
 
 	test("shows help with --help flag", async () => {
 		const { stdout, exitCode } = await runCli(["--help"]);
-		expect(stdout).toContain("prinfer");
+		expect(stdout).toContain("typeprobe");
 		expect(stdout).toContain("Usage:");
 		expect(exitCode).toBe(0);
 	});
@@ -272,7 +272,7 @@ describe("CLI", () => {
 
 	test("shows help with -h flag", async () => {
 		const { stdout, exitCode } = await runCli(["-h"]);
-		expect(stdout).toContain("prinfer");
+		expect(stdout).toContain("typeprobe");
 		expect(exitCode).toBe(0);
 	});
 
@@ -440,7 +440,7 @@ describe("CLI", () => {
 		);
 		expect(lines[1]).toBe("Accepted forms:");
 		expect(stderr).toContain("<file>:<line>:<text>");
-		expect(lines.at(-1)).toBe("Run prinfer --help for all options.");
+		expect(lines.at(-1)).toBe("Run typeprobe --help for all options.");
 		expect(lines.length).toBeLessThanOrEqual(7);
 		expect(stdout).toBe("");
 		expect(exitCode).toBe(1);
@@ -452,7 +452,7 @@ describe("CLI", () => {
 			[
 				`Error [INVALID_ARGUMENT]: ${JSON.stringify(`${sampleFile}:4`)} has a line but no column or text after it.`,
 				`Add one: ${sampleFile}:4:<text>, ${sampleFile}:4 --text <text>, or ${sampleFile}:4:<column>.`,
-				"Run prinfer --help for all options.",
+				"Run typeprobe --help for all options.",
 				"",
 			].join("\n"),
 		);
@@ -460,7 +460,7 @@ describe("CLI", () => {
 	});
 
 	test("hints at shell quoting when the target looks mangled", async () => {
-		// Unquoted, "src/store.ts:$store" reaches prinfer as "src/store.ts:".
+		// Unquoted, "src/store.ts:$store" reaches typeprobe as "src/store.ts:".
 		const dollar = await runCli([`${sampleFile}:`]);
 		expect(dollar.stderr).toContain(
 			"Hint: If the target has a $ (as in $name identifiers), single-quote",
@@ -579,14 +579,14 @@ describe("CLI", () => {
 		] as const) {
 			const { stdout, stderr, exitCode } = await runCli([...args]);
 			expect(stderr).toContain(message);
-			expect(stderr).toEndWith("Run prinfer --help for all options.\n");
+			expect(stderr).toEndWith("Run typeprobe --help for all options.\n");
 			expect(stdout).toBe("");
 			expect(exitCode).toBe(1);
 		}
 	});
 
 	test("caps long type text with a size trailer", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-cap-"));
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-cap-"));
 		try {
 			const file = path.join(dir, "big.ts");
 			const members = Array.from(
@@ -709,7 +709,7 @@ describe("CLI", () => {
 	});
 
 	test("accepts any JavaScript identifier as a name", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-names-"));
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-names-"));
 		try {
 			const file = path.join(dir, "names.ts");
 			fs.writeFileSync(
@@ -798,7 +798,7 @@ describe("CLI", () => {
 			JSON.parse((await runCli([sampleFile, "--json"])).stdout),
 		).error;
 		expect(invalid.code).toBe("INVALID_ARGUMENT");
-		expect(invalid.suggestion).toContain("prinfer --help");
+		expect(invalid.suggestion).toContain("typeprobe --help");
 		expect(invalid.suggestion).not.toContain("batch");
 	});
 
@@ -853,7 +853,7 @@ describe("CLI", () => {
 	});
 });
 
-describe("prinfer check", () => {
+describe("typeprobe check", () => {
 	test("prints tsc-style errors and exits 1 when the file has errors", async () => {
 		const { stdout, stderr, exitCode } = await runCli([
 			"check",
@@ -950,7 +950,7 @@ describe("prinfer check", () => {
 
 	test("is listed in --help", async () => {
 		const { stdout } = await runCli(["--help"]);
-		expect(stdout).toContain("prinfer check <file>");
+		expect(stdout).toContain("typeprobe check <file>");
 	});
 
 	test("checks with --backend typescript7", async () => {
@@ -984,11 +984,11 @@ describe("prinfer check", () => {
 		const usage = contractErrorResponseSchema.parse(
 			JSON.parse((await runCli(["check", "--json"])).stdout),
 		).error;
-		expect(usage.suggestion).toContain("Usage: prinfer check");
+		expect(usage.suggestion).toContain("Usage: typeprobe check");
 	});
 });
 
-const NPX_SERVER = ["npx", "-y", "prinfer", "mcp"];
+const NPX_SERVER = ["npx", "-y", "typeprobe", "mcp"];
 const FAKE_CLIENTS = ["codex", "claude", "code", "gemini"];
 
 interface SetupSandbox {
@@ -1007,7 +1007,7 @@ interface SetupSandbox {
 
 /** Temp HOME, cwd, and a PATH holding only fake executables that log argv. */
 function createSandbox(): SetupSandbox {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-setup-"));
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-setup-"));
 	const home = path.join(root, "home");
 	const cwd = path.join(root, "project");
 	const bin = path.join(root, "bin");
@@ -1020,9 +1020,9 @@ function createSandbox(): SetupSandbox {
 			script,
 			[
 				"#!/bin/sh",
-				`printf '%s' '${name}' >> "$PRINFER_TEST_LOG"`,
-				`for arg in "$@"; do printf '\\t%s' "$arg" >> "$PRINFER_TEST_LOG"; done`,
-				`printf '\\n' >> "$PRINFER_TEST_LOG"`,
+				`printf '%s' '${name}' >> "$TYPEPROBE_TEST_LOG"`,
+				`for arg in "$@"; do printf '\\t%s' "$arg" >> "$TYPEPROBE_TEST_LOG"; done`,
+				`printf '\\n' >> "$TYPEPROBE_TEST_LOG"`,
 				`exit "$FAKE_EXIT"`,
 				"",
 			].join("\n"),
@@ -1041,7 +1041,7 @@ function createSandbox(): SetupSandbox {
 				env: {
 					HOME: home,
 					PATH: bin,
-					PRINFER_TEST_LOG: log,
+					TYPEPROBE_TEST_LOG: log,
 					FAKE_EXIT: "0",
 					...extraEnv,
 				},
@@ -1063,7 +1063,7 @@ function readJson(file: string): unknown {
 	return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
-describe("prinfer setup", () => {
+describe("typeprobe setup", () => {
 	let sandbox: SetupSandbox;
 
 	beforeEach(() => {
@@ -1098,32 +1098,32 @@ describe("prinfer setup", () => {
 		expect(exitCode).toBe(1);
 	});
 
-	test("prints the npx server command when prinfer-mcp is not on PATH", async () => {
+	test("prints the npx server command when typeprobe-mcp is not on PATH", async () => {
 		const { stdout, stderr, exitCode } = await sandbox.run([
 			"setup",
 			"codex",
 			"--print",
 		]);
 		expect(stdout.trim()).toBe(
-			"codex mcp add prinfer -- npx -y prinfer mcp",
+			"codex mcp add typeprobe -- npx -y typeprobe mcp",
 		);
 		expect(stderr).toBe("");
 		expect(exitCode).toBe(0);
 		expect(sandbox.calls()).toEqual([]);
 	});
 
-	test("prefers prinfer-mcp on PATH over an absolute install path", async () => {
-		sandbox.addFake("prinfer-mcp");
+	test("prefers typeprobe-mcp on PATH over an absolute install path", async () => {
+		sandbox.addFake("typeprobe-mcp");
 		const { stdout, exitCode } = await sandbox.run([
 			"setup",
 			"codex",
 			"--print",
 		]);
-		expect(stdout.trim()).toBe("codex mcp add prinfer -- prinfer-mcp");
+		expect(stdout.trim()).toBe("codex mcp add typeprobe -- typeprobe-mcp");
 		expect(exitCode).toBe(0);
 	});
 
-	test("ignores prinfer-mcp from npx or a project's node_modules/.bin", async () => {
+	test("ignores typeprobe-mcp from npx or a project's node_modules/.bin", async () => {
 		const npxBin = path.join(
 			sandbox.root,
 			"_npx",
@@ -1132,7 +1132,7 @@ describe("prinfer setup", () => {
 			".bin",
 		);
 		fs.mkdirSync(npxBin, { recursive: true });
-		const fake = path.join(npxBin, "prinfer-mcp");
+		const fake = path.join(npxBin, "typeprobe-mcp");
 		fs.writeFileSync(fake, "#!/bin/sh\n");
 		fs.chmodSync(fake, 0o755);
 		const { stdout, exitCode } = await sandbox.run(
@@ -1142,13 +1142,13 @@ describe("prinfer setup", () => {
 			},
 		);
 		expect(stdout.trim()).toBe(
-			"codex mcp add prinfer -- npx -y prinfer mcp",
+			"codex mcp add typeprobe -- npx -y typeprobe mcp",
 		);
 		expect(exitCode).toBe(0);
 	});
 
 	test("--npx forces the npx server command", async () => {
-		sandbox.addFake("prinfer-mcp");
+		sandbox.addFake("typeprobe-mcp");
 		const { stdout, exitCode } = await sandbox.run([
 			"setup",
 			"codex",
@@ -1156,17 +1156,18 @@ describe("prinfer setup", () => {
 			"--print",
 		]);
 		expect(stdout.trim()).toBe(
-			"codex mcp add prinfer -- npx -y prinfer mcp",
+			"codex mcp add typeprobe -- npx -y typeprobe mcp",
 		);
 		expect(exitCode).toBe(0);
 	});
 
 	test("replaces the Codex server registration", async () => {
-		sandbox.addFake("prinfer-mcp");
+		sandbox.addFake("typeprobe-mcp");
 		const { stdout, exitCode } = await sandbox.run(["setup", "codex"]);
 		expect(sandbox.calls()).toEqual([
 			["codex", "mcp", "remove", "prinfer"],
-			["codex", "mcp", "add", "prinfer", "--", "prinfer-mcp"],
+			["codex", "mcp", "remove", "typeprobe"],
+			["codex", "mcp", "add", "typeprobe", "--", "typeprobe-mcp"],
 		]);
 		expect(stdout).toContain("Restart Codex");
 		expect(exitCode).toBe(0);
@@ -1188,13 +1189,14 @@ describe("prinfer setup", () => {
 		const { stdout, exitCode } = await sandbox.run(["setup", "claude"]);
 		expect(sandbox.calls()).toEqual([
 			["claude", "mcp", "remove", "--scope", "user", "prinfer"],
+			["claude", "mcp", "remove", "--scope", "user", "typeprobe"],
 			[
 				"claude",
 				"mcp",
 				"add",
 				"--scope",
 				"user",
-				"prinfer",
+				"typeprobe",
 				"--",
 				...NPX_SERVER,
 			],
@@ -1210,13 +1212,21 @@ describe("prinfer setup", () => {
 			"--scope",
 			"project",
 		]);
-		expect(sandbox.calls()[1]).toEqual([
+		expect(sandbox.calls()[0]).toEqual([
+			"claude",
+			"mcp",
+			"remove",
+			"--scope",
+			"project",
+			"prinfer",
+		]);
+		expect(sandbox.calls()[2]).toEqual([
 			"claude",
 			"mcp",
 			"add",
 			"--scope",
 			"project",
-			"prinfer",
+			"typeprobe",
 			"--",
 			...NPX_SERVER,
 		]);
@@ -1239,7 +1249,7 @@ describe("prinfer setup", () => {
 		const { stderr, exitCode } = await sandbox.run(["setup", "claude"]);
 		expect(stderr).toContain("'claude' was not found on PATH");
 		expect(stderr).toContain(
-			"claude mcp add --scope user prinfer -- npx -y prinfer mcp",
+			"claude mcp add --scope user typeprobe -- npx -y typeprobe mcp",
 		);
 		expect(exitCode).toBe(1);
 	});
@@ -1265,10 +1275,10 @@ describe("prinfer setup", () => {
 		expect(readJson(file)).toEqual({
 			mcpServers: {
 				other: { command: "other-mcp" },
-				prinfer: {
+				typeprobe: {
 					type: "stdio",
 					command: "npx",
-					args: ["-y", "prinfer", "mcp"],
+					args: ["-y", "typeprobe", "mcp"],
 				},
 			},
 			extra: true,
@@ -1284,7 +1294,7 @@ describe("prinfer setup", () => {
 	});
 
 	test("creates Cursor's project config", async () => {
-		sandbox.addFake("prinfer-mcp");
+		sandbox.addFake("typeprobe-mcp");
 		const { exitCode } = await sandbox.run([
 			"setup",
 			"cursor",
@@ -1294,9 +1304,9 @@ describe("prinfer setup", () => {
 		expect(readJson(path.join(sandbox.cwd, ".cursor", "mcp.json"))).toEqual(
 			{
 				mcpServers: {
-					prinfer: {
+					typeprobe: {
 						type: "stdio",
-						command: "prinfer-mcp",
+						command: "typeprobe-mcp",
 						args: [],
 					},
 				},
@@ -1314,7 +1324,7 @@ describe("prinfer setup", () => {
 
 		const { stderr, exitCode } = await sandbox.run(["setup", "cursor"]);
 		expect(stderr).toContain("is not valid JSON");
-		expect(stderr).toContain('"prinfer"');
+		expect(stderr).toContain('"typeprobe"');
 		expect(fs.readFileSync(file, "utf8")).toBe(original);
 		expect(exitCode).toBe(1);
 	});
@@ -1329,7 +1339,7 @@ describe("prinfer setup", () => {
 		expect(stdout).toContain(`Would update ${file}:`);
 		expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual({
 			mcpServers: {
-				prinfer: { command: "npx", args: ["-y", "prinfer", "mcp"] },
+				typeprobe: { command: "npx", args: ["-y", "typeprobe", "mcp"] },
 			},
 		});
 		expect(fs.existsSync(file)).toBe(false);
@@ -1345,7 +1355,7 @@ describe("prinfer setup", () => {
 		expect(readJson(file)).toEqual({
 			theme: "Default",
 			mcpServers: {
-				prinfer: { command: "npx", args: ["-y", "prinfer", "mcp"] },
+				typeprobe: { command: "npx", args: ["-y", "typeprobe", "mcp"] },
 			},
 		});
 		expect(fs.readFileSync(file, "utf8")).toContain('\n    "theme"');
@@ -1365,7 +1375,7 @@ describe("prinfer setup", () => {
 			readJson(path.join(sandbox.cwd, ".gemini", "settings.json")),
 		).toEqual({
 			mcpServers: {
-				prinfer: { command: "npx", args: ["-y", "prinfer", "mcp"] },
+				typeprobe: { command: "npx", args: ["-y", "typeprobe", "mcp"] },
 			},
 		});
 		expect(exitCode).toBe(0);
@@ -1377,10 +1387,10 @@ describe("prinfer setup", () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0].slice(0, 2)).toEqual(["code", "--add-mcp"]);
 		expect(JSON.parse(calls[0][2])).toEqual({
-			name: "prinfer",
+			name: "typeprobe",
 			type: "stdio",
 			command: "npx",
-			args: ["-y", "prinfer", "mcp"],
+			args: ["-y", "typeprobe", "mcp"],
 		});
 		expect(stdout).toContain("Reload VS Code");
 		expect(exitCode).toBe(0);
@@ -1404,10 +1414,10 @@ describe("prinfer setup", () => {
 			inputs: [],
 			servers: {
 				other: { url: "x" },
-				prinfer: {
+				typeprobe: {
 					type: "stdio",
 					command: "npx",
-					args: ["-y", "prinfer", "mcp"],
+					args: ["-y", "typeprobe", "mcp"],
 				},
 			},
 		});
@@ -1422,11 +1432,11 @@ describe("prinfer setup", () => {
 			file,
 			JSON.stringify({
 				mcpServers: {
-					prinfer: {
+					typeprobe: {
 						type: "stdio",
-						command: "old-prinfer",
+						command: "old-typeprobe",
 						args: ["--old"],
-						env: { PRINFER_BACKEND: "typescript6" },
+						env: { TYPEPROBE_BACKEND: "typescript6" },
 						disabled: false,
 					},
 				},
@@ -1436,12 +1446,90 @@ describe("prinfer setup", () => {
 		const { exitCode } = await sandbox.run(["setup", "cursor"]);
 		expect(readJson(file)).toEqual({
 			mcpServers: {
-				prinfer: {
+				typeprobe: {
 					type: "stdio",
 					command: "npx",
-					args: ["-y", "prinfer", "mcp"],
-					env: { PRINFER_BACKEND: "typescript6" },
+					args: ["-y", "typeprobe", "mcp"],
+					env: { TYPEPROBE_BACKEND: "typescript6" },
 					disabled: false,
+				},
+			},
+		});
+		expect(exitCode).toBe(0);
+	});
+
+	test("replaces a prinfer entry from before the rename in place", async () => {
+		const file = path.join(sandbox.home, ".cursor", "mcp.json");
+		fs.mkdirSync(path.dirname(file));
+		fs.writeFileSync(
+			file,
+			JSON.stringify({
+				mcpServers: {
+					first: { url: "a" },
+					prinfer: {
+						type: "stdio",
+						command: "npx",
+						args: ["-y", "prinfer", "mcp"],
+						env: { PRINFER_BACKEND: "typescript6", OTHER: "1" },
+						disabled: false,
+					},
+					last: { url: "b" },
+				},
+			}),
+		);
+
+		const { stdout, exitCode } = await sandbox.run(["setup", "cursor"]);
+		const config = readJson(file) as {
+			mcpServers: Record<string, unknown>;
+		};
+		expect(config).toEqual({
+			mcpServers: {
+				first: { url: "a" },
+				typeprobe: {
+					type: "stdio",
+					command: "npx",
+					args: ["-y", "typeprobe", "mcp"],
+					env: { TYPEPROBE_BACKEND: "typescript6", OTHER: "1" },
+					disabled: false,
+				},
+				last: { url: "b" },
+			},
+		});
+		expect(Object.keys(config.mcpServers)).toEqual([
+			"first",
+			"typeprobe",
+			"last",
+		]);
+		expect(stdout).toContain('Replaced the "prinfer" entry');
+		expect(exitCode).toBe(0);
+	});
+
+	test("drops a prinfer entry next to an existing typeprobe one", async () => {
+		const file = path.join(sandbox.cwd, ".vscode", "mcp.json");
+		fs.mkdirSync(path.dirname(file));
+		fs.writeFileSync(
+			file,
+			JSON.stringify({
+				servers: {
+					typeprobe: { command: "x", env: { KEEP: "1" } },
+					prinfer: { command: "y", env: { DROP: "1" } },
+				},
+			}),
+		);
+
+		const { exitCode } = await sandbox.run([
+			"setup",
+			"vscode",
+			"--scope",
+			"project",
+		]);
+		expect(readJson(file)).toEqual({
+			servers: {
+				typeprobe: {
+					type: "stdio",
+					command: "npx",
+					args: ["-y", "typeprobe", "mcp"],
+					env: { KEEP: "1" },
 				},
 			},
 		});
@@ -1449,15 +1537,15 @@ describe("prinfer setup", () => {
 	});
 });
 
-describe("prinfer setup on Windows", () => {
+describe("typeprobe setup on Windows", () => {
 	let root: string;
 	let log: ReturnType<typeof spyOn<Console, "log">>;
 	let savedPath: string | undefined;
 
 	beforeEach(() => {
-		root = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-win-"));
+		root = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-win-"));
 		savedPath = process.env.PATH;
-		// Nothing on PATH: prinfer-mcp is not installed.
+		// Nothing on PATH: typeprobe-mcp is not installed.
 		process.env.PATH = path.join(root, "empty-bin");
 		log = spyOn(console, "log").mockImplementation(() => {});
 	});
@@ -1477,7 +1565,7 @@ describe("prinfer setup on Windows", () => {
 			"/c",
 			"npx",
 			"-y",
-			"prinfer",
+			"typeprobe",
 			"mcp",
 		]);
 		expect(serverCommand(true, "linux")).toEqual(NPX_SERVER);
@@ -1487,7 +1575,7 @@ describe("prinfer setup on Windows", () => {
 		expect(runSetup(["gemini", "--print"], "win32")).toBe(0);
 		expect(JSON.parse(printed().slice(printed().indexOf("{")))).toEqual({
 			mcpServers: {
-				prinfer: { command: "cmd", args: ["/c", ...NPX_SERVER] },
+				typeprobe: { command: "cmd", args: ["/c", ...NPX_SERVER] },
 			},
 		});
 
@@ -1500,7 +1588,7 @@ describe("prinfer setup on Windows", () => {
 		}
 		expect(readJson(path.join(root, ".cursor", "mcp.json"))).toEqual({
 			mcpServers: {
-				prinfer: {
+				typeprobe: {
 					type: "stdio",
 					command: "cmd",
 					args: ["/c", ...NPX_SERVER],
@@ -1512,12 +1600,12 @@ describe("prinfer setup on Windows", () => {
 	test("registers CLI clients through cmd /c", () => {
 		expect(runSetup(["claude", "--print"], "win32")).toBe(0);
 		expect(printed().trim()).toBe(
-			"claude mcp add --scope user prinfer -- cmd /c npx -y prinfer mcp",
+			"claude mcp add --scope user typeprobe -- cmd /c npx -y typeprobe mcp",
 		);
 	});
 
 	test("runs .cmd client shims through cmd.exe with escaped arguments", () => {
-		const json = JSON.stringify({ name: "prinfer", args: ["/c", "a b"] });
+		const json = JSON.stringify({ name: "typeprobe", args: ["/c", "a b"] });
 		const spec = spawnSpec(
 			["code", "--add-mcp", json],
 			"C:\\Program Files\\VS Code\\bin\\code.cmd",
@@ -1528,7 +1616,7 @@ describe("prinfer setup on Windows", () => {
 		expect(spec.args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
 		expect(spec.args[3]).toBe(
 			'"C:\\Program^ Files\\VS^ Code\\bin\\code.cmd ^"--add-mcp^" ' +
-				'^"{\\^"name\\^":\\^"prinfer\\^"^,\\^"args\\^":^[\\^"/c\\^"^,\\^"a^ b\\^"^]}^""',
+				'^"{\\^"name\\^":\\^"typeprobe\\^"^,\\^"args\\^":^[\\^"/c\\^"^,\\^"a^ b\\^"^]}^""',
 		);
 	});
 
@@ -1542,7 +1630,7 @@ describe("prinfer setup on Windows", () => {
 	});
 });
 
-describe("prinfer setup agents-md", () => {
+describe("typeprobe setup agents-md", () => {
 	let sandbox: SetupSandbox;
 
 	beforeEach(() => {
@@ -1553,12 +1641,12 @@ describe("prinfer setup agents-md", () => {
 		fs.rmSync(sandbox.root, { recursive: true, force: true });
 	});
 
-	const START = "<!-- prinfer:start -->";
-	const END = "<!-- prinfer:end -->";
+	const START = "<!-- typeprobe:start -->";
+	const END = "<!-- typeprobe:end -->";
 	const block = (text: string) =>
 		text.slice(text.indexOf(START), text.indexOf(END) + END.length);
 
-	test("creates AGENTS.md with the prinfer block", async () => {
+	test("creates AGENTS.md with the typeprobe block", async () => {
 		const { stdout, exitCode } = await sandbox.run(["setup", "agents-md"]);
 		const text = fs.readFileSync(
 			path.join(sandbox.cwd, "AGENTS.md"),
@@ -1571,12 +1659,12 @@ describe("prinfer setup agents-md", () => {
 			"hover(file, line, text)",
 			"completions",
 			"diagnostics",
-			"npx prinfer",
-			"prinfer/testing",
+			"npx typeprobe",
+			"typeprobe/testing",
 		]) {
 			expect(text).toContain(hint);
 		}
-		expect(stdout).toContain("Added the prinfer block");
+		expect(stdout).toContain("Added the typeprobe block");
 		expect(exitCode).toBe(0);
 	});
 
@@ -1595,7 +1683,7 @@ describe("prinfer setup agents-md", () => {
 			"CLAUDE.md",
 		]);
 		expect(fs.readFileSync(file, "utf8")).toBe(once);
-		expect(stdout).toContain("already has the current prinfer block");
+		expect(stdout).toContain("already has the current typeprobe block");
 		expect(exitCode).toBe(0);
 		expect(fs.existsSync(path.join(sandbox.cwd, "AGENTS.md"))).toBe(false);
 	});
@@ -1618,7 +1706,24 @@ describe("prinfer setup agents-md", () => {
 		expect(text.startsWith(`# Rules\n${START}`)).toBe(true);
 		expect(text.endsWith(`${END}\n## After\n`)).toBe(true);
 		expect(block(text)).toBe(block(printed));
-		expect(stdout).toContain("Updated the prinfer block");
+		expect(stdout).toContain("Updated the typeprobe block");
+		expect(exitCode).toBe(0);
+	});
+
+	test("replaces a prinfer block from before the rename", async () => {
+		const file = path.join(sandbox.cwd, "AGENTS.md");
+		fs.writeFileSync(
+			file,
+			"# Rules\n<!-- prinfer:start -->\nold advice\n<!-- prinfer:end -->\n## After\n",
+		);
+
+		const { stdout, exitCode } = await sandbox.run(["setup", "agents-md"]);
+		const text = fs.readFileSync(file, "utf8");
+		expect(text).not.toContain("prinfer:");
+		expect(text).not.toContain("old advice");
+		expect(text.startsWith(`# Rules\n${START}`)).toBe(true);
+		expect(text.endsWith(`${END}\n## After\n`)).toBe(true);
+		expect(stdout).toContain("Replaced the prinfer block");
 		expect(exitCode).toBe(0);
 	});
 
@@ -1645,7 +1750,7 @@ describe("prinfer setup agents-md", () => {
 	});
 });
 
-describe("prinfer mcp", () => {
+describe("typeprobe mcp", () => {
 	const distCli = path.join(packageRoot, "dist", "cli.js");
 	let binDir: string;
 
@@ -1653,8 +1758,8 @@ describe("prinfer mcp", () => {
 
 	beforeEach(() => {
 		// npm installs bins as symlinks; the server must resolve beside the target.
-		binDir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-bin-"));
-		fs.symlinkSync(distCli, path.join(binDir, "prinfer"));
+		binDir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-bin-"));
+		fs.symlinkSync(distCli, path.join(binDir, "typeprobe"));
 	});
 
 	afterEach(() => {
@@ -1663,35 +1768,38 @@ describe("prinfer mcp", () => {
 
 	test("shows the MCP server help", async () => {
 		const proc = Bun.spawn(
-			["node", path.join(binDir, "prinfer"), "mcp", "--help"],
+			["node", path.join(binDir, "typeprobe"), "mcp", "--help"],
 			{ stdout: "pipe", stderr: "pipe" },
 		);
 		const stdout = await new Response(proc.stdout).text();
-		expect(stdout).toMatch(/^prinfer-mcp \S+ - MCP server/);
-		expect(stdout).toContain("prinfer setup");
+		expect(stdout).toMatch(/^typeprobe-mcp \S+ - MCP server/);
+		expect(stdout).toContain("typeprobe setup");
 		expect(await proc.exited).toBe(0);
 	});
 
-	test("keeps the prinfer-mcp bin working through a symlink", async () => {
-		const bin = path.join(binDir, "prinfer-mcp");
+	test("keeps the typeprobe-mcp bin working through a symlink", async () => {
+		const bin = path.join(binDir, "typeprobe-mcp");
 		fs.symlinkSync(path.join(packageRoot, "dist", "mcp.js"), bin);
 		const proc = Bun.spawn(["node", bin, "--help"], {
 			stdout: "pipe",
 			stderr: "pipe",
 		});
 		expect(await new Response(proc.stdout).text()).toMatch(
-			/^prinfer-mcp \S+ - MCP server/,
+			/^typeprobe-mcp \S+ - MCP server/,
 		);
 		expect(await new Response(proc.stderr).text()).toBe("");
 		expect(await proc.exited).toBe(0);
 	});
 
 	test("speaks MCP over stdio with nothing else on stdout", async () => {
-		const proc = Bun.spawn(["node", path.join(binDir, "prinfer"), "mcp"], {
-			stdin: "pipe",
-			stdout: "pipe",
-			stderr: "pipe",
-		});
+		const proc = Bun.spawn(
+			["node", path.join(binDir, "typeprobe"), "mcp"],
+			{
+				stdin: "pipe",
+				stdout: "pipe",
+				stderr: "pipe",
+			},
+		);
 		const reader = proc.stdout.getReader();
 		const decoder = new TextDecoder();
 		const lines: string[] = [];
@@ -1733,11 +1841,11 @@ describe("prinfer mcp", () => {
 			params: {
 				protocolVersion: "2025-06-18",
 				capabilities: {},
-				clientInfo: { name: "prinfer-test", version: "0.0.0" },
+				clientInfo: { name: "typeprobe-test", version: "0.0.0" },
 			},
 		});
 		const initialized = await response(1);
-		expect(initialized.result.serverInfo.name).toBe("prinfer");
+		expect(initialized.result.serverInfo.name).toBe("typeprobe");
 
 		send({ method: "notifications/initialized" });
 		send({ id: 2, method: "tools/list" });

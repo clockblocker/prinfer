@@ -23,11 +23,12 @@ import {
 	getCompletions,
 	resolveTextColumn,
 } from "./core/index.js";
+import { readEnv } from "./env.js";
 import { formatErrorText, reportError } from "./error-report.js";
 import {
 	assertSourceFile,
 	COST_NEEDS_TYPESCRIPT6,
-	PrinferError,
+	TypeprobeError,
 } from "./errors.js";
 import { DEFAULT_MAX_CHARS, formatHoverText } from "./hover-format.js";
 import { batchHover, diagnostics, hover } from "./index.js";
@@ -49,14 +50,14 @@ import type { HoverOptions, HoverPosition, HoverResult } from "./types.js";
 import { VERSION } from "./version.js";
 
 const HELP = `
-prinfer-mcp ${VERSION} - MCP server for TypeScript type inference
+typeprobe-mcp ${VERSION} - MCP server for TypeScript type inference
 
 This is a Model Context Protocol server designed to be launched by an MCP
 client over stdio.
 
 Setup:
-  Run 'prinfer setup <codex|claude|cursor|vscode|gemini>' to register this
-  server with a client. Without a global install: npx -y prinfer mcp
+  Run 'typeprobe setup <codex|claude|cursor|vscode|gemini>' to register this
+  server with a client. Without a global install: npx -y typeprobe mcp
 
 Provided tools:
   hover_by_name(file, name, line?, include_docs?, include_cost?, full?, max_chars?, project?, backend?)
@@ -75,12 +76,13 @@ Hover text is capped at ${DEFAULT_MAX_CHARS} characters per type (max_chars; 0 f
 cap); structuredContent always has the complete result.
 
 Environment:
-  PRINFER_BACKEND=typescript6   Backend for hover and diagnostics tools (default typescript7)
-  PRINFER_COMPILER=project      The project's own TypeScript 6 and 7 instead of the
-                                bundled ones; "auto" falls back to bundled (default bundled)
+  TYPEPROBE_BACKEND=typescript6   Backend for hover and diagnostics tools (default typescript7)
+  TYPEPROBE_COMPILER=project      The project's own TypeScript 6 and 7 instead of the
+                                  bundled ones; "auto" falls back to bundled (default bundled)
+  The deprecated PRINFER_BACKEND and PRINFER_COMPILER are read when these are unset.
 
 See also:
-  prinfer --help    CLI: type lookups, completions, check, and annotations
+  typeprobe --help    CLI: type lookups, completions, check, and annotations
 `.trim();
 
 type Backend = "typescript6" | "typescript7";
@@ -190,7 +192,7 @@ function toolError(
 
 function useNative(backend?: Backend): boolean {
 	return (
-		(backend ?? process.env.PRINFER_BACKEND ?? "typescript7") ===
+		(backend ?? readEnv("BACKEND")?.value ?? "typescript7") ===
 		"typescript7"
 	);
 }
@@ -205,7 +207,7 @@ function hoverBackend(
 ): Backend | undefined {
 	if (!includeCost) return backend;
 	if (backend === "typescript7") {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			`include_cost needs backend "typescript6". ${COST_NEEDS_TYPESCRIPT6}`,
 			'Omit backend, or pass backend "typescript6", with include_cost.',
@@ -227,7 +229,7 @@ function resolveColumn(
 	source?: string,
 ): number {
 	if ((column === undefined) === (text === undefined)) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			"Pass exactly one of column or text to target a token on the line",
 			"Pass text copied from the line (e.g. the identifier), or a 1-based column.",
@@ -288,7 +290,7 @@ interface PendingItem {
 function batchTarget(item: RawBatchItem): BatchTarget {
 	if (item.name !== undefined) {
 		if (item.column !== undefined || item.text !== undefined) {
-			throw new PrinferError(
+			throw new TypeprobeError(
 				"INVALID_ARGUMENT",
 				"A batch item with name cannot also have column or text",
 				"Use {name, line?}, {line, text, occurrence?}, or {line, column}.",
@@ -297,14 +299,14 @@ function batchTarget(item: RawBatchItem): BatchTarget {
 		return { kind: "name", name: item.name, line: item.line };
 	}
 	if (item.line === undefined) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			"A batch item needs line (with column or text) or name",
 			"Use {name, line?}, {line, text, occurrence?}, or {line, column}.",
 		);
 	}
 	if ((item.column === undefined) === (item.text === undefined)) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			"A batch item needs exactly one of column or text",
 			"Use {line, text, occurrence?} or {line, column}.",
@@ -382,7 +384,7 @@ async function runBatchHover(
 		if (!fileArg) {
 			fail(
 				{ index },
-				new PrinferError(
+				new TypeprobeError(
 					"INVALID_ARGUMENT",
 					"No file for this batch item",
 					"Set file on the item, or a top-level file shared by all items.",
@@ -623,7 +625,7 @@ const hoverTextShape = {
 		),
 };
 
-const INSTRUCTIONS = `prinfer shows the types TypeScript infers, as an editor hover would. Look a type up instead of guessing it, reading .d.ts files, or writing an annotation to find out.
+const INSTRUCTIONS = `typeprobe shows the types TypeScript infers, as an editor hover would. Look a type up instead of guessing it, reading .d.ts files, or writing an annotation to find out.
 - hover_by_name: you know the symbol's name. Start here.
 - hover: a token without a unique name; pass its line and text copied from that line.
 - batch_hover: several lookups, across files, in one call.
@@ -631,11 +633,11 @@ const INSTRUCTIONS = `prinfer shows the types TypeScript infers, as an editor ho
 - diagnostics: type errors in one file; run it on each file you edit.
 - annotations: annotations TypeScript would infer anyway, when cleaning up types.
 If a call fails or looks wrong on the default TypeScript 7 backend, retry it with backend "typescript6".
-Type regression tests: expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot(), with inferredType from prinfer/testing.`;
+Type regression tests: expect(inferredType(import.meta.url, { name })).toMatchInlineSnapshot(), with inferredType from typeprobe/testing.`;
 
 function createServer(): McpServer {
 	const server = new McpServer(
-		{ name: "prinfer", version: VERSION },
+		{ name: "typeprobe", version: VERSION },
 		{ instructions: INSTRUCTIONS },
 	);
 

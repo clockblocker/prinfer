@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { contractError } from "../contract.js";
 import { resolveTextColumn } from "../core/index.js";
-import { PrinferError } from "../errors.js";
+import { TypeprobeError } from "../errors.js";
 
 const source = [
 	"const total = sum(items);",
@@ -9,14 +9,14 @@ const source = [
 	"export const items = [1, 2];",
 ].join("\n");
 
-function thrown(fn: () => unknown): PrinferError {
+function thrown(fn: () => unknown): TypeprobeError {
 	try {
 		fn();
 	} catch (error) {
-		if (error instanceof PrinferError) return error;
+		if (error instanceof TypeprobeError) return error;
 		throw error;
 	}
-	throw new Error("expected a PrinferError");
+	throw new Error("expected a TypeprobeError");
 }
 
 describe("resolveTextColumn", () => {

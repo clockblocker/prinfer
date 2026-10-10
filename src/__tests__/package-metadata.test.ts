@@ -20,7 +20,7 @@ describe("MCP Registry manifest", () => {
 		expect(server.version).toBe(pkg.version);
 	});
 
-	test("npm package entry launches `prinfer mcp` at the published version", () => {
+	test("npm package entry launches `typeprobe mcp` at the published version", () => {
 		const npmPackage = server.packages.find(
 			(entry: { registryType: string }) => entry.registryType === "npm",
 		);
@@ -46,7 +46,7 @@ describe("MCPB manifest (Smithery)", () => {
 		expect(manifest.compatibility.runtimes.node).toBe(pkg.engines.node);
 	});
 
-	test("launches `npx -y prinfer@<version> mcp` with no user config", () => {
+	test("launches `npx -y typeprobe@<version> mcp` with no user config", () => {
 		expect(manifest.server).toMatchObject({
 			type: "node",
 			mcp_config: {
@@ -98,11 +98,53 @@ describe("Claude Code plugin", () => {
 		).toBe(true);
 	});
 
-	test("bundled MCP server runs `npx -y prinfer mcp`", () => {
+	test("bundled MCP server runs `npx -y typeprobe mcp`", () => {
 		const mcp = readJson("plugin/.mcp.json");
-		expect(mcp.mcpServers.prinfer).toEqual({
+		expect(mcp.mcpServers.typeprobe).toEqual({
 			command: "npx",
 			args: ["-y", pkg.name, "mcp"],
 		});
+	});
+});
+
+describe("prinfer shim (shim/prinfer)", () => {
+	const shim = readJson("shim/prinfer/package.json");
+
+	test("depends on typeprobe and re-exports every subpath", () => {
+		expect(shim.name).toBe("prinfer");
+		// The final prinfer release; typeprobe 4.0.0 is the first with the name.
+		expect(shim.dependencies).toEqual({ typeprobe: "^4.0.0" });
+		expect(Object.keys(shim.exports).sort()).toEqual(
+			Object.keys(pkg.exports).sort(),
+		);
+		for (const [subpath, conditions] of Object.entries(shim.exports)) {
+			const target =
+				subpath === "." ? pkg.name : `${pkg.name}/${subpath.slice(2)}`;
+			for (const files of Object.values(
+				conditions as Record<string, Record<string, string>>,
+			)) {
+				for (const file of Object.values(files)) {
+					const code = readFileSync(
+						join(root, "shim/prinfer", file),
+						"utf8",
+					);
+					expect(code).toContain(`"${target}"`);
+				}
+			}
+		}
+	});
+
+	test("provides the prinfer bins, which typeprobe no longer has", () => {
+		expect(Object.keys(shim.bin).sort()).toEqual([
+			"prinfer",
+			"prinfer-mcp",
+		]);
+		expect(Object.keys(pkg.bin).sort()).toEqual([
+			"typeprobe",
+			"typeprobe-mcp",
+		]);
+		for (const file of Object.values(shim.bin) as string[]) {
+			expect(existsSync(join(root, "shim/prinfer", file))).toBe(true);
+		}
 	});
 });

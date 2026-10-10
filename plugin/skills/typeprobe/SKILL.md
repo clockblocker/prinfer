@@ -1,9 +1,9 @@
 ---
-name: prinfer
+name: typeprobe
 description: TypeScript inferred types, completions and type errors from the real compiler. Use when writing, refactoring or debugging TypeScript and you are about to add a type annotation, are unsure what a variable, generic or call infers, need the valid values at a cursor, want to check a file for type errors after editing, are cleaning up redundant annotations, or are writing type tests that lock what an API infers.
 ---
 
-# prinfer
+# typeprobe
 
 Look the type up instead of guessing it. When the inferred type is what you would have annotated, leave the annotation out.
 
@@ -37,11 +37,11 @@ An edit is done when `diagnostics` reports no errors for every file you changed.
 
 ## Type tests
 
-When inferred types must not drift (public API inference, a refactor that should keep types, a request for type tests), snapshot them with `prinfer/testing` (dev dependency `prinfer`):
+When inferred types must not drift (public API inference, a refactor that should keep types, a request for type tests), snapshot them with `typeprobe/testing` (dev dependency `typeprobe`):
 
 ```ts
 import { expect, test } from "vitest"; // or "bun:test"
-import { inferredType } from "prinfer/testing";
+import { inferredType } from "typeprobe/testing";
 
 test("groupBy keys by the callback's return type", () => {
   expect(inferredType(import.meta.url, { name: "byRole" })).toMatchInlineSnapshot();
@@ -60,12 +60,12 @@ test("groupBy keys by the callback's return type", () => {
 Run the CLI. It defaults to TypeScript 6 (`--backend typescript7` for lookups and `check`) and with `--json` prints `{ ok, result | error }`:
 
 ```bash
-npx prinfer src/file.ts:symbolName --json
-npx prinfer src/file.ts:symbolName:75 --json      # line hint
-npx prinfer src/file.ts:75:user --json            # text copied from line 75
-npx prinfer complete src/file.ts:80:user. --json  # cursor after the text; --prefix, --limit
-npx prinfer check src/file.ts --json              # exits 1 when there are type errors
-npx prinfer annotations src/file.ts --json
+npx typeprobe src/file.ts:symbolName --json
+npx typeprobe src/file.ts:symbolName:75 --json      # line hint
+npx typeprobe src/file.ts:75:user --json            # text copied from line 75
+npx typeprobe complete src/file.ts:80:user. --json  # cursor after the text; --prefix, --limit
+npx typeprobe check src/file.ts --json              # exits 1 when there are type errors
+npx typeprobe annotations src/file.ts --json
 ```
 
 Single-quote any argument containing `$` (`'src/store.ts:$store'`): the shell expands `$store`, and zsh rewrites `"$F:root"` as `${F:r}oot`.

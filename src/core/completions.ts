@@ -112,7 +112,7 @@ const IDENTIFIER_PART = /[\p{ID_Continue}$\u200C\u200D]/u;
  * The cursor is on a key of an object literal whose contextual type names
  * no keys (a `Record<string, T>`, an index signature, or no contextual type
  * at all). TypeScript then offers every global, because a shorthand
- * property `{ name }` could reference one; prinfer reports no entries and a
+ * property `{ name }` could reference one; typeprobe reports no entries and a
  * note instead of thousands of unrelated names.
  */
 function isOpenObjectKey(
