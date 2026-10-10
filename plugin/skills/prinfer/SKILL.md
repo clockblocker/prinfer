@@ -53,7 +53,7 @@ test("groupBy keys by the callback's return type", () => {
 - Another module: `new URL("../src/users.ts", import.meta.url)` as the file.
 - For a value you don't have, put `declare const input: User[]` and the expression in a separate fixture file and point the helper at it. A `declare const` in the test file itself throws a `ReferenceError` at runtime.
 - Snapshots hold the whole type, untruncated. Add `sort_unions: true` if the snapshot must hold on both TypeScript 6 (default) and TypeScript 7 (`backend: "typescript7"`).
-- `inferredCompletions(file, { line, text })` pins every completion name. `expectType(file, { name, printed, maxInstantiations, readable: true })` checks text, cost budget and readability in one call.
+- `inferredCompletions(file, { line, text })` pins every completion name. `expectType(file, { name, printed, maxInstantiations, readable: true })` checks text, cost budget and readability in one call; `expectTypes(file, { types: [...], maxInstantiations })` checks several and budgets them together.
 
 ## Without MCP
 

@@ -3,10 +3,13 @@
  * - `"bundled"` (default): the TypeScript 6 and TypeScript 7 packages
  *   prinfer depends on, the same on every machine.
  * - `"project"`: the project's own: `typescript` 5.0 to 6.x for the
- *   TypeScript 6 backend; `typescript` 7 or `@typescript/native-preview`
- *   for the TypeScript 7 backend. They are resolved the way Node resolves
- *   an import from the directory of the file's tsconfig.json (or of
- *   `project`). Throws when the project has none, or an unsupported one.
+ *   TypeScript 6 backend; `typescript` 7, `@typescript/native`, or
+ *   `@typescript/native-preview` for the TypeScript 7 backend (the nearest
+ *   install, in that order when side by side). They are resolved the way
+ *   Node resolves an import from the directory of the file's tsconfig.json
+ *   (or of `project`); prinfer's own copies, hoisted there, count only if
+ *   the project declares them. Throws when the project has none, or an
+ *   unsupported one.
  * - `"auto"`: the project's when it has a supported one, otherwise the
  *   bundled one (with a warning on stderr when the project's is
  *   unsupported).
@@ -24,7 +27,7 @@ export type CompilerMode = "bundled" | "project" | "auto";
  * structured output report it next to the result.
  */
 export interface CompilerInfo {
-	/** Package name: `typescript` or `@typescript/native-preview` */
+	/** Package name: `typescript`, `@typescript/native`, or `@typescript/native-preview` */
 	name: string;
 	/** Package version, e.g. `6.0.3` */
 	version: string;

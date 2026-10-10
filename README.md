@@ -283,6 +283,7 @@ expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
 | `inferredTypeIssues(file, selector)` | Readability issues; see [Readability checks](#readability-checks). |
 | `typeReadabilityIssues(text, rules?)` | Readability issues in any printed type text. |
 | `expectType(file, selector)` | Checks text, cost, and readability at once; see [expectType](#expecttype). |
+| `expectTypes(file, selector)` | `expectType` for several targets, plus a budget for all of them; see [expectTypes](#expecttypes). |
 | `closeTestingSessions()` | Stops the TypeScript 7 compilers early; see [TypeScript 7 in tests](#typescript-7-in-tests). |
 
 The file is `import.meta.url` for the test file itself, or a `URL` resolved against it. Plain string paths resolve against `process.cwd()`. The file is read through its nearest `tsconfig.json`, or `project`.
@@ -412,7 +413,7 @@ expectType failed 3 checks for "user" at test/users.test.ts:9:14:
     expected: { id: string; name: string; }
     actual:   Omit<User, "email">
               ^
-- maxInstantiations: 612 instantiations, over the budget of 500 by 112 (counted on typescript 6.0.3, bundled).
+- maxInstantiations: 612 instantiations, over the budget of 500 by 112 (counted and printed on typescript 6.0.3, bundled).
 - readable: 1 readability issue:
     utility-type: Omit<User, "email"> is unresolved: TypeScript printed Omit<...> instead of the type it produces.
 ```
@@ -423,7 +424,30 @@ The selector is `inferredType`'s plus at least one check:
 - `maxInstantiations`, `maxTypes`: cost budgets. Costs are always counted on TypeScript 6, even with `backend: "typescript7"`, which only picks where the text comes from. With `backend: "typescript7"` and `compiler: "project"`, the count uses the project's TypeScript 6 if it has one, else the bundled one.
 - `readable`: `true` for the default readability rules, or a rules object.
 
+`costCompiler` (`"bundled"`, `"project"`, or `"auto"`, default `compiler`'s) picks the TypeScript 6 that counts, so the text and the count can come from different compilers: `{ backend: "typescript7", costCompiler: "project" }` prints on the bundled TypeScript 7 and counts on the project's TypeScript 6. A failed budget names both. `inferredTypeCost` only counts, so there `compiler` is the counting compiler and `costCompiler` throws.
+
 The error is a `TypeExpectationError` with every failure in `failures`; when the text differs it also carries `actual` and `expected`, so Vitest and Jest print their diff. When every check passes, `expectType` returns `{ printed, cost? }`.
+
+### expectTypes
+
+`expectTypes` runs `expectType` on several targets of one file, with a budget for all of them together, and throws one error listing every failed check:
+
+```typescript
+expectTypes(import.meta.url, {
+  types: [
+    { name: "userSchema", maxInstantiations: 3_000 },
+    { name: "User", printed: "{ id: string; name: string; }" },
+    { name: "orderSchema" },
+  ],
+  maxInstantiations: 8_000,
+  backend: "typescript7",
+  costCompiler: "project",
+});
+```
+
+The group's `maxInstantiations` and `maxTypes` count one fresh TypeScript 6 checker resolving every target, so work the targets share (a schema they all reach) is counted once, as a type check of the module counts it. A checker's count can depend, by a type or so, on the order it meets types in, so the targets are always resolved in source order: the total is the same in any order of `types`. Each entry's own budgets still count it alone; a failed group budget lists each entry's count alone, and those add up to more than the total.
+
+Each entry takes `expectType`'s selector, and needs a check of its own only when the group has no budget. `backend`, `full`, `sort_unions`, `readable`, and `timeout` on the group are defaults for every entry. `project`, `compiler`, and `costCompiler` go on the group only, since the total is counted on one program. Failures carry the entry's `index`, none for the group budget. It returns `{ types, cost? }`: each entry's `expectType` result (with its own cost when the group has a budget) and the group's cost.
 
 ### TypeScript 7 in tests
 
@@ -540,10 +564,10 @@ By default prinfer prints and counts with the TypeScript 6 and 7 it depends on (
 | Mode | TypeScript 6 backend | TypeScript 7 backend |
 | :- | :- | :- |
 | `bundled` (default) | prinfer's `typescript` | prinfer's `@typescript/native` |
-| `project` | the project's `typescript`, 5.0 to 6.x | the project's `typescript` 7 or `@typescript/native-preview` 7.0.0-dev.20260624.1 or later |
+| `project` | the project's `typescript`, 5.0 to 6.x | the project's `typescript` 7, `@typescript/native`, or `@typescript/native-preview` 7.0.0-dev.20260624.1 or later |
 | `auto` | the project's when supported, else bundled | the project's when supported, else bundled |
 
-Set it with `compiler` (library options and `prinfer/testing` selectors), `--compiler` (CLI), or `PRINFER_COMPILER` (every surface, including the MCP server); an explicit option wins. The packages are resolved the way Node resolves an import from the directory of the file's `tsconfig.json` (or of `project`); for TypeScript 7 the nearer of `typescript` 7 and `@typescript/native-preview` wins. prinfer runs that package's own API client and compiler binary.
+Set it with `compiler` (library options and `prinfer/testing` selectors), `--compiler` (CLI), or `PRINFER_COMPILER` (every surface, including the MCP server); an explicit option wins. The packages are resolved the way Node resolves an import from the directory of the file's `tsconfig.json` (or of `project`); for TypeScript 7 the nearest of `typescript` 7, `@typescript/native`, and `@typescript/native-preview` wins, in that order when they sit side by side. prinfer runs that package's own API client and compiler binary. A package manager that hoists prinfer's own `typescript` and `@typescript/native` puts them where the project resolves them too; such a copy is the project's only if the project's nearest `package.json`, or its workspace root's, declares the package, and then it runs and is reported as the bundled compiler.
 
 `project` throws a `TYPESCRIPT_ERROR` when the project has no compiler for the backend, and names the package, version, and path when it has an unsupported one: `typescript` before 5.0, a `typescript` 7 asked for TypeScript 6 output, or a `@typescript/native-preview` older than 7.0.0-dev.20260624.1. `auto` falls back to the bundled compiler, with one warning on stderr when the project's is unsupported. On TypeScript 5.0 to 5.8 some types and messages print differently from TypeScript 6, so expect snapshot changes when you switch.
 

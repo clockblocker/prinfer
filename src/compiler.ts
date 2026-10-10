@@ -21,7 +21,12 @@ import type { CompilerInfo, CompilerMode } from "./types.js";
 /** Environment variable that sets the mode when a call doesn't. */
 export const COMPILER_ENV = "PRINFER_COMPILER";
 
-const MODES: readonly CompilerMode[] = ["bundled", "project", "auto"];
+/** Every `CompilerMode`. */
+export const COMPILER_MODES: readonly CompilerMode[] = [
+	"bundled",
+	"project",
+	"auto",
+];
 
 /**
  * Oldest TypeScript the TypeScript 6 backend loads from a project: 5.0.
@@ -35,7 +40,8 @@ const MIN_TYPESCRIPT6_MAJOR = 5;
 export function compilerMode(option?: unknown): CompilerMode {
 	const fromEnv = option === undefined;
 	const value = fromEnv ? process.env[COMPILER_ENV] || "bundled" : option;
-	if (MODES.includes(value as CompilerMode)) return value as CompilerMode;
+	if (COMPILER_MODES.includes(value as CompilerMode))
+		return value as CompilerMode;
 	throw new PrinferError(
 		"INVALID_ARGUMENT",
 		`Unknown compiler ${JSON.stringify(value)}${fromEnv ? ` in ${COMPILER_ENV}` : ""}.`,
@@ -101,6 +107,74 @@ interface PackageJson {
 	version?: string;
 	bin?: string | Record<string, string>;
 	exports?: unknown;
+}
+
+const DEPENDENCY_FIELDS = [
+	"dependencies",
+	"devDependencies",
+	"optionalDependencies",
+	"peerDependencies",
+] as const;
+
+/**
+ * Whether the project around `dir` declares `name`: in its nearest
+ * package.json, or in any package.json up to its workspace root (one with
+ * `workspaces`, or next to a pnpm-workspace.yaml).
+ */
+function declaresPackage(dir: string, name: string): boolean {
+	const manifests: Array<Record<string, unknown>> = [];
+	let workspaceRoot = false;
+	let current = dir;
+	while (true) {
+		const file = path.join(current, "package.json");
+		if (fs.existsSync(file)) {
+			try {
+				const json = JSON.parse(fs.readFileSync(file, "utf8"));
+				if (typeof json === "object" && json !== null) {
+					manifests.push(json);
+					if (
+						"workspaces" in json ||
+						fs.existsSync(path.join(current, "pnpm-workspace.yaml"))
+					) {
+						workspaceRoot = true;
+						break;
+					}
+				}
+			} catch {
+				// An unreadable package.json declares nothing.
+			}
+		}
+		const parent = path.dirname(current);
+		if (parent === current) break;
+		current = parent;
+	}
+	return (workspaceRoot ? manifests : manifests.slice(0, 1)).some((json) =>
+		DEPENDENCY_FIELDS.some((field) => {
+			const deps = json[field];
+			return typeof deps === "object" && deps !== null && name in deps;
+		}),
+	);
+}
+
+/**
+ * prinfer depends on `typescript` 6 and `@typescript/native` (typescript
+ * 7), so a package manager that hoists them puts prinfer's own copies in
+ * the project's node_modules, where an import finds them. Such a copy is
+ * the project's compiler only if the project declares the package.
+ */
+function isPrinferOwn(
+	found: FoundPackage,
+	bundledDir: string | null | undefined,
+	dir: string,
+): boolean {
+	return found.dir === bundledDir && !declaresPackage(dir, found.name);
+}
+
+/** Why a package that was found isn't used, for "found no package" errors. */
+function ownCopyNote(own: FoundPackage | undefined): string {
+	return own
+		? `; the ${own.name} ${own.version} at ${own.dir} is prinfer's own dependency, which the project doesn't declare`
+		: "";
 }
 
 /** Find a package the way `require` from `fromDir` would. */
@@ -212,13 +286,18 @@ function findTypeScript6(
 	mode: "project" | "auto",
 	dir: string,
 ): TypeScript6Compiler {
-	const found = findPackage(dir, "typescript");
+	const resolved = findPackage(dir, "typescript");
+	const own =
+		resolved && isPrinferOwn(resolved, bundledTypeScript6Dir(), dir)
+			? resolved
+			: undefined;
+	const found = own ? undefined : resolved;
 	if (!found) {
 		if (mode === "auto") return bundled6();
 		throw new PrinferError(
 			"TYPESCRIPT_ERROR",
-			`compiler "project" found no typescript package from ${dir}.`,
-			`Install typescript (5.0 to 6.x) in the project, or omit compiler for prinfer's bundled TypeScript ${bundledTypeScript.version}.`,
+			`compiler "project" found no typescript package from ${dir}${ownCopyNote(own)}.`,
+			`${own ? "Add typescript (5.0 to 6.x) to the project's devDependencies" : "Install typescript (5.0 to 6.x) in the project"}, or omit compiler for prinfer's bundled TypeScript ${bundledTypeScript.version}.`,
 		);
 	}
 	const unsupported = unsupportedTypeScript6(found);
@@ -237,6 +316,7 @@ function findTypeScript6(
 				: `Upgrade the project's typescript to 5.0 or later, or omit compiler for prinfer's bundled TypeScript ${bundledTypeScript.version}.`,
 		);
 	}
+	// The project declares the very copy prinfer uses: the same compiler.
 	if (found.dir === bundledTypeScript6Dir()) return bundled6();
 	let compiler = projectTypeScript6.get(found.dir);
 	if (!compiler) {
@@ -310,8 +390,16 @@ export function runTypeScript6<T extends object>(
 
 // ---------------------------------------------------------------- TypeScript 7
 
-/** Packages that hold a TypeScript 7 compiler, in order of preference. */
-const TYPESCRIPT7_PACKAGES = ["typescript", "@typescript/native-preview"];
+/**
+ * Packages that hold a TypeScript 7 compiler. The nearest install wins;
+ * this order breaks a tie. `@typescript/native` is the name prinfer itself
+ * installs `typescript` 7 under.
+ */
+const TYPESCRIPT7_PACKAGES = [
+	"typescript",
+	"@typescript/native",
+	"@typescript/native-preview",
+];
 
 let bundledNative: Promise<NativeCompiler> | undefined;
 const projectNative = new Map<string, Promise<NativeCompiler>>();
@@ -431,12 +519,9 @@ function unsupportedTypeScript7(found: FoundPackage): string | undefined {
 		typeof exports === "object" &&
 		exports !== null &&
 		"./unstable/async" in exports;
-	const date = /-dev\.(\d{8})/.exec(found.version)?.[1];
-	if (
-		found.name === "@typescript/native-preview" &&
-		date !== undefined &&
-		Number(date) < MIN_NATIVE_PREVIEW_DATE
-	) {
+	// Dev builds are native-preview's, under any name it is aliased to.
+	const date = /^7\.0\.0-dev\.(\d{8})/.exec(found.version)?.[1];
+	if (date !== undefined && Number(date) < MIN_NATIVE_PREVIEW_DATE) {
 		return hasClient
 			? `${where} predates the TypeScript 7 API prinfer uses: its API server opens no project for a file (fixed in ${MIN_NATIVE_PREVIEW_VERSION}).`
 			: `${where} ships no TypeScript 7 API client (no "./unstable/async" export), and its compiler predates the API protocol prinfer speaks (${MIN_NATIVE_PREVIEW_VERSION} or later).`;
@@ -453,16 +538,26 @@ async function findTypeScript7(
 ): Promise<NativeCompiler> {
 	// The nearest install wins, as an import would: a project's own
 	// @typescript/native-preview over a typescript 7 in a parent directory.
-	const found = TYPESCRIPT7_PACKAGES.map((name) => findPackage(dir, name))
-		.filter((candidate) => candidate !== undefined)
-		.filter((candidate) => majorVersion(candidate.version) >= 7)
+	// The sort is stable, so TYPESCRIPT7_PACKAGES' order breaks a tie.
+	const bundledDir = bundledNativePackage()?.dir;
+	const candidates = TYPESCRIPT7_PACKAGES.map((name) =>
+		findPackage(dir, name),
+	).filter(
+		(candidate) =>
+			candidate !== undefined && majorVersion(candidate.version) >= 7,
+	) as FoundPackage[];
+	const own = candidates.find((candidate) =>
+		isPrinferOwn(candidate, bundledDir, dir),
+	);
+	const found = candidates
+		.filter((candidate) => candidate !== own)
 		.sort((left, right) => installDepth(right) - installDepth(left))[0];
 	if (!found) {
 		if (mode === "auto") return bundled7();
 		throw new PrinferError(
 			"TYPESCRIPT_ERROR",
-			`compiler "project" found no TypeScript 7 package (typescript 7 or @typescript/native-preview) from ${dir}.`,
-			"Install typescript@7 or @typescript/native-preview in the project, or omit compiler for prinfer's bundled TypeScript 7.",
+			`compiler "project" found no TypeScript 7 package (typescript 7, @typescript/native, or @typescript/native-preview) from ${dir}${ownCopyNote(own)}.`,
+			`${own ? "Add typescript@7, @typescript/native, or @typescript/native-preview to the project's devDependencies" : "Install typescript@7, @typescript/native, or @typescript/native-preview in the project"}, or omit compiler for prinfer's bundled TypeScript 7.`,
 		);
 	}
 	const problem = unsupportedTypeScript7(found);
@@ -477,11 +572,11 @@ async function findTypeScript7(
 		throw new PrinferError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project": ${problem}`,
-			`Upgrade ${found.name} (typescript 7.0 or later, or @typescript/native-preview ${MIN_NATIVE_PREVIEW_VERSION} or later), or omit compiler for prinfer's bundled TypeScript ${bundledVersion}.`,
+			`Upgrade ${found.name} (typescript or @typescript/native 7.0 or later, or @typescript/native-preview ${MIN_NATIVE_PREVIEW_VERSION} or later), or omit compiler for prinfer's bundled TypeScript ${bundledVersion}.`,
 		);
 	}
-	const bundledPackage = bundledNativePackage();
-	if (bundledPackage && found.dir === bundledPackage.dir) return bundled7();
+	// The project declares the very copy prinfer uses: the same compiler.
+	if (found.dir === bundledDir) return bundled7();
 	let compiler = projectNative.get(found.dir);
 	if (!compiler) {
 		compiler = loadProject7(found);

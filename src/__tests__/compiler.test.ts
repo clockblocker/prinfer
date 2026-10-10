@@ -22,6 +22,7 @@ import { closeNativeSessions, nativeHover } from "../native-lsp.js";
 import {
 	closeTestingSessions,
 	expectType,
+	expectTypes,
 	inferredTypeCost,
 	inferredTypeInfo,
 	TypeExpectationError,
@@ -102,17 +103,20 @@ function typeScriptPackage(version: string): Record<string, string> {
  * `@typescript/native-preview` at `version`. With `api`, it exports the
  * API client and has a bin that starts the language server, both from
  * prinfer's `@typescript/native`; without, it is shaped like the dev builds
- * before 7.0.0-dev.20260515.1, which exported only package.json.
+ * before 7.0.0-dev.20260515.1, which exported only package.json. `name` is
+ * the install directory and `manifestName` its package.json name: an alias
+ * such as `@typescript/native` (npm:typescript@7) differs.
  */
 function nativePreviewPackage(
 	version: string,
 	api: boolean,
 	name = "@typescript/native-preview",
+	manifestName = name,
 ): Record<string, string> {
 	const real = (file: string) =>
 		JSON.stringify(pathToFileURL(path.join(realNative, file)).href);
 	const manifest = {
-		name,
+		name: manifestName,
 		version,
 		type: "module",
 		bin: { tsgo: "./bin/tsgo.js" },
@@ -145,6 +149,13 @@ let ts7Only: string;
 let preview: string;
 let oldPreview: string;
 let ts7Api: string;
+let nativeAlias: string;
+let nativeTie: string;
+let nativeNested: string;
+let oldAlias: string;
+let hoisted: string;
+let hoistedDeclared: string;
+let hoistedWorkspace: string;
 
 beforeAll(() => {
 	root = fs.realpathSync(
@@ -170,6 +181,60 @@ beforeAll(() => {
 	oldPreview = project("old-preview", {
 		...typeScriptPackage("6.0.1"),
 		...nativePreviewPackage("7.0.0-dev.20260421.2", false),
+	});
+	const alias = (version: string) =>
+		nativePreviewPackage(version, true, "@typescript/native", "typescript");
+	nativeAlias = project("native-alias", {
+		...typeScriptPackage("6.0.1"),
+		...alias("7.0.5"),
+	});
+	// typescript 7 and @typescript/native side by side: typescript wins.
+	nativeTie = project("native-tie", {
+		...nativePreviewPackage("7.0.2", true, "typescript"),
+		...alias("7.0.5"),
+	});
+	// A typescript 7 in the parent, @typescript/native in the project.
+	writeFiles(path.join(root, "native-nested"), {
+		"node_modules/typescript/package.json": JSON.stringify({
+			name: "typescript",
+			version: "7.0.2",
+			exports: { "./package.json": "./package.json" },
+		}),
+	});
+	nativeNested = project("native-nested/app", alias("7.0.5"));
+	oldAlias = project("old-alias", alias("7.0.0-dev.20260421.2"));
+	// prinfer's own typescript and @typescript/native, hoisted into the
+	// project's node_modules, as npm and bun install them.
+	const hoist = (dir: string, manifest: object) => {
+		const file = project(dir, {});
+		const base = path.dirname(file);
+		writeFiles(base, { "package.json": JSON.stringify(manifest) });
+		const modules = path.join(base, "node_modules");
+		fs.mkdirSync(path.join(modules, "@typescript"), { recursive: true });
+		fs.symlinkSync(realTypeScript, path.join(modules, "typescript"));
+		fs.symlinkSync(realNative, path.join(modules, "@typescript", "native"));
+		return file;
+	};
+	hoisted = hoist("hoisted", { name: "app", dependencies: { zod: "^4" } });
+	hoistedDeclared = hoist("hoisted-declared", {
+		name: "app",
+		devDependencies: {
+			"@typescript/native": "npm:typescript@^7.0.2",
+			typescript: "^6.0.3",
+		},
+	});
+	// A workspace package whose root declares both compilers.
+	hoist("hoisted-workspace", {
+		name: "root",
+		workspaces: ["packages/*"],
+		devDependencies: {
+			"@typescript/native": "npm:typescript@^7.0.2",
+			typescript: "^6.0.3",
+		},
+	});
+	hoistedWorkspace = project("hoisted-workspace/packages/app", {});
+	writeFiles(path.dirname(hoistedWorkspace), {
+		"package.json": JSON.stringify({ name: "app" }),
 	});
 });
 
@@ -330,8 +395,46 @@ describe("TypeScript 6 in project mode", () => {
 		}
 		expect(error).toBeInstanceOf(TypeExpectationError);
 		expect((error as Error).message).toContain(
-			"(counted on typescript 5.9.9, project).",
+			"(counted and printed on typescript 5.9.9, project).",
 		);
+	});
+
+	test("costCompiler counts on another compiler than the one that prints", () => {
+		const checked = expectType(ts59, {
+			name: "user",
+			costCompiler: "project",
+			printed: "{ name: string; age: number; }",
+			maxTypes: 1_000,
+			strict: true,
+		});
+		expect(checked.cost?.compiler?.version).toBe("5.9.9");
+		expect((checked as { compiler?: CompilerInfo }).compiler).toEqual(
+			bundled6,
+		);
+		const error = thrown(() =>
+			expectType(ts59, {
+				name: "user",
+				costCompiler: "project",
+				maxTypes: 0,
+			}),
+		);
+		expect(error.message).toContain(
+			`(counted on typescript 5.9.9, project; printed on typescript ${ts.version}, bundled).`,
+		);
+		// The other way round, and in a group.
+		const group = expectTypes(ts59, {
+			types: [
+				{ name: "user", printed: "{ name: string; age: number; }" },
+			],
+			compiler: "project",
+			costCompiler: "bundled",
+			maxTypes: 1_000,
+			strict: true,
+		});
+		expect(group.cost?.compiler).toEqual(bundled6);
+		expect(
+			(group.types[0] as { compiler?: CompilerInfo }).compiler?.version,
+		).toBe("5.9.9");
 	});
 
 	test("keeps a program per compiler", () => {
@@ -500,6 +603,85 @@ describe("TypeScript 7 in project mode", () => {
 		}
 	});
 
+	test("costCompiler prints on the bundled TypeScript 7 and counts on the project's TypeScript 6", () => {
+		const project601: CompilerInfo = {
+			name: "typescript",
+			version: "6.0.1",
+			source: "project",
+		};
+		const checked = expectType(preview, {
+			name: "user",
+			backend: "typescript7",
+			costCompiler: "project",
+			printed: "{ name: string; age: number; }",
+			maxInstantiations: 1_000,
+		});
+		expect(checked.cost?.compiler).toEqual(project601);
+		expect((checked as { compiler?: CompilerInfo }).compiler).toMatchObject(
+			{ name: "typescript", source: "bundled" },
+		);
+		const error = thrown(() =>
+			expectType(preview, {
+				name: "user",
+				backend: "typescript7",
+				costCompiler: "project",
+				maxTypes: 0,
+			}),
+		);
+		expect(error.message).toMatch(
+			/\(counted on typescript 6\.0\.1, project; printed on typescript 7\.\d+\.\d+, bundled\)\.$/,
+		);
+		// An explicit costCompiler "project" needs the project's TypeScript 6.
+		expect(
+			thrown(() =>
+				expectType(ts7Api, {
+					name: "user",
+					backend: "typescript7",
+					costCompiler: "project",
+					maxTypes: 1_000,
+				}),
+			).message,
+		).toContain("is TypeScript 7, which has no JavaScript compiler API");
+		expect(
+			expectTypes(preview, {
+				types: [{ name: "user" }],
+				backend: "typescript7",
+				costCompiler: "project",
+				maxTypes: 1_000,
+			}).cost?.compiler,
+		).toEqual(project601);
+	});
+
+	test("finds @typescript/native, the nearest install first", () => {
+		const typeInfo = (file: string) =>
+			inferredTypeInfo(file, {
+				name: "user",
+				backend: "typescript7",
+				compiler: "project",
+			}).compiler;
+		const alias: CompilerInfo = {
+			name: "@typescript/native",
+			version: "7.0.5",
+			source: "project",
+		};
+		expect(typeInfo(nativeAlias)).toEqual(alias);
+		// The parent's typescript 7, which has no API client, is farther.
+		expect(typeInfo(nativeNested)).toEqual(alias);
+		// In one node_modules, typescript comes first.
+		expect(typeInfo(nativeTie)).toEqual({
+			name: "typescript",
+			version: "7.0.2",
+			source: "project",
+		});
+		const error = thrown(() => typeInfo(oldAlias));
+		expect(error.message).toContain(
+			"@typescript/native 7.0.0-dev.20260421.2 at",
+		);
+		expect(error.message).toContain(
+			"predates the TypeScript 7 API prinfer uses",
+		);
+	});
+
 	test("the language server backend runs the project's bin", async () => {
 		const result = await nativeHover(preview, 1, 14, {
 			compiler: "project",
@@ -543,5 +725,62 @@ describe("TypeScript 7 in project mode", () => {
 			name: "typescript",
 			source: "bundled",
 		});
+	});
+});
+
+describe("prinfer's own compilers hoisted into a project", () => {
+	const typeInfo = (file: string, compiler: "project" | "auto") =>
+		inferredTypeInfo(file, {
+			name: "user",
+			backend: "typescript7",
+			compiler,
+		}).compiler;
+	const nativeVersion = (
+		require("@typescript/native/package.json") as { version: string }
+	).version;
+
+	test("are not the project's unless it declares them", () => {
+		const native = thrown(() => typeInfo(hoisted, "project"));
+		expect(native.code).toBe("TYPESCRIPT_ERROR");
+		expect(native.message).toContain(
+			`; the @typescript/native ${nativeVersion} at ${fs.realpathSync(realNative)} is prinfer's own dependency, which the project doesn't declare.`,
+		);
+		expect(native.suggestion).toContain(
+			"Add typescript@7, @typescript/native, or @typescript/native-preview to the project's devDependencies",
+		);
+		const typeScript6 = thrown(() =>
+			hover(hoisted, "user", { compiler: "project" }),
+		);
+		expect(typeScript6.message).toContain(
+			`; the typescript ${ts.version} at ${fs.realpathSync(realTypeScript)} is prinfer's own dependency`,
+		);
+		expect(typeScript6.suggestion).toContain(
+			"Add typescript (5.0 to 6.x) to the project's devDependencies",
+		);
+		// auto mode falls back to the same compilers, without a warning.
+		const write = spyOn(process.stderr, "write").mockImplementation(
+			() => true,
+		);
+		try {
+			expect(typeInfo(hoisted, "auto")?.source).toBe("bundled");
+			expect(
+				hover(hoisted, "user", { compiler: "auto" }).compiler,
+			).toEqual(bundled6);
+			expect(write).not.toHaveBeenCalled();
+		} finally {
+			write.mockRestore();
+		}
+	});
+
+	test("run as the bundled compilers when the project or its workspace root declares them", () => {
+		for (const file of [hoistedDeclared, hoistedWorkspace]) {
+			expect(typeInfo(file, "project")).toMatchObject({
+				name: "typescript",
+				source: "bundled",
+			});
+			expect(
+				hover(file, "user", { compiler: "project" }).compiler,
+			).toEqual(bundled6);
+		}
 	});
 });

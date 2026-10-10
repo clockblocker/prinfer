@@ -96,7 +96,8 @@ Options:
                        check; complete and annotations always use typescript6
   --compiler <mode>    bundled (default): prinfer's own TypeScript 6 and 7;
                        project: the project's typescript (5.0 to 6.x) and
-                       typescript 7 or @typescript/native-preview; auto: the
+                       typescript 7, @typescript/native or
+                       @typescript/native-preview; auto: the
                        project's when supported, else bundled. Overrides
                        PRINFER_COMPILER. --json results report the compiler
   --help, -h           Show this help message (prinfer setup --help for setup options)
