@@ -9,13 +9,13 @@
 		"id": "1147042513"
 	},
 	"websiteUrl": "https://clockblocker.github.io/prinfer/",
-	"version": "3.2.0",
+	"version": "3.3.0",
 	"packages": [
 		{
 			"registryType": "npm",
 			"registryBaseUrl": "https://registry.npmjs.org",
 			"identifier": "prinfer",
-			"version": "3.2.0",
+			"version": "3.3.0",
 			"runtimeHint": "npx",
 			"transport": {
 				"type": "stdio"

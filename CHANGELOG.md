@@ -1,5 +1,45 @@
 # prinfer
 
+## 3.3.0
+
+### Minor Changes
+
+- f1c359b: `inferredTypeCost` counts several targets of one file in one call: `{ names: [...] }` returns costs by name, `{ targets: [...] }` costs in order. Only `project`, `compiler`, and `strict` go next to them. Every count still gets a fresh checker, so a batch returns exactly what single calls would.
+
+  Type costs are also faster to count everywhere, with the same numbers. TypeScript 6 programs for different files of one project now share their parsed files, so loading a second file no longer parses the project and its libraries again (about 300 ms down to 30 to 70 ms per file on prinfer's own source), and a target that is counted again while no file has changed is not recounted. Printed types are unchanged: each program keeps its own checker. On prinfer's own source, costing 17 targets across 6 files went from about 3 s to 1.6 s, and costing them again from 0.5 s to 30 ms.
+
+- f1c359b: New `expectType` in `prinfer/testing` checks a target's printed type, cost budget, and readability in one call, and throws a `TypeExpectationError` listing every failed check: the expected and actual text with the first difference marked, the count against its budget, and each readability issue. It only throws, so it works in any test runner; on a text mismatch the error carries `actual` and `expected`, so Vitest and Jest show their diff.
+
+  ```ts
+  expectType(import.meta.url, {
+    name: "user",
+    printed: "{ id: string; name: string; }",
+    maxInstantiations: 500,
+    readable: true,
+  });
+  ```
+
+  The selector is `inferredType`'s plus the checks `printed`, `maxInstantiations`, `maxTypes`, and `readable`. Costs are counted on TypeScript 6 even with `backend: "typescript7"`, which only picks where the text comes from.
+
+- 5df4ec2: Print and count with the project's own TypeScript. The new `compiler` option picks the compilers: `"bundled"` (default, prinfer's own TypeScript 6 and 7, as before), `"project"`, or `"auto"` (the project's when supported, else bundled). Set it in the library options and `prinfer/testing` selectors, with `--compiler` on the CLI, or with `PRINFER_COMPILER` on every surface, including the MCP server.
+
+  `"project"` resolves `typescript` 5.0 to 6.x for the TypeScript 6 backend, and `typescript` 7 or `@typescript/native-preview` 7.0.0-dev.20260624.1 or later for the TypeScript 7 backend, from the directory of the file's tsconfig, and runs that package's own API client and compiler binary. A missing compiler throws a `TYPESCRIPT_ERROR`, and so does an unsupported one, naming its package, version, and path.
+
+  Every result now names the compiler that produced it as `compiler: { name, version, source }`. On library and `prinfer/testing` results it is a non-enumerable property, so snapshots, `toEqual`, and `JSON.stringify` output don't change. In the CLI's `--json` output and the MCP tools' structured content it is a field of `result`. Cost lines name the compiler that counted: `cost: 412 instantiations, 96 types (typescript 6.0.3, bundled)`.
+
+- f1c359b: New readability checks in `prinfer/testing`: `typeReadabilityIssues(text, rules?)` for printed type text, `inferredTypeIssues(file, selector)` for a target's type, and `expectType`'s `readable` check. The default rules flag:
+
+  - unresolved utility types (`Omit<User, "id">`, `Pick`, `Partial`, and the rest of `DEFAULT_UTILITY_TYPES`) at any depth, unless they apply to a type parameter of the printed signature;
+  - intersections with an object type (`User & { id: string; }`, but not `string & {}`);
+  - truncation (`... 3 more ...`, `{ ...; }`, text cut at the length limit).
+
+  The text is parsed with the TypeScript scanner and parser, so a string literal type such as `"Omit<"` doesn't count. Rules take `utilityTypes` (your own names, or `false`), `objectIntersections`, `truncation`, and `allow` for fragments that are fine as printed.
+
+### Patch Changes
+
+- ac9ce4e: A file rewritten with the same size within one timestamp tick of being read is no longer served from a stale cached program. Timestamps are coarse on some systems (a clock tick on Linux without multigrain timestamps, a second on HFS+), so a test that wrote a fixture, looked up a type, and rewrote the fixture milliseconds later could get the old type. Files changed in the last 3 seconds are now also compared by content.
+- d9b798b: The package no longer ships sourcemaps (3.5 MiB smaller), and `@typescript/native` is loaded only when a TypeScript 7 call needs it.
+
 ## 3.2.0
 
 ### Minor Changes
