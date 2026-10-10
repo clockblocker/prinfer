@@ -584,7 +584,7 @@ const includeDocsSchema = z
 const includeCostSchema = z
 	.boolean()
 	.optional()
-	.describe("Count type instantiations (same every run); typescript6");
+	.describe("Count type instantiations; typescript6 only");
 const backendSchema = z
 	.enum(["typescript6", "typescript7"])
 	.optional()
@@ -596,7 +596,7 @@ const textSchema = z
 	.string()
 	.min(1)
 	.describe(
-		'Token copied from the line, e.g. "useState"; whole identifiers match first ("user" skips "users"). Instead of column',
+		'Token copied from the line, e.g. "useState"; whole identifiers match first. Instead of column',
 	);
 const occurrenceSchema = positiveInteger
 	.optional()
@@ -643,7 +643,7 @@ function createServer(): McpServer {
 		"hover_by_name",
 		{
 			description:
-				"Show the type TypeScript infers for a named variable, function, call, parameter, property, or type. Use before writing a type annotation, when unsure what a generic or call resolves to, or instead of reading .d.ts files.",
+				"The type TypeScript infers for a named variable, function, parameter, property, or type. Use before writing an annotation, when unsure what a generic or call resolves to, or instead of reading .d.ts files.",
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
@@ -708,7 +708,7 @@ function createServer(): McpServer {
 		"hover",
 		{
 			description:
-				"Show the type TypeScript infers at a token on a line, like an editor hover; generic calls show their instantiated types. Use when hover_by_name can't name the token: callback parameters, expressions, repeated names.",
+				"The type at a token on a line, like an editor hover; generic calls show their instantiated types. Use when hover_by_name can't name the token: callback parameters, expressions, repeated names.",
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
@@ -785,7 +785,7 @@ function createServer(): McpServer {
 	server.registerTool(
 		"batch_hover",
 		{
-			description: `Run up to ${MAX_BATCH_POSITIONS} hovers in one call, across files, e.g. to check several inferred types after an edit. Items: {name, line?}, {line, text, occurrence?}, or {line, column}; failures are per item.`,
+			description: `Up to ${MAX_BATCH_POSITIONS} hovers in one call, across files. Items: {name, line?}, {line, text, occurrence?}, or {line, column}; failures are per item.`,
 			inputSchema: compact(
 				z.object({
 					file: fileSchema
@@ -802,7 +802,7 @@ function createServer(): McpServer {
 								line: positiveInteger
 									.optional()
 									.describe(
-										"1-based line; required unless name is given",
+										"1-based line; required without name",
 									),
 								text: textSchema.optional(),
 								occurrence: occurrenceSchema,
@@ -862,25 +862,25 @@ function createServer(): McpServer {
 	server.registerTool(
 		"completions",
 		{
-			description: `List the completions TypeScript offers at a cursor, including string-literal union members. Use to find valid values for an argument, property key, or import before writing it. Returns the top ${DEFAULT_COMPLETION_LIMIT}; pass prefix to narrow.`,
+			description: `The completions TypeScript offers at a cursor, including string-literal union members. Use to find valid values for an argument, key, or import before writing it. Returns the top ${DEFAULT_COMPLETION_LIMIT}.`,
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
 					line: lineSchema,
 					column: positiveInteger.describe(
-						"1-based cursor column; the cursor sits before it, e.g. just inside an opening quote",
+						"1-based column; the cursor sits before it, e.g. just inside an opening quote",
 					),
 					prefix: z
 						.string()
 						.optional()
 						.describe(
-							'Case-insensitive name prefix; default: the text typed left of the cursor; "" lists all',
+							'Name prefix, case-insensitive; default: the text left of the cursor; "" lists all',
 						),
 					limit: positiveInteger
 						.max(MAX_COMPLETION_LIMIT)
 						.optional()
 						.describe(
-							`Max entries (default ${DEFAULT_COMPLETION_LIMIT}); locals and members rank first`,
+							`Max entries (default ${DEFAULT_COMPLETION_LIMIT})`,
 						),
 					project: projectSchema,
 				}),
@@ -921,7 +921,7 @@ function createServer(): McpServer {
 		"diagnostics",
 		{
 			description:
-				"Check one TypeScript file for type errors, instead of running tsc on the whole project. Call it on each file you edit; the edit is done when none of them reports an error.",
+				"Check one file for type errors without running tsc on the whole project. Call it on each file you edit; the edit is done when none reports an error.",
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,
@@ -963,7 +963,7 @@ function createServer(): McpServer {
 		"annotations",
 		{
 			description:
-				"Find type annotations in one file that TypeScript would infer anyway (redundant) or that are wider than the inferred type (widening, often an intended API contract). Use when reviewing or cleaning up TypeScript, or asked to cut redundant types.",
+				"Type annotations in one file that TypeScript would infer anyway (redundant) or that are wider than the inferred type (widening, often an intended contract). Use when reviewing or cleaning up types.",
 			inputSchema: compact(
 				z.object({
 					file: fileSchema,

@@ -118,10 +118,11 @@ export type {
 };
 
 /**
- * Get the completion entries TypeScript offers at a 1-based cursor position,
- * ranked by TypeScript's sortText with keywords after other entries of the
- * same rank. `prefix` filters names case-insensitively; `limit` truncates
- * (`total` and `truncated` report what was cut).
+ * The completions TypeScript 6 offers at a 1-based cursor (before the
+ * character at `column`), in TypeScript's ranking with keywords after
+ * other entries of the same rank. Every entry unless `prefix` (a
+ * case-insensitive name prefix) or `limit` narrows them; `total` and
+ * `truncated` report what `limit` cut.
  */
 export function completions(
 	file: string,
@@ -138,9 +139,9 @@ export function completions(
 }
 
 /**
- * Check one file for TypeScript errors without type-checking the whole project.
- * Returns syntactic and semantic diagnostics for that file (errors and warnings;
- * set include_suggestions for suggestion diagnostics such as unused variables).
+ * Syntactic and semantic diagnostics for one file, on TypeScript 6, without
+ * checking the whole project. Errors and warnings by default;
+ * `include_suggestions` adds suggestions such as unused variables.
  *
  * @example
  * ```ts
@@ -192,26 +193,16 @@ export function annotations(
 }
 
 /**
- * Get type information at a specific position in a TypeScript file
- *
- * @param file - Path to the TypeScript file
- * @param line - 1-based line number
- * @param column - 1-based column number
- * @param options - Optional hover options (project path, include_docs)
- * @returns The hover information at the position
- * @throws Error if file not found or no symbol at position
+ * The type at a 1-based position, as an editor hover shows it, on
+ * TypeScript 6. Throws when the file or a symbol at the position is missing.
  *
  * @example
  * ```ts
  * import { hover } from "prinfer";
  *
- * const result = hover("./src/utils.ts", 75, 10);
- * console.log(result.signature);
- * // => "(x: number) => string"
- *
- * // With documentation
- * const result2 = hover("./src/utils.ts", 75, 10, { include_docs: true });
- * console.log(result2.documentation);
+ * hover("./src/utils.ts", 75, 10).signature;
+ * // => "(x: number): string"
+ * hover("./src/utils.ts", 75, 10, { include_docs: true }).documentation;
  * // => "Formats a number as a string"
  * ```
  */
@@ -223,24 +214,17 @@ export function hover(
 ): HoverResult;
 
 /**
- * Get type information by symbol name in a TypeScript file
- *
- * @param file - Path to the TypeScript file
- * @param name - Name of the symbol to look up
- * @param options - Optional hover options (project path, include_docs, line to narrow search)
- * @returns The hover information for the symbol
- * @throws Error if file not found or symbol not found
+ * The type of a named symbol, on TypeScript 6. `line` picks among
+ * same-named declarations; `alternatives` lists the ones not picked.
+ * Throws when the file or the name is missing.
  *
  * @example
  * ```ts
  * import { hover } from "prinfer";
  *
- * const result = hover("./src/utils.ts", "createHandler");
- * console.log(result.signature);
- * // => "(config: Config) => Handler"
- *
- * // Narrow search to a specific line
- * const result2 = hover("./src/utils.ts", "createHandler", { line: 75 });
+ * hover("./src/utils.ts", "createHandler").signature;
+ * // => "(config: Config): Handler"
+ * hover("./src/utils.ts", "createHandler", { line: 75 });
  * ```
  */
 export function hover(
@@ -367,12 +351,9 @@ function hoverByNameImpl(
 }
 
 /**
- * Get type information at multiple positions efficiently (loads program once)
- *
- * @param file - Path to the TypeScript file
- * @param positions - Array of positions to look up (each with line and column)
- * @param options - Optional hover options (project path, include_docs)
- * @returns Batch result with items array, success count, and error count
+ * Hover several 1-based positions of one file, loading its program once.
+ * A bad position fails its own item; only a file that can't be loaded
+ * throws.
  *
  * @example
  * ```ts

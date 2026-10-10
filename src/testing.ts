@@ -326,16 +326,13 @@ export function inferredCompletions(
 }
 
 /**
- * Inspect a source expression for use with a test runner's ordinary snapshot
- * matcher. `import.meta.url` is accepted directly so tests stay relocatable.
- * Types are untruncated unless `full: false`. The result is synchronous on
- * both backends: TypeScript 6 by default, or TypeScript 7 with
- * `backend: "typescript7"`, which blocks until the compiler answers (see
- * `timeout`).
+ * The printed type of a target, for a snapshot matcher. Untruncated unless
+ * `full: false`. Synchronous on both backends: TypeScript 6 by default, or
+ * TypeScript 7 with `backend: "typescript7"`, which blocks until the
+ * compiler answers (see `timeout`).
  *
- * Every option goes in the selector, e.g.
- * `{ name: "result", backend: "typescript7" }`; a third argument throws.
- * Unknown selector keys are ignored unless `strict: true`.
+ * Options go in the selector, e.g. `{ name: "result", backend: "typescript7" }`;
+ * a third argument throws. Unknown keys are ignored unless `strict: true`.
  *
  * @example
  * ```ts
@@ -358,9 +355,8 @@ export function inferredType(
 }
 
 /**
- * Return the complete prinfer hover result when a test needs more than the
- * type. Takes the same selector as `inferredType` and, like it, returns
- * synchronously on both backends.
+ * The full hover result (name, kind, return type, docs, cost) for the same
+ * selector as `inferredType`. Synchronous on both backends.
  */
 export function inferredTypeInfo(
 	file: TestingFile,
@@ -630,14 +626,13 @@ export function expectType(
 }
 
 /**
- * Close the shared TypeScript 7 compiler sessions used by the testing helpers.
- * Optional: idle sessions do not keep the process alive. Call it to release
- * the compiler processes early, once per run after the last test (under
- * `bun test`, from `afterAll` in a `--preload` file), not once per test
- * file: the next TypeScript 7 call starts a new worker and compiler and
- * loads the project again. TypeScript 6 programs stay loaded. The
- * compilers are shut down before it returns; the promise settles once
- * their worker thread has stopped, so awaiting it is optional too.
+ * Stop the TypeScript 7 compilers the testing helpers share. Optional: idle
+ * sessions don't keep the process alive. If you call it, call it once per
+ * run after the last test (under `bun test`, `afterAll` in a `--preload`
+ * file), not per test file: the next TypeScript 7 call starts a new
+ * compiler and loads the project again. TypeScript 6 programs stay loaded.
+ * The compilers are stopped before it returns; the promise settles once
+ * their worker thread exits, so awaiting it is optional.
  */
 export function closeTestingSessions(): Promise<void> {
 	return closeNative();

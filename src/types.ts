@@ -32,11 +32,9 @@ export interface CompilerInfo {
 	source: "bundled" | "project";
 }
 
-/**
- * Options for hover lookup
- */
+/** Options for `hover()` and `batchHover()`. */
 export interface HoverOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
 	/** Include JSDoc/TSDoc documentation */
 	include_docs?: boolean;
@@ -50,20 +48,14 @@ export interface HoverOptions {
 	/** Disable TypeScript's own type truncation (`{ ...; }`). Default false */
 	full?: boolean;
 	/**
-	 * Print union members in a fixed order, so the same type reads the same
-	 * on TypeScript 6 and TypeScript 7, which order members differently
-	 * (`"b" | "a"` and `"a" | "b"`). Default false: members print in the
-	 * order TypeScript prints them.
+	 * Print union members in a fixed order, the same on TypeScript 6 and
+	 * TypeScript 7, which order them differently. Default false.
 	 *
 	 * Every union in `signature`, `returnType`, and `overloads` is sorted, at
-	 * any depth (object properties, parameters, return types, type arguments,
-	 * constraints): `null` and then `undefined` last, the other members by
-	 * their printed text, compared by UTF-16 code unit, so
-	 * `"b" | 2 | -1 | A | string | null | undefined` becomes
-	 * `"b" | -1 | 2 | A | string | null | undefined`. Numbers compare as
-	 * text (`1 | 10 | 2`). Only the order changes; `display` keeps the
-	 * editor's text, and a type TypeScript truncated (without `full`) is
-	 * left as printed.
+	 * any depth: members by their printed text (UTF-16 code units, so
+	 * numbers compare as text: `1 | 10 | 2`), then `null`, then `undefined`.
+	 * `display` keeps the editor's text, and a type TypeScript truncated
+	 * (without `full`) is left as printed.
 	 */
 	sort_unions?: boolean;
 	/**
@@ -190,16 +182,14 @@ export interface HoverResult {
 	readonly compiler?: CompilerInfo;
 }
 
-/**
- * Options for hover lookup by name
- */
+/** Options for `hover()` by name. */
 export interface HoverByNameOptions extends HoverOptions {
-	/** Optional line number to narrow search */
+	/** 1-based line that picks among same-named declarations */
 	line?: number;
 }
 
 export interface CompletionOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
 	/**
 	 * Keep only entries whose name starts with this text (case-insensitive).
@@ -302,7 +292,7 @@ export interface BatchHoverResult {
 }
 
 export interface DiagnosticsOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
 	/** Also return suggestion and message diagnostics, such as unused-variable hints */
 	include_suggestions?: boolean;
@@ -344,7 +334,7 @@ export interface DiagnosticsResult {
 }
 
 export interface AnnotationsOptions {
-	/** Optional path to tsconfig.json */
+	/** tsconfig.json path (default: the nearest one above the file) */
 	project?: string;
 	/** Which compiler to use; see `CompilerMode`. */
 	compiler?: CompilerMode;
