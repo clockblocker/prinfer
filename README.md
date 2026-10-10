@@ -50,7 +50,7 @@ The second argument picks the target:
 - `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
 - `{ line, column }`: a 1-based position.
 
-Options (`backend`, `project`, `full`, `include_docs`) go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`. There is no third argument: passing one, or a key the helper doesn't know, throws.
+Options (`backend`, `project`, `full`, `include_docs`, `strict`) go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`. There is no third argument; passing one throws. Keys a helper doesn't know are ignored. Pass `strict: true` to make them throw, with the closest valid key: test runners don't type-check test files, so a camelCase `includeDocs` for `include_docs` would otherwise do nothing and give no error.
 
 `inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise, so write `expect(await inferredType(...))` or `await expect(inferredType(...)).resolves`. If you forget, Vitest and Jest fail the snapshot with a message saying to await it. Bun records the promise as `Promise {}` and the test passes, so in Bun check that every TypeScript 7 call is awaited. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
 

@@ -303,11 +303,28 @@ describe("misplaced options", () => {
 		expect(error.message).toContain('text: "user.", project:');
 	});
 
-	test("an unknown selector key suggests the closest one", () => {
+	test("unknown selector keys are ignored by default", async () => {
+		expect(
+			inferredType(targets, {
+				name: "pick",
+				includeDocs: true,
+			} as { name: string }),
+		).toBe("Drink");
+		await expect(
+			inferredCompletions(targets, {
+				line: 4,
+				text: "latte.",
+				full: true,
+			} as InferredCompletionsSelector),
+		).resolves.toEqual(["drink", "size"]);
+	});
+
+	test("strict: true throws on an unknown key with the closest one", () => {
 		const error = thrown(() =>
 			inferredType(targets, {
 				name: "pick",
 				includeDocs: true,
+				strict: true,
 			} as { name: string }),
 		);
 		expect(error.code).toBe("INVALID_ARGUMENT");
@@ -317,18 +334,46 @@ describe("misplaced options", () => {
 		expect(error.message).toContain("Did you mean include_docs?");
 	});
 
-	test("inferredCompletions lists only its own keys", async () => {
+	test("strict: true accepts every documented key, strict included", async () => {
+		expect(
+			inferredType(targets, {
+				name: "pick",
+				full: true,
+				include_docs: false,
+				strict: true,
+			}),
+		).toBe("Drink");
+		await expect(
+			inferredCompletions(targets, {
+				line: 4,
+				text: "latte.",
+				cursor: "end",
+				strict: true,
+			}),
+		).resolves.toEqual(["drink", "size"]);
+	});
+
+	test("strict inferredCompletions lists only its own keys", async () => {
 		const error = await rejection(
 			inferredCompletions(targets, {
 				line: 4,
 				text: "latte.",
 				full: true,
+				strict: true,
 			} as InferredCompletionsSelector),
 		);
 		expect(error.message).toContain('unknown selector key "full"');
 		expect(error.message).toContain(
-			"Selector keys: line, column, text, occurrence, cursor, project, backend.",
+			"Selector keys: line, column, text, occurrence, cursor, project, backend, strict.",
 		);
+	});
+
+	test("a third argument throws even without strict", () => {
+		const call = inferredType as (...args: unknown[]) => unknown;
+		const error = thrown(() =>
+			call(targets, { name: "pick", strict: false }, { strict: true }),
+		);
+		expect(error.message).toContain("inferredType takes two arguments");
 	});
 });
 

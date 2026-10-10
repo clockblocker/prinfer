@@ -31,6 +31,13 @@ interface InferredCompletionsOptions {
 	 * tool and `prinfer complete` use TypeScript 6 and return 50 by default.)
 	 */
 	backend?: "typescript7";
+	/**
+	 * Throw on selector keys this helper doesn't know, with the closest valid
+	 * key (default false: unknown keys are ignored). Tests usually run without
+	 * type checking, so this is what catches `includeDocs` for
+	 * `include_docs`.
+	 */
+	strict?: boolean;
 }
 
 export interface InferredCompletionsPosition
@@ -75,6 +82,13 @@ export interface InferredTypeOptions
 	 * TypeScript 7; the CLI and library to TypeScript 6.)
 	 */
 	backend?: "typescript6" | "typescript7";
+	/**
+	 * Throw on selector keys this helper doesn't know, with the closest valid
+	 * key (default false: unknown keys are ignored). Tests usually run without
+	 * type checking, so this is what catches `includeDocs` for
+	 * `include_docs`.
+	 */
+	strict?: boolean;
 }
 
 export interface InferredTypeTarget extends InferredTypeOptions {
@@ -194,6 +208,7 @@ async function inferredCompletionsImpl(
  *
  * Every option goes in the selector, e.g.
  * `{ name: "result", backend: "typescript7" }`; a third argument throws.
+ * Unknown selector keys are ignored unless `strict: true`.
  *
  * @example
  * ```ts
@@ -318,6 +333,7 @@ const COMPLETIONS_SELECTOR_KEYS = [
 	"cursor",
 	"project",
 	"backend",
+	"strict",
 ];
 
 /** `cursor` stays accepted: it has always worked with `text` at runtime. */
@@ -333,6 +349,7 @@ const TYPE_SELECTOR_KEYS = [
 	"include_docs",
 	"include_timing",
 	"backend",
+	"strict",
 ];
 
 /** A selector example that shows options sitting next to the target. */
@@ -345,7 +362,7 @@ function selectorExample(helper: string): string {
 function createRequest(
 	helper: string,
 	input: TestingFile,
-	selector: { backend?: string } | undefined,
+	selector: { backend?: string; strict?: boolean } | undefined,
 	extra: unknown[],
 ): Request {
 	if (extra.length > 0) {
@@ -358,26 +375,7 @@ function createRequest(
 	if (typeof selector !== "object" || selector === null) {
 		throw invalidSelector(helper);
 	}
-	const known =
-		helper === "inferredCompletions"
-			? COMPLETIONS_SELECTOR_KEYS
-			: TYPE_SELECTOR_KEYS;
-	const unknown = Object.keys(selector).find((key) => !known.includes(key));
-	if (unknown !== undefined) {
-		const closest = [...known].sort(
-			(left, right) =>
-				editDistance(left, unknown) - editDistance(right, unknown),
-		)[0];
-		const guess =
-			closest && editDistance(closest, unknown) <= 3
-				? `Did you mean ${closest}? `
-				: "";
-		throw testingError(
-			"INVALID_ARGUMENT",
-			`${helper} got unknown selector key ${JSON.stringify(unknown)}.`,
-			`${guess}Selector keys: ${known.join(", ")}.`,
-		);
-	}
+	if (selector.strict === true) assertKnownKeys(helper, selector);
 	const backend =
 		selector.backend ??
 		(helper === "inferredCompletions" ? "typescript7" : "typescript6");
@@ -391,6 +389,29 @@ function createRequest(
 		);
 	}
 	return { helper, input, file: sourcePath(input), backend };
+}
+
+/** With `strict: true`, a misspelled option throws instead of being ignored. */
+function assertKnownKeys(helper: string, selector: object): void {
+	const known =
+		helper === "inferredCompletions"
+			? COMPLETIONS_SELECTOR_KEYS
+			: TYPE_SELECTOR_KEYS;
+	const unknown = Object.keys(selector).find((key) => !known.includes(key));
+	if (unknown === undefined) return;
+	const closest = [...known].sort(
+		(left, right) =>
+			editDistance(left, unknown) - editDistance(right, unknown),
+	)[0];
+	const guess =
+		closest && editDistance(closest, unknown) <= 3
+			? `Did you mean ${closest}? `
+			: "";
+	throw testingError(
+		"INVALID_ARGUMENT",
+		`${helper} got unknown selector key ${JSON.stringify(unknown)}.`,
+		`${guess}Selector keys: ${known.join(", ")}.`,
+	);
 }
 
 function resolveTarget(
