@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -263,6 +263,52 @@ describe("programs of one project", () => {
 		}
 		expect(loadProgram(costFile).getSourceFile(costFile)).toBe(sourceFile);
 		expect(costs(names)).toEqual(alone);
+	});
+
+	test("read a file rewritten within one timestamp tick", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-tick-"));
+		// A coarse clock (Linux without multigrain timestamps, HFS+, FAT):
+		// a same-size rewrite keeps mtime, ctime, size, and inode.
+		const statSync = fs.statSync;
+		const frozen = new Map<string, fs.Stats>();
+		const stat = spyOn(fs, "statSync").mockImplementation(((
+			file: fs.PathLike,
+			options?: fs.StatSyncOptions,
+		) => {
+			const real = statSync(file, options) as fs.Stats;
+			const key = String(file);
+			if (!key.startsWith(dir) || !real.isFile()) return real;
+			const first = frozen.get(key) ?? real;
+			frozen.set(key, first);
+			return first;
+		}) as typeof fs.statSync);
+		try {
+			fs.writeFileSync(
+				path.join(dir, "tsconfig.json"),
+				JSON.stringify({
+					compilerOptions: { strict: true, types: [] },
+				}),
+			);
+			const a = path.join(dir, "a.ts");
+			const b = path.join(dir, "b.ts");
+			fs.writeFileSync(a, "export const a = 1;\n");
+			fs.writeFileSync(
+				b,
+				'import { a } from "./a";\nexport const b = a;\n',
+			);
+			expect(hover(a, "a").signature).toBe("1");
+			fs.writeFileSync(a, "export const a = 2;\n");
+			// The cached program of a.ts, and the files b.ts's program
+			// would take from it.
+			expect(hover(b, "b").signature).toBe("2");
+			expect(hover(a, "a").signature).toBe("2");
+			fs.writeFileSync(a, "export const a = 3;\n");
+			expect(hover(a, "a").signature).toBe("3");
+			expect(hover(b, "b").signature).toBe("3");
+		} finally {
+			stat.mockRestore();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	test("read a changed file again", () => {

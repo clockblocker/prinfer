@@ -4,7 +4,7 @@ import { ts, typeScriptId } from "./ts-runtime.js";
 
 interface ProgramCacheEntry {
 	program: ts.Program;
-	files: Map<string, string>;
+	files: Map<string, FileStamp>;
 	directories: Map<string, string>;
 	/**
 	 * The TypeScript instance and compiler options: programs with the same
@@ -12,6 +12,29 @@ interface ProgramCacheEntry {
 	 */
 	sharing: string;
 }
+
+/**
+ * What a cached program read from a file: its stat signature, and while
+ * the file is recently changed, the text itself (see RACY_WINDOW_MS).
+ */
+interface FileStamp {
+	signature: string;
+	/** When the file last changed (the later of mtime and ctime). */
+	changedMs: number;
+	/** The text the program read, kept while the signature can't vouch. */
+	text?: string;
+}
+
+/**
+ * How long after a change a file's stat signature is not trusted alone.
+ * Timestamps are coarse: Linux takes them from a clock tick (1-10 ms) on
+ * kernels without multigrain timestamps, HFS+ to the second, FAT to two
+ * seconds. A fixture rewritten within one tick with the same size keeps
+ * its mtime, ctime, size, and inode, so a stamp recorded that recently is
+ * checked against the text read until the window has passed, as git does
+ * for racily clean files. Only recently changed files pay for the read.
+ */
+const RACY_WINDOW_MS = 3_000;
 
 const programCache = new Map<string, ProgramCacheEntry>();
 const MAX_CACHED_PROGRAMS = 8;
@@ -70,7 +93,11 @@ export function loadProgram(
 		return program;
 	}
 
-	const cfg = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+	const configText = ts.sys.readFile(tsconfigPath);
+	const cfg =
+		configText === undefined
+			? ts.readConfigFile(tsconfigPath, ts.sys.readFile)
+			: ts.parseConfigFileTextToJson(tsconfigPath, configText);
 	if (cfg.error) {
 		throw new Error(
 			ts.flattenDiagnosticMessageText(cfg.error.messageText, "\n"),
@@ -91,13 +118,10 @@ export function loadProgram(
 		oldProgram: cached?.program,
 		host: sharingHost(parsed.options),
 	});
-	cacheProgram(
-		cacheKey,
-		program,
-		rootNames,
-		path.dirname(tsconfigPath),
-		tsconfigPath,
-	);
+	cacheProgram(cacheKey, program, rootNames, path.dirname(tsconfigPath), {
+		path: tsconfigPath,
+		text: configText,
+	});
 	return program;
 }
 
@@ -184,12 +208,12 @@ function sharingHost(options: ts.CompilerOptions): ts.CompilerHost {
 				createNew,
 			);
 		}
-		let current: string | undefined;
+		let stat: FileStat | undefined;
 		for (const donor of donors) {
-			const signature = donor.files.get(fileName);
-			if (signature === undefined) continue;
-			current ??= statSignature(fileName) ?? "";
-			if (signature !== current) continue;
+			const stamp = donor.files.get(fileName);
+			if (stamp === undefined) continue;
+			if (stat === undefined) stat = statOf(fileName);
+			if (!stampIsFresh(fileName, stamp, stat)) continue;
 			const sourceFile = donor.program.getSourceFile(fileName);
 			if (sourceFile) return sourceFile;
 		}
@@ -208,22 +232,22 @@ function cacheProgram(
 	program: ts.Program,
 	rootNames: string[],
 	projectDir: string,
-	tsconfigPath?: string,
+	tsconfig?: { path: string; text: string | undefined },
 ): void {
-	const files = new Map<string, string>();
+	const files = new Map<string, FileStamp>();
 	for (const sourceFile of program.getSourceFiles()) {
-		const signature = statSignature(sourceFile.fileName);
-		if (signature) files.set(sourceFile.fileName, signature);
+		const stamp = fileStamp(sourceFile.fileName, sourceFile.text);
+		if (stamp) files.set(sourceFile.fileName, stamp);
 	}
-	if (tsconfigPath) {
-		const signature = statSignature(tsconfigPath);
-		if (signature) files.set(tsconfigPath, signature);
+	if (tsconfig) {
+		const stamp = fileStamp(tsconfig.path, tsconfig.text);
+		if (stamp) files.set(tsconfig.path, stamp);
 	}
 
 	const directories = new Map<string, string>();
 	for (const directory of collectProjectDirectories(rootNames, projectDir)) {
-		const signature = statSignature(directory);
-		if (signature) directories.set(directory, signature);
+		const stat = statOf(directory);
+		if (stat) directories.set(directory, stat.signature);
 	}
 
 	programCache.set(cacheKey, {
@@ -239,24 +263,60 @@ function cacheProgram(
 }
 
 function cacheEntryIsFresh(entry: ProgramCacheEntry): boolean {
-	return (
-		signaturesAreFresh(entry.files) && signaturesAreFresh(entry.directories)
-	);
-}
-
-function signaturesAreFresh(signatures: Map<string, string>): boolean {
-	for (const [filePath, signature] of signatures) {
-		if (statSignature(filePath) !== signature) return false;
+	for (const [filePath, stamp] of entry.files) {
+		if (!stampIsFresh(filePath, stamp)) return false;
+	}
+	for (const [directory, signature] of entry.directories) {
+		if (statOf(directory)?.signature !== signature) return false;
 	}
 	return true;
 }
 
-function statSignature(filePath: string): string | undefined {
+/** A stamp of `text`, read from `filePath`, unless the file is gone. */
+function fileStamp(
+	filePath: string,
+	text: string | undefined,
+): FileStamp | undefined {
+	const stat = statOf(filePath);
+	if (!stat || text === undefined) return undefined;
+	const stamp: FileStamp = {
+		signature: stat.signature,
+		changedMs: stat.changedMs,
+	};
+	if (Date.now() - stat.changedMs < RACY_WINDOW_MS) stamp.text = text;
+	return stamp;
+}
+
+/**
+ * Whether the file still holds what the stamp recorded: the same stat
+ * signature and, while the change is recent, the same text. A text that
+ * still matches once the window has passed is trusted from then on: a
+ * later write would carry a later timestamp.
+ */
+function stampIsFresh(
+	filePath: string,
+	stamp: FileStamp,
+	stat: FileStat = statOf(filePath),
+): boolean {
+	if (stat?.signature !== stamp.signature) return false;
+	if (stamp.text === undefined) return true;
+	if (ts.sys.readFile(filePath) !== stamp.text) return false;
+	if (Date.now() - stamp.changedMs >= RACY_WINDOW_MS) stamp.text = undefined;
+	return true;
+}
+
+/** A file's stat signature; null when it is gone. */
+type FileStat = { signature: string; changedMs: number } | null;
+
+function statOf(filePath: string): FileStat {
 	try {
 		const stat = fs.statSync(filePath);
-		return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+		return {
+			signature: `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`,
+			changedMs: Math.max(stat.mtimeMs, stat.ctimeMs),
+		};
 	} catch {
-		return undefined;
+		return null;
 	}
 }
 
