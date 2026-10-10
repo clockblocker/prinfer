@@ -21,8 +21,10 @@ import { diagnostics, hover } from "../index.js";
 import { closeNativeSessions, nativeHover } from "../native-lsp.js";
 import {
 	closeTestingSessions,
+	expectType,
 	inferredTypeCost,
 	inferredTypeInfo,
+	TypeExpectationError,
 } from "../testing.js";
 import type { CompilerInfo } from "../types.js";
 
@@ -105,11 +107,12 @@ function typeScriptPackage(version: string): Record<string, string> {
 function nativePreviewPackage(
 	version: string,
 	api: boolean,
+	name = "@typescript/native-preview",
 ): Record<string, string> {
 	const real = (file: string) =>
 		JSON.stringify(pathToFileURL(path.join(realNative, file)).href);
 	const manifest = {
-		name: "@typescript/native-preview",
+		name,
 		version,
 		type: "module",
 		bin: { tsgo: "./bin/tsgo.js" },
@@ -122,7 +125,7 @@ function nativePreviewPackage(
 				}
 			: { "./package.json": "./package.json" },
 	};
-	const dir = "@typescript/native-preview";
+	const dir = name;
 	return {
 		[`${dir}/package.json`]: JSON.stringify(manifest),
 		[`${dir}/bin/tsgo.js`]: `import ${real("lib/tsc.js")};\n`,
@@ -141,6 +144,7 @@ let ts49: string;
 let ts7Only: string;
 let preview: string;
 let oldPreview: string;
+let ts7Api: string;
 
 beforeAll(() => {
 	root = fs.realpathSync(
@@ -159,6 +163,10 @@ beforeAll(() => {
 		...typeScriptPackage("6.0.1"),
 		...nativePreviewPackage("7.0.0-dev.20260707.2", true),
 	});
+	ts7Api = project(
+		"ts7-api",
+		nativePreviewPackage("7.0.2", true, "typescript"),
+	);
 	oldPreview = project("old-preview", {
 		...typeScriptPackage("6.0.1"),
 		...nativePreviewPackage("7.0.0-dev.20260421.2", false),
@@ -271,6 +279,58 @@ describe("TypeScript 6 in project mode", () => {
 		});
 		expect(formatHoverText(result, { surface: "cli" })).toContain(
 			"types (typescript 5.9.9, project)",
+		);
+	});
+
+	test("counts batched costs and expectType budgets on it", () => {
+		const project59: CompilerInfo = {
+			name: "typescript",
+			version: "5.9.9",
+			source: "project",
+		};
+		const single = inferredTypeCost(ts59, {
+			name: "user",
+			compiler: "project",
+		});
+		const byName = inferredTypeCost(ts59, {
+			names: ["user"],
+			compiler: "project",
+			strict: true,
+		});
+		const inOrder = inferredTypeCost(ts59, {
+			targets: [{ name: "user" }, { line: 1, text: "user" }],
+			compiler: "project",
+			strict: true,
+		});
+		for (const cost of [single, byName.user, ...inOrder]) {
+			expect(cost?.compiler).toEqual(project59);
+			expect(cost).toEqual(single);
+		}
+		expect(
+			inferredTypeCost(ts59, { names: ["user"] }).user?.compiler,
+		).toEqual(bundled6);
+
+		const checked = expectType(ts59, {
+			name: "user",
+			compiler: "project",
+			printed: "{ name: string; age: number; }",
+			maxTypes: 1_000,
+			strict: true,
+		});
+		expect(checked.cost?.compiler).toEqual(project59);
+		let error: unknown;
+		try {
+			expectType(ts59, {
+				name: "user",
+				compiler: "project",
+				maxTypes: 0,
+			});
+		} catch (thrown) {
+			error = thrown;
+		}
+		expect(error).toBeInstanceOf(TypeExpectationError);
+		expect((error as Error).message).toContain(
+			"(counted on typescript 5.9.9, project).",
 		);
 	});
 
@@ -397,6 +457,47 @@ describe("TypeScript 7 in project mode", () => {
 		});
 		expect(projectResult).toEqual(bundledResult);
 		expect(Object.keys(projectResult)).not.toContain("compiler");
+	});
+
+	test("expectType counts a TypeScript 7 target on the project's TypeScript 6", () => {
+		const checked = expectType(preview, {
+			name: "user",
+			backend: "typescript7",
+			compiler: "project",
+			printed: "{ name: string; age: number; }",
+			maxInstantiations: 1_000,
+		});
+		expect(checked.cost?.compiler).toEqual({
+			name: "typescript",
+			version: "6.0.1",
+			source: "project",
+		});
+		// Without a TypeScript 6 of its own, the bundled one counts.
+		const write = spyOn(process.stderr, "write").mockImplementation(
+			() => true,
+		);
+		try {
+			const counted = expectType(ts7Api, {
+				name: "user",
+				backend: "typescript7",
+				compiler: "project",
+				maxInstantiations: 1_000,
+			});
+			expect(counted.cost?.compiler).toEqual(bundled6);
+			expect(
+				inferredTypeInfo(ts7Api, {
+					name: "user",
+					backend: "typescript7",
+					compiler: "project",
+				}).compiler,
+			).toEqual({
+				name: "typescript",
+				version: "7.0.2",
+				source: "project",
+			});
+		} finally {
+			write.mockRestore();
+		}
 	});
 
 	test("the language server backend runs the project's bin", async () => {

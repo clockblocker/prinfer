@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import * as ts from "typescript";
 import { PrinferError } from "../errors.js";
 import {
 	closeTestingSessions,
@@ -88,7 +89,7 @@ describe("expectType", () => {
 		]);
 		expect(error.message).toContain("expectType failed 3 checks");
 		expect(error.message).toContain(
-			`- maxInstantiations: ${instantiations} instantiations, over the budget of 10 by ${instantiations - 10} (counted on TypeScript 6).`,
+			`- maxInstantiations: ${instantiations} instantiations, over the budget of 10 by ${instantiations - 10} (counted on typescript ${ts.version}, bundled).`,
 		);
 		expect(error.message).toContain(
 			'- readable: 1 readability issue:\n    utility-type: Omit<User, "id"> is unresolved',
@@ -155,7 +156,7 @@ describe("expectType", () => {
 			maxInstantiations: 1,
 		});
 		expect(error.message).toContain(
-			`${cost.instantiations} instantiations, over the budget of 1 by ${cost.instantiations - 1} (counted on TypeScript 6; the printed type is TypeScript 7's).`,
+			`${cost.instantiations} instantiations, over the budget of 1 by ${cost.instantiations - 1} (counted on typescript ${ts.version}, bundled; the printed type is TypeScript 7's).`,
 		);
 	});
 

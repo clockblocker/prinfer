@@ -108,15 +108,15 @@ expectType failed 3 checks for "user" at test/users.test.ts:9:14:
     expected: { id: string; name: string; }
     actual:   Omit<User, "email">
               ^
-- maxInstantiations: 612 instantiations, over the budget of 500 by 112 (counted on TypeScript 6).
+- maxInstantiations: 612 instantiations, over the budget of 500 by 112 (counted on typescript 6.0.3, bundled).
 - readable: 1 readability issue:
     utility-type: Omit<User, "email"> is unresolved: TypeScript printed Omit<...> instead of the type it produces.
 ```
 
 The selector is `inferredType`'s plus the checks, of which at least one is required:
 
-- `printed`: the exact text `inferredType` returns for the same selector, so `backend`, `sort_unions`, and `full` apply.
-- `maxInstantiations`, `maxTypes`: budgets for the [cost](#type-cost-budgets). The cost is always counted on TypeScript 6, also with `backend: "typescript7"`, which only picks where the text comes from; the error says so.
+- `printed`: the exact text `inferredType` returns for the same selector, so `backend`, `compiler`, `sort_unions`, and `full` apply.
+- `maxInstantiations`, `maxTypes`: budgets for the [cost](#type-cost-budgets). The cost is always counted on TypeScript 6, also with `backend: "typescript7"`, which only picks where the text comes from; the error names the compiler that counted. `compiler` applies to the count as well: with `backend: "typescript7"`, `"project"` counts on the project's TypeScript 6 when it has one and on the bundled one otherwise.
 - `readable`: `true` for the default [readability rules](#readability-checks), or a rules object.
 
 The error is a `TypeExpectationError` with every failure in `failures`. When the text differs it also carries `actual` and `expected`, so Vitest and Jest print their own diff. `expectType` only throws, so it works in any runner, and when every check passes it returns `{ printed, cost? }`. Like the other helpers it is synchronous on both backends, takes `strict`, and throws on a third argument.

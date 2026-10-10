@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
-import { compilerMode } from "./compiler.js";
+import {
+	compilerDirectory,
+	compilerMode,
+	resolveTypeScript6,
+	withCompilerInfo,
+} from "./compiler.js";
 import { contractError } from "./contract.js";
 import { type CostTarget, measureTargetCosts } from "./core/hover-cost.js";
 import {
@@ -13,10 +18,12 @@ import {
 	typeReadabilityIssues,
 } from "./core/readability.js";
 import { resolveTextColumn } from "./core/text-target.js";
+import { withTypeScript } from "./core/ts-runtime.js";
 import { COST_NEEDS_TYPESCRIPT6, PrinferError } from "./errors.js";
 import { hover } from "./index.js";
 import { callNative, closeNative, DEFAULT_TIMEOUT_MS } from "./native-sync.js";
 import type {
+	CompilerInfo,
 	CompilerMode,
 	HoverCost,
 	HoverOptions,
@@ -167,6 +174,8 @@ interface InferredTypeCostBatchOptions {
 	project?: string;
 	/** Costs are counted on TypeScript 6 only. */
 	backend?: "typescript6";
+	/** Which TypeScript 6 compiler counts; see `CompilerMode`. */
+	compiler?: CompilerMode;
 	/** See `InferredTypeOptions.strict`; also checks each target's keys. */
 	strict?: boolean;
 }
@@ -209,7 +218,10 @@ export type ExpectTypeSelector = InferredTypeSelector & TypeExpectations;
 export interface ExpectedType {
 	/** The printed type. */
 	printed: string;
-	/** The TypeScript 6 cost, when a budget was given. */
+	/**
+	 * The TypeScript 6 cost, when a budget was given; its non-enumerable
+	 * `compiler` names the compiler that counted.
+	 */
 	cost?: HoverCost;
 }
 
@@ -373,7 +385,8 @@ export function inferredTypeInfo(
  * Pass `{ names: [...] }` for a record of costs by name, or
  * `{ targets: [...] }` for an array of costs in order, from one load of the
  * file. Every count still gets a fresh checker, so a batch counts exactly
- * what single calls do.
+ * what single calls do. `compiler` picks the TypeScript 6 that counts (see
+ * `CompilerMode`); each cost names it in its non-enumerable `compiler`.
  *
  * @example
  * ```ts
@@ -409,14 +422,14 @@ export function inferredTypeCost(
 	if (request.backend === "typescript7") {
 		throw costNeedsTypeScript6(helper);
 	}
-	const { names, targets, project, strict } = selector as {
+	const { names, targets, strict } = selector as {
 		names?: unknown;
 		targets?: unknown;
-		project?: string;
 		strict?: boolean;
 	};
+	const on = selector as { project?: string; compiler?: CompilerMode };
 	if (names === undefined && targets === undefined) {
-		return countCosts(request, project, false, [selector])[0] as HoverCost;
+		return countCosts(request, on, false, [selector])[0] as HoverCost;
 	}
 	const single = ["name", "line", "column", "text", "occurrence"].filter(
 		(key) => key in selector,
@@ -434,7 +447,7 @@ export function inferredTypeCost(
 		);
 	}
 	if (names === undefined) {
-		return countCosts(request, project, strict === true, list);
+		return countCosts(request, on, strict === true, list);
 	}
 	const invalid = list.find((name) => typeof name !== "string");
 	if (invalid !== undefined) {
@@ -446,7 +459,7 @@ export function inferredTypeCost(
 	}
 	const costs = countCosts(
 		request,
-		project,
+		on,
 		false,
 		list.map((name: string) => ({ name })),
 	);
@@ -490,10 +503,14 @@ export function inferredTypeIssues(
  * readability issue; returns what it checked when all of them pass. It
  * only throws, so it works in any test runner.
  *
- * The text comes from the selector's backend, exactly as `inferredType`
- * returns it (`sort_unions` and `full` apply). Costs are always counted on
- * TypeScript 6, also with `backend: "typescript7"`: TypeScript 7 reports
- * no counts. Synchronous on both backends; a third argument throws.
+ * The text comes from the selector's backend and `compiler`, exactly as
+ * `inferredType` returns it (`sort_unions` and `full` apply). Costs are
+ * always counted on TypeScript 6, also with `backend: "typescript7"`:
+ * TypeScript 7 reports no counts. `compiler` applies to the count too;
+ * with `backend: "typescript7"`, `"project"` counts on the project's
+ * TypeScript 6 when it has one and on the bundled one otherwise. A failed
+ * budget names the compiler that counted. Synchronous on both backends; a
+ * third argument throws.
  *
  * @example
  * ```ts
@@ -542,18 +559,28 @@ export function expectType(
 
 	const result = inferredTypeInfoImpl(helper, file, rest, []);
 	const actual = result.signature;
+	// TypeScript 7 counts nothing, so its project compiler can't either:
+	// the project's TypeScript 6 counts when it has one, else the bundled.
+	const counting =
+		request.backend === "typescript7" &&
+		compilerMode(rest.compiler) === "project"
+			? "auto"
+			: rest.compiler;
 	const cost = budgeted
-		? (countCosts(request, rest.project, false, [rest])[0] as HoverCost)
+		? (countCosts(
+				request,
+				{ project: rest.project, compiler: counting },
+				false,
+				[rest],
+			)[0] as HoverCost)
 		: undefined;
 
 	const failures: TypeExpectationFailure[] = [];
 	if (printed !== undefined && actual !== printed) {
 		failures.push({ check: "printed", message: textDiff(printed, actual) });
 	}
-	const counted =
-		request.backend === "typescript7"
-			? "counted on TypeScript 6; the printed type is TypeScript 7's"
-			: "counted on TypeScript 6";
+	const counter = (cost as { compiler?: CompilerInfo } | undefined)?.compiler;
+	const counted = `counted on ${counter ? `${counter.name} ${counter.version}, ${counter.source}` : "TypeScript 6"}${request.backend === "typescript7" ? "; the printed type is TypeScript 7's" : ""}`;
 	for (const [check, budget, count, unit] of [
 		[
 			"maxInstantiations",
@@ -669,11 +696,13 @@ function inferredTypeInfoImpl(
 
 /**
  * The TypeScript 6 cost of each selector-shaped item, from one load of
- * the file. With `strict`, an item's keys must be target keys.
+ * the file, on the compiler `options.compiler` selects; each cost names
+ * it in its non-enumerable `compiler`. With `strict`, an item's keys must
+ * be target keys.
  */
 function countCosts(
 	request: Request,
-	project: string | undefined,
+	options: { project?: string; compiler?: CompilerMode },
 	strict: boolean,
 	items: readonly unknown[],
 ): HoverCost[] {
@@ -695,8 +724,15 @@ function countCosts(
 			throw explain(error, request, item);
 		}
 	});
+	const { project } = options;
 	try {
-		return measureTargetCosts(request.file, targets, project);
+		const compiler = resolveTypeScript6(
+			compilerMode(options.compiler),
+			compilerDirectory(request.file, project),
+		);
+		return withTypeScript(compiler.ts, () =>
+			measureTargetCosts(request.file, targets, project),
+		).map((cost) => withCompilerInfo(cost, compiler.info));
 	} catch (error) {
 		const { index } = error as { index?: number };
 		throw explain(
