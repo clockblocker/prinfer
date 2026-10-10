@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { nearbyCandidates } from "./candidates.js";
+import { runTypeScript6 } from "./compiler.js";
 import {
 	annotationsSuccess,
 	type BatchHoverSuccess,
@@ -75,6 +76,8 @@ cap); structuredContent always has the complete result.
 
 Environment:
   PRINFER_BACKEND=typescript6   Backend for hover and diagnostics tools (default typescript7)
+  PRINFER_COMPILER=project      The project's own TypeScript 6 and 7 instead of the
+                                bundled ones; "auto" falls back to bundled (default bundled)
 
 See also:
   prinfer --help    CLI: type lookups, completions, check, and annotations
@@ -764,6 +767,7 @@ function createServer(): McpServer {
 					structuredContent: hoverSuccess({
 						...result,
 						position: { line, column: resolvedColumn },
+						compiler: result.compiler,
 					}),
 				};
 			} catch (error) {
@@ -886,11 +890,13 @@ function createServer(): McpServer {
 		async ({ file, line, column, prefix, limit, project }) => {
 			try {
 				assertSourceFile(file);
-				const result = getCompletions(file, line, column, project, {
-					prefix,
-					autoPrefix: true,
-					limit: limit ?? DEFAULT_COMPLETION_LIMIT,
-				});
+				const result = runTypeScript6(file, { project }, () =>
+					getCompletions(file, line, column, project, {
+						prefix,
+						autoPrefix: true,
+						limit: limit ?? DEFAULT_COMPLETION_LIMIT,
+					}),
+				);
 				return {
 					content: [
 						{
@@ -969,7 +975,9 @@ function createServer(): McpServer {
 		async ({ file, project }) => {
 			try {
 				assertSourceFile(file);
-				const result = getFileAnnotations(file, project);
+				const result = runTypeScript6(file, { project }, () =>
+					getFileAnnotations(file, project),
+				);
 				return {
 					content: [
 						{

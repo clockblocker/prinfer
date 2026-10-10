@@ -1,4 +1,38 @@
 /**
+ * Which compilers prinfer prints and counts with.
+ * - `"bundled"` (default): the TypeScript 6 and TypeScript 7 packages
+ *   prinfer depends on, the same on every machine.
+ * - `"project"`: the project's own: `typescript` 5.0 to 6.x for the
+ *   TypeScript 6 backend; `typescript` 7 or `@typescript/native-preview`
+ *   for the TypeScript 7 backend. They are resolved the way Node resolves
+ *   an import from the directory of the file's tsconfig.json (or of
+ *   `project`). Throws when the project has none, or an unsupported one.
+ * - `"auto"`: the project's when it has a supported one, otherwise the
+ *   bundled one (with a warning on stderr when the project's is
+ *   unsupported).
+ *
+ * When omitted: the `PRINFER_COMPILER` environment variable, then
+ * `"bundled"`. A result's `compiler` says which one ran.
+ */
+export type CompilerMode = "bundled" | "project" | "auto";
+
+/**
+ * The compiler that produced a result. Results carry it as a
+ * non-enumerable `compiler` property: read it directly; snapshots,
+ * equality checks, and JSON.stringify leave it out, so they don't change
+ * when only the compiler does. The CLI's --json output and the MCP tools'
+ * structured output report it next to the result.
+ */
+export interface CompilerInfo {
+	/** Package name: `typescript` or `@typescript/native-preview` */
+	name: string;
+	/** Package version, e.g. `6.0.3` */
+	version: string;
+	/** `bundled`: prinfer's own dependency; `project`: the project's */
+	source: "bundled" | "project";
+}
+
+/**
  * Options for hover lookup
  */
 export interface HoverOptions {
@@ -38,6 +72,8 @@ export interface HoverOptions {
 	 * typescript7; the CLI and `prinfer/testing` default to typescript6.)
 	 */
 	backend?: "typescript6" | "typescript7";
+	/** Which compilers to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 /**
@@ -54,6 +90,8 @@ export interface HoverCost {
 	instantiations: number;
 	/** Types created */
 	types: number;
+	/** The TypeScript 6 compiler that counted; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 /** @deprecated Not reported since 3.2; see `HoverCost`. */
@@ -148,6 +186,8 @@ export interface HoverResult {
 	 * symbol are not listed.
 	 */
 	alternatives?: HoverAlternative[];
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 /**
@@ -172,6 +212,8 @@ export interface CompletionOptions {
 	 * default: all. (The MCP tool and `prinfer complete` default to 50.)
 	 */
 	limit?: number;
+	/** Which compiler to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 export interface CompletionEntry {
@@ -203,6 +245,8 @@ export interface CompletionResult {
 	 * `Record<string, T>`), so there are no specific keys to offer.
 	 */
 	note?: string;
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 /**
@@ -253,6 +297,8 @@ export interface BatchHoverResult {
 	successCount: number;
 	/** Number of failed lookups */
 	errorCount: number;
+	/** The compiler that produced the results; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 export interface DiagnosticsOptions {
@@ -260,6 +306,8 @@ export interface DiagnosticsOptions {
 	project?: string;
 	/** Also return suggestion and message diagnostics, such as unused-variable hints */
 	include_suggestions?: boolean;
+	/** Which compilers to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 export type DiagnosticCategory = "error" | "warning" | "suggestion" | "message";
@@ -291,11 +339,15 @@ export interface DiagnosticsResult {
 	diagnostics: FileDiagnostic[];
 	errorCount: number;
 	warningCount: number;
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }
 
 export interface AnnotationsOptions {
 	/** Optional path to tsconfig.json */
 	project?: string;
+	/** Which compiler to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 }
 
 /**
@@ -339,4 +391,6 @@ export interface AnnotationsResult {
 	wideningCount: number;
 	/** Annotations examined: those with an initializer or body to infer from */
 	checkedCount: number;
+	/** The compiler that produced the result; non-enumerable, see `CompilerInfo` */
+	readonly compiler?: CompilerInfo;
 }

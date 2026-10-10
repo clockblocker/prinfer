@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import * as ts from "typescript";
+import { ts, typeScriptId } from "./ts-runtime.js";
 
 interface ProgramCacheEntry {
 	program: ts.Program;
@@ -35,10 +35,9 @@ export function loadProgram(
 
 	// The inspected file may intentionally be excluded from the project's
 	// production tsconfig (test files commonly are). Keep the entry in the cache
-	// identity because each program below explicitly adds it as a root.
-	const cacheKey = tsconfigPath
-		? `${tsconfigPath}\0${entryFileAbs}`
-		: entryFileAbs;
+	// identity because each program below explicitly adds it as a root. A
+	// program belongs to the TypeScript instance that created it.
+	const cacheKey = `${typeScriptId()}\0${programKey(entryFileAbs, tsconfigPath)}`;
 	const cached = programCache.get(cacheKey);
 	if (cached && cacheEntryIsFresh(cached)) {
 		programCache.delete(cacheKey);
@@ -139,9 +138,15 @@ export function invalidateProgramCache(
 	const tsconfigPath = project
 		? path.resolve(process.cwd(), project)
 		: findNearestTsconfig(path.dirname(entryFileAbs));
-	programCache.delete(
-		tsconfigPath ? `${tsconfigPath}\0${entryFileAbs}` : entryFileAbs,
-	);
+	const key = `\0${programKey(entryFileAbs, tsconfigPath)}`;
+	// The programs of every TypeScript instance that loaded the file.
+	for (const cacheKey of [...programCache.keys()]) {
+		if (cacheKey.endsWith(key)) programCache.delete(cacheKey);
+	}
+}
+
+function programKey(entryFileAbs: string, tsconfigPath?: string): string {
+	return tsconfigPath ? `${tsconfigPath}\0${entryFileAbs}` : entryFileAbs;
 }
 
 function cacheProgram(

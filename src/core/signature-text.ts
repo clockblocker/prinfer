@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Collapse a multi-line type, as an editor hover prints it, onto one line

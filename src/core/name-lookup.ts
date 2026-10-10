@@ -1,4 +1,3 @@
-import * as ts from "typescript";
 import { PrinferError } from "../errors.js";
 import type { HoverAlternative } from "../types.js";
 import { getSymbolKind } from "./hover.js";
@@ -8,6 +7,7 @@ import {
 	isNamedNode,
 	isOtherDeclarationNamed,
 } from "./node-match.js";
+import { ts } from "./ts-runtime.js";
 
 /** At most this many alternatives are reported for an ambiguous name. */
 export const MAX_ALTERNATIVES = 10;

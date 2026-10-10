@@ -1,6 +1,6 @@
-import * as ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
 import { getLineNumber, isArrowOrFnExpr } from "./node-match.js";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Result of type inference (internal use)

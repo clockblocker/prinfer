@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import * as ts from "typescript";
+import { ts } from "./ts-runtime.js";
 
 /** LSP FileChangeType: 1 created, 2 changed, 3 deleted. */
 export type FileChangeType = 1 | 2 | 3;

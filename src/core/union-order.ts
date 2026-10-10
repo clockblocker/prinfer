@@ -1,5 +1,5 @@
-import * as ts from "typescript";
 import type { HoverResult } from "../types.js";
+import { ts } from "./ts-runtime.js";
 
 /*
  * Union members in a deterministic order (the `sort_unions` option).

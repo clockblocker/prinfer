@@ -8,6 +8,7 @@ import {
 	parseTargetArg,
 	shellHint,
 } from "./cli-args.js";
+import { COMPILER_ENV, runTypeScript6 } from "./compiler.js";
 import {
 	annotationsSuccess,
 	type CliCommand,
@@ -93,6 +94,11 @@ Options:
   --project, -p <path> Path to tsconfig.json (default: the nearest one above the file)
   --backend <name>     typescript6 (default) or typescript7, for type lookups and
                        check; complete and annotations always use typescript6
+  --compiler <mode>    bundled (default): prinfer's own TypeScript 6 and 7;
+                       project: the project's typescript (5.0 to 6.x) and
+                       typescript 7 or @typescript/native-preview; auto: the
+                       project's when supported, else bundled. Overrides
+                       PRINFER_COMPILER. --json results report the compiler
   --help, -h           Show this help message (prinfer setup --help for setup options)
   --version            Print the prinfer version
 
@@ -189,15 +195,23 @@ const HOVER_KEYS = new Set([
 	"maxChars",
 	"project",
 	"backend",
+	"compiler",
 ]);
-const CHECK_KEYS = new Set(["json", "project", "backend", "suggestions"]);
-const ANNOTATIONS_KEYS = new Set(["json", "project"]);
+const CHECK_KEYS = new Set([
+	"json",
+	"project",
+	"backend",
+	"compiler",
+	"suggestions",
+]);
+const ANNOTATIONS_KEYS = new Set(["json", "project", "compiler"]);
 const COMPLETE_KEYS = new Set([
 	"json",
 	"text",
 	"occurrence",
 	"project",
 	"backend",
+	"compiler",
 	"prefix",
 	"limit",
 ]);
@@ -289,6 +303,26 @@ function parseBackend(
 		typeof value === "string" && value !== ""
 			? `Unknown backend "${value}". Use typescript6 or typescript7.`
 			: "--backend requires typescript6 or typescript7.",
+	);
+}
+
+/**
+ * --compiler overrides PRINFER_COMPILER for this run: it sets the variable
+ * every lookup below reads its default from (see `CompilerMode`).
+ */
+function applyCompiler(
+	value: string | true | undefined,
+	fail: (message: string) => never,
+): void {
+	if (value === undefined) return;
+	if (value === "bundled" || value === "project" || value === "auto") {
+		process.env[COMPILER_ENV] = value;
+		return;
+	}
+	fail(
+		typeof value === "string"
+			? `Unknown compiler "${value}". Use bundled, project, or auto.`
+			: "--compiler requires bundled, project, or auto.",
 	);
 }
 
@@ -394,6 +428,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		fail,
 	);
 	const backend = parseBackend(values.get("backend"), fail);
+	applyCompiler(values.get("compiler"), fail);
 	const projectValue = values.get("project");
 	const project = typeof projectValue === "string" ? projectValue : undefined;
 
@@ -586,6 +621,7 @@ async function runCheck(args: string[]): Promise<number> {
 	const projectValue = values.get("project");
 	const project = typeof projectValue === "string" ? projectValue : undefined;
 	const backend = parseBackend(values.get("backend"), fail);
+	applyCompiler(values.get("compiler"), fail);
 	const includeSuggestions = values.has("suggestions");
 	if (!file) return fail("check requires a file: prinfer check <file.ts>");
 
@@ -617,12 +653,18 @@ function runCompletion(options: CliCompletionOptions): void {
 		if (target.kind === "text") {
 			column = textColumn(options.file, target) + target.text.length;
 		}
-		const result = getCompletions(
-			options.file,
-			target.line,
-			column as number,
-			options.project,
-			{ prefix: options.prefix, autoPrefix: true, limit: options.limit },
+		const result = runTypeScript6(options.file, options, () =>
+			getCompletions(
+				options.file,
+				target.line,
+				column as number,
+				options.project,
+				{
+					prefix: options.prefix,
+					autoPrefix: true,
+					limit: options.limit,
+				},
+			),
 		);
 		console.log(
 			options.json
@@ -670,7 +712,11 @@ async function runLookup(options: CliHoverOptions): Promise<void> {
 		if (options.json) {
 			console.log(
 				JSON.stringify(
-					hoverSuccess(position ? { ...result, position } : result),
+					hoverSuccess(
+						position
+							? { ...result, position, compiler: result.compiler }
+							: result,
+					),
 				),
 			);
 			return;
@@ -733,6 +779,7 @@ function runAnnotations(args: string[]): number {
 	const file = positionals[0];
 	const projectValue = values.get("project");
 	const project = typeof projectValue === "string" ? projectValue : undefined;
+	applyCompiler(values.get("compiler"), fail);
 	if (!file) {
 		return fail(
 			"annotations requires a file: prinfer annotations <file.ts>",
@@ -741,7 +788,9 @@ function runAnnotations(args: string[]): number {
 
 	try {
 		assertSourceFile(file);
-		const result = getFileAnnotations(file, project);
+		const result = runTypeScript6(file, { project }, () =>
+			getFileAnnotations(file, project),
+		);
 		console.log(
 			json
 				? JSON.stringify(annotationsSuccess(result))

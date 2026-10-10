@@ -391,7 +391,7 @@ describe("misplaced options", () => {
 		);
 		expect(error.message).toContain('unknown selector key "full"');
 		expect(error.message).toContain(
-			"Selector keys: line, column, text, occurrence, cursor, project, backend, timeout, strict.",
+			"Selector keys: line, column, text, occurrence, cursor, project, compiler, backend, timeout, strict.",
 		);
 	});
 

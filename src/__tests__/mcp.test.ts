@@ -10,6 +10,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as ts from "typescript";
 import * as z from "zod/v4";
 import { nearbyCandidates } from "../candidates.js";
 import {
@@ -212,6 +213,15 @@ describe("MCP server over stdio", () => {
 			);
 			expect(parsed.result.position).toEqual({ line: 36, column: 2 });
 			expect(parsed.result.cost).toBeUndefined();
+			// Reported in structuredContent, though not advertised.
+			expect(parsed.result.compiler).toMatchObject({
+				name: "typescript",
+				version:
+					backend === "typescript6"
+						? ts.version
+						: expect.stringMatching(/^7\./),
+				source: "bundled",
+			});
 			expect(response.content[0]?.text).toContain(
 				'Target: "add" at 36:2',
 			);
