@@ -21,6 +21,8 @@ export declare namespace ts {
 	export type ArrowFunction = bundled.ArrowFunction;
 	export type BindingName = bundled.BindingName;
 	export type CompletionEntry = bundled.CompletionEntry;
+	export type CompilerHost = bundled.CompilerHost;
+	export type CompilerOptions = bundled.CompilerOptions;
 	export type CompletionInfo = bundled.CompletionInfo;
 	export type DeclarationWithTypeParameterChildren =
 		bundled.DeclarationWithTypeParameterChildren;

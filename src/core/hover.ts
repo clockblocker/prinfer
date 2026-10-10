@@ -156,7 +156,23 @@ export function getHoverInfo(
 	includeDocs: boolean,
 	full = false,
 ): HoverResult {
-	const checker = program.getTypeChecker();
+	return getCheckerHoverInfo(
+		program.getTypeChecker(),
+		node,
+		sourceFile,
+		includeDocs,
+		full,
+	);
+}
+
+/** `getHoverInfo` on a given checker instead of the program's own. */
+export function getCheckerHoverInfo(
+	checker: ts.TypeChecker,
+	node: ts.Node,
+	sourceFile: ts.SourceFile,
+	includeDocs: boolean,
+	full = false,
+): HoverResult {
 	const sf = sourceFile;
 	const { line, character } = sf.getLineAndCharacterOfPosition(
 		node.getStart(sf),
