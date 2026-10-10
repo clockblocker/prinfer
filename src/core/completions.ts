@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import * as ts from "typescript";
 import type { CompletionEntry, CompletionResult } from "../types.js";
 import { assertCursorPosition } from "./lines.js";
 import { findSmallestNodeAtPosition } from "./node-find.js";
 import { createProgramLanguageService, loadProgram } from "./program.js";
+import { ts } from "./ts-runtime.js";
 
 export interface CompletionRefinement {
 	/**

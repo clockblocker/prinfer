@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Check if a node is an arrow function or function expression

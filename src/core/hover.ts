@@ -1,4 +1,3 @@
-import * as ts from "typescript";
 import { TypeScriptInternalError } from "../errors.js";
 import type { HoverResult } from "../types.js";
 import { getNameNode } from "./node-match.js";
@@ -7,6 +6,7 @@ import {
 	type OptionalFacts,
 	type OptionalStep,
 } from "./signature-text.js";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Get the symbol kind as a string. Kinds follow the labels an editor hover

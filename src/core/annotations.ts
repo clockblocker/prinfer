@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import * as ts from "typescript";
 import type {
 	AnnotationFinding,
 	AnnotationKind,
@@ -8,6 +7,7 @@ import type {
 	AnnotationTarget,
 } from "../types.js";
 import { loadProgram } from "./program.js";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Redundant-annotation check.

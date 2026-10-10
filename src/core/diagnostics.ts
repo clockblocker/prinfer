@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import * as ts from "typescript";
 import type {
 	DiagnosticCategory,
 	DiagnosticsResult,
 	FileDiagnostic,
 } from "../types.js";
 import { createProgramLanguageService, loadProgram } from "./program.js";
+import { ts } from "./ts-runtime.js";
 
 /** Collect syntactic and semantic diagnostics for one file. */
 export function getFileDiagnostics(

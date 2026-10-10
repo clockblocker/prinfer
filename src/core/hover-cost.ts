@@ -1,6 +1,6 @@
-import * as ts from "typescript";
 import type { HoverCost } from "../types.js";
 import { getHoverInfo } from "./hover.js";
+import { ts } from "./ts-runtime.js";
 
 /**
  * Count the checker work behind a hover; see `HoverCost`. The work is
