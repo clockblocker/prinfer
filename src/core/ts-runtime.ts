@@ -9,6 +9,9 @@ export type TypeScript = typeof bundled;
  * `withTypeScript` runs. Core modules import this instead of `typescript`
  * so the same code can print and count with either. The types stay those
  * of the bundled package: they describe any supported version's public API.
+ * Modules that only read printed type text (signature-text, union-order,
+ * readability) import the bundled `typescript` instead: their parse must
+ * not depend on, or break with, the project's version.
  */
 // biome-ignore lint/style/useConst: withTypeScript reassigns it.
 export let ts: TypeScript = bundled;

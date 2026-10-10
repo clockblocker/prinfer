@@ -2,6 +2,12 @@ import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { typeReadabilityIssues } from "../core/readability.js";
+import {
+	optionalSlots,
+	withTypeParameterModifiers,
+} from "../core/signature-text.js";
+import { type TypeScript, withTypeScript } from "../core/ts-runtime.js";
 import { sortUnionMembers } from "../core/union-order.js";
 import { hover } from "../index.js";
 import { closeNativeSessions, nativeHoverByName } from "../native-lsp.js";
@@ -11,6 +17,34 @@ import { closeTestingSessions, inferredType } from "../testing.js";
 setDefaultTimeout(30_000);
 
 describe("sortUnionMembers", () => {
+	test("parses with the bundled TypeScript whichever compiler is active", () => {
+		// A project's TypeScript 5.0 numbers syntax kinds differently and
+		// has no scanner.getTokenStart: printed text must not reach it.
+		const project = new Proxy({} as TypeScript, {
+			get(_, key) {
+				throw new Error(`read the active TypeScript's ${String(key)}`);
+			},
+		});
+		withTypeScript(project, () => {
+			expect(sortUnionMembers('"b" | "a" | null')).toBe(
+				'"a" | "b" | null',
+			);
+			expect(
+				typeReadabilityIssues('Omit<User, "id">').map(
+					(issue) => issue.rule,
+				),
+			).toEqual(["utility-type"]);
+			expect(
+				optionalSlots("<T>(a?: T | undefined) => void", "signature"),
+			).toHaveLength(1);
+			expect(
+				withTypeParameterModifiers("type Box<T> = { value: T; }", [
+					{ name: "T", modifiers: ["const"] },
+				]),
+			).toBe("type Box<const T> = { value: T; }");
+		});
+	});
+
 	test("sorts members by text, null and undefined last", () => {
 		expect(
 			sortUnionMembers('undefined | string | null | "b" | 2 | -1 | A'),
