@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PrinferError } from "../errors.js";
 import {
+	type InferredCompletionsSelector,
 	inferredCompletions,
 	inferredType,
 	inferredTypeInfo,
@@ -262,6 +263,113 @@ describe("setup errors", () => {
 		expect(pending).toBeInstanceOf(Promise);
 		const error = await rejection(pending);
 		expect(error.message).toContain("line as a positive 1-based integer");
+	});
+});
+
+describe("misplaced options", () => {
+	// Untyped test files can pass options as a third argument, which would
+	// otherwise be ignored without a word.
+	const options = { backend: "typescript7" };
+
+	test("a third argument to inferredType throws with the fix", () => {
+		const call = inferredType as (...args: unknown[]) => unknown;
+		const error = thrown(() => call(targets, { name: "pick" }, options));
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain(
+			"inferredType takes two arguments (file, selector), got 3.",
+		);
+		expect(error.message).toContain(
+			'Move options into the selector object: inferredType(file, { name: "result", backend: "typescript7" }).',
+		);
+	});
+
+	test("a third argument to inferredTypeInfo throws", () => {
+		const call = inferredTypeInfo as (...args: unknown[]) => unknown;
+		const error = thrown(() => call(targets, { name: "pick" }, options));
+		expect(error.message).toContain("inferredTypeInfo takes two arguments");
+	});
+
+	test("a third argument to inferredCompletions rejects", async () => {
+		const call = inferredCompletions as (
+			...args: unknown[]
+		) => Promise<unknown>;
+		const error = await rejection(
+			call(targets, { line: 4, text: "latte." }, { project: "x" }),
+		);
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain(
+			"inferredCompletions takes two arguments",
+		);
+		expect(error.message).toContain('text: "user.", project:');
+	});
+
+	test("an unknown selector key suggests the closest one", () => {
+		const error = thrown(() =>
+			inferredType(targets, {
+				name: "pick",
+				includeDocs: true,
+			} as { name: string }),
+		);
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain(
+			'inferredType got unknown selector key "includeDocs".',
+		);
+		expect(error.message).toContain("Did you mean include_docs?");
+	});
+
+	test("inferredCompletions lists only its own keys", async () => {
+		const error = await rejection(
+			inferredCompletions(targets, {
+				line: 4,
+				text: "latte.",
+				full: true,
+			} as InferredCompletionsSelector),
+		);
+		expect(error.message).toContain('unknown selector key "full"');
+		expect(error.message).toContain(
+			"Selector keys: line, column, text, occurrence, cursor, project, backend.",
+		);
+	});
+});
+
+describe("un-awaited TypeScript 7 results", () => {
+	const pick = { name: "pick", backend: "typescript7" } as const;
+
+	test("serializing the promise throws the fix, as Vitest and Jest snapshots do", async () => {
+		const pending = inferredType(targets, pick);
+		expect(pending).toBeInstanceOf(Promise);
+		const error = thrown(() => JSON.stringify(pending));
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain(
+			"inferredType returned a promise that was not awaited",
+		);
+		expect(error.message).toContain(
+			'inferredType with backend "typescript7" returns a promise: write expect(await inferredType(...)) or await expect(inferredType(...)).resolves.',
+		);
+		expect(await pending).toBe("Drink");
+	});
+
+	test("every async helper names itself", async () => {
+		const info = inferredTypeInfo(targets, pick);
+		expect(thrown(() => JSON.stringify(info)).message).toContain(
+			"inferredTypeInfo returned a promise",
+		);
+		const completions = inferredCompletions(targets, {
+			line: 4,
+			text: "latte.",
+		});
+		expect(thrown(() => JSON.stringify(completions)).message).toContain(
+			"inferredCompletions returns a promise: write expect(await inferredCompletions(...))",
+		);
+		expect(Bun.inspect(completions)).toContain("prinfer:");
+		await Promise.all([info, completions]);
+	});
+
+	test("awaiting, .resolves and chaining behave like a plain promise", async () => {
+		await expect(inferredType(targets, pick)).resolves.toBe("Drink");
+		const chained = inferredType(targets, pick).then((type) => type);
+		expect(JSON.stringify(chained)).toBe("{}");
+		expect(await chained).toBe("Drink");
 	});
 });
 
