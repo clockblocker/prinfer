@@ -134,6 +134,15 @@ function warnFallback(reason: string): void {
 	);
 }
 
+/** Ref or unref the compiler process and the pipes prinfer talks over. */
+function setChildReferenced(child: ChildProcess, active: boolean): void {
+	const method = active ? "ref" : "unref";
+	child[method]();
+	for (const stream of [child.stdin, child.stdout]) {
+		(stream as { ref?(): void; unref?(): void } | null)?.[method]?.();
+	}
+}
+
 class NativeApiSession {
 	private readonly api: API;
 	private readonly key: string;
@@ -211,6 +220,16 @@ class NativeApiSession {
 		this.documents.clear();
 		// The connection to an exited process is closed: nothing to release.
 		if (this.dead) return;
+		// Disposing the snapshot is a request to the idle, unref'd process.
+		// On Node nothing else may hold the event loop while it is answered
+		// (`await closeTestingSessions()` at top level), so the loop drains
+		// and the await never settles: hold the process for the teardown.
+		// `api.close()` clears the client's process field, so look it up now.
+		const lookup = this.fallback
+			? undefined
+			: compilerProcessLocator.locate(this.api);
+		const child = lookup?.status === "found" ? lookup.child : undefined;
+		if (child) setChildReferenced(child, true);
 		try {
 			// A process that got SIGTERM may exit without answering.
 			await Promise.race([
@@ -223,6 +242,9 @@ class NativeApiSession {
 		} catch {
 			// It answers with errors until it exits; stop it.
 			this.child?.kill();
+		} finally {
+			// Its stdin is closed and it exits on its own; do not wait for it.
+			if (child) setChildReferenced(child, false);
 		}
 	}
 
@@ -286,12 +308,7 @@ class NativeApiSession {
 		if (this.fallback) return;
 		const lookup = compilerProcessLocator.locate(this.api);
 		if (lookup.status !== "found") return;
-		const { child } = lookup;
-		const method = active ? "ref" : "unref";
-		child[method]();
-		for (const stream of [child.stdin, child.stdout]) {
-			(stream as { ref?(): void; unref?(): void } | null)?.[method]?.();
-		}
+		setChildReferenced(lookup.child, active);
 	}
 
 	/**
