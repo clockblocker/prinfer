@@ -64,6 +64,65 @@ export function measureTargetCosts(
 	targets: readonly CostTarget[],
 	project?: string,
 ): HoverCost[] {
+	const { program, sourceFile, nodes } = resolveCostTargets(
+		file,
+		targets,
+		project,
+	);
+	return nodes.map((node, index) =>
+		atTarget(index, () => measureHoverCost(program, node, sourceFile)),
+	);
+}
+
+/**
+ * The cost of resolving every target with one fresh checker: work the
+ * targets share (a type they all reach, a generic instantiated the same
+ * way) is counted once, as a whole-file check would count it. Like a
+ * single count, it is the same on every run, in any order of the targets,
+ * whatever was looked up before. Throws like `measureTargetCosts`.
+ */
+export function measureCombinedCost(
+	file: string,
+	targets: readonly CostTarget[],
+	project?: string,
+): HoverCost {
+	const { program, sourceFile, nodes } = resolveCostTargets(
+		file,
+		targets,
+		project,
+	);
+	// A checker's count can depend on the order it meets types in (by a
+	// type, rarely), so the targets are resolved in source order, whatever
+	// order they were given in.
+	const ordered = nodes
+		.map((node, index) => ({ node, index }))
+		.filter(({ node }, at) => nodes.indexOf(node) === at)
+		.sort(
+			(left, right) =>
+				left.node.pos - right.node.pos ||
+				left.node.end - right.node.end ||
+				left.node.kind - right.node.kind,
+		);
+	const checker = freshChecker(program, sourceFile);
+	const instantiations = checker.getInstantiationCount();
+	const types = checker.getTypeCount();
+	for (const { node, index } of ordered) {
+		atTarget(index, () =>
+			getCheckerHoverInfo(checker, node, sourceFile, false, true),
+		);
+	}
+	return {
+		instantiations: checker.getInstantiationCount() - instantiations,
+		types: checker.getTypeCount() - types,
+	};
+}
+
+/** The program and the node of each target; see `measureTargetCosts`. */
+function resolveCostTargets(
+	file: string,
+	targets: readonly CostTarget[],
+	project: string | undefined,
+): { program: ts.Program; sourceFile: ts.SourceFile; nodes: ts.Node[] } {
 	const entryFileAbs = path.resolve(process.cwd(), file);
 	if (!fs.existsSync(entryFileAbs)) {
 		throw new Error(`File not found: ${entryFileAbs}`);
@@ -79,42 +138,44 @@ export function measureTargetCosts(
 	// name lookups read. It checks nothing until asked, and it is not asked.
 	program.getTypeChecker();
 
-	return targets.map((target, index) => {
-		try {
-			let node: ts.Node | undefined;
+	const nodes = targets.map((target, index) =>
+		atTarget(index, () => {
 			if ("name" in target) {
-				node = lookupName(
-					sourceFile,
-					target.name,
-					target.line,
-					file,
-				).node;
-			} else {
-				assertCursorPosition(
-					sourceFile.text,
-					target.line,
-					target.column,
-					entryFileAbs,
-				);
-				node = findNodeAtPosition(
-					sourceFile,
-					target.line,
-					target.column,
-				);
-				if (!node) {
-					throw new Error(
-						`No symbol found at ${entryFileAbs}:${target.line}:${target.column}`,
-					);
-				}
+				return lookupName(sourceFile, target.name, target.line, file)
+					.node;
 			}
-			return measureHoverCost(program, node, sourceFile);
-		} catch (error) {
-			if (error instanceof Error) {
-				(error as Error & { index?: number }).index = index;
+			assertCursorPosition(
+				sourceFile.text,
+				target.line,
+				target.column,
+				entryFileAbs,
+			);
+			const node = findNodeAtPosition(
+				sourceFile,
+				target.line,
+				target.column,
+			);
+			if (!node) {
+				throw new Error(
+					`No symbol found at ${entryFileAbs}:${target.line}:${target.column}`,
+				);
 			}
-			throw error;
+			return node;
+		}),
+	);
+	return { program, sourceFile, nodes };
+}
+
+/** Run `run` for the target at `index`, setting `index` on what it throws. */
+function atTarget<T>(index: number, run: () => T): T {
+	try {
+		return run();
+	} catch (error) {
+		if (error instanceof Error) {
+			(error as Error & { index?: number }).index = index;
 		}
-	});
+		throw error;
+	}
 }
 
 const costCache = new WeakMap<ts.Program, WeakMap<ts.Node, HoverCost>>();

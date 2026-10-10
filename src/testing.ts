@@ -3,13 +3,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import {
+	COMPILER_MODES,
 	compilerDirectory,
 	compilerMode,
 	resolveTypeScript6,
 	withCompilerInfo,
 } from "./compiler.js";
 import { contractError } from "./contract.js";
-import { type CostTarget, measureTargetCosts } from "./core/hover-cost.js";
+import {
+	type CostTarget,
+	measureCombinedCost,
+	measureTargetCosts,
+} from "./core/hover-cost.js";
 import {
 	DEFAULT_UTILITY_TYPES,
 	type ReadabilityIssue,
@@ -212,9 +217,25 @@ export interface TypeExpectations {
 	readable?: boolean | ReadabilityRules;
 }
 
-export type ExpectTypeSelector = InferredTypeSelector & TypeExpectations;
+/** The option `expectType` takes beyond `inferredType`'s. */
+export interface ExpectTypeOptions {
+	/**
+	 * Which TypeScript 6 counts the budgets; see `CompilerMode`. Defaults
+	 * to `compiler`, so set it to print on one compiler and count on
+	 * another: `backend: "typescript7"` and `costCompiler: "project"` print
+	 * on the bundled TypeScript 7 and count on the project's TypeScript 6.
+	 */
+	costCompiler?: CompilerMode;
+}
 
-/** What `expectType` checked, when every check passed. */
+export type ExpectTypeSelector = InferredTypeSelector &
+	TypeExpectations &
+	ExpectTypeOptions;
+
+/**
+ * What `expectType` checked, when every check passed. Its non-enumerable
+ * `compiler` names the compiler that printed the type.
+ */
 export interface ExpectedType {
 	/** The printed type. */
 	printed: string;
@@ -225,16 +246,64 @@ export interface ExpectedType {
 	cost?: HoverCost;
 }
 
-/** One failed `expectType` check. */
+/**
+ * The selector of `expectTypes`: the types, a budget for all of them
+ * together, and options set once for every type.
+ */
+export interface ExpectTypesSelector extends ExpectTypeOptions {
+	/**
+	 * One `expectType` selector per type, each with its own checks and
+	 * budgets. `project`, `compiler`, and `costCompiler` go on the group.
+	 */
+	types: readonly ExpectTypeSelector[];
+	/** Budget for the instantiations of all the types together. */
+	maxInstantiations?: number;
+	/** Budget for the types created for all the types together. */
+	maxTypes?: number;
+	/** See `InferredTypeOptions`; applies to every type. */
+	project?: string;
+	/** See `InferredTypeOptions`; applies to every type. */
+	compiler?: CompilerMode;
+	/** Default for every type, which a type's own value overrides. */
+	backend?: "typescript6" | "typescript7";
+	/** Default for every type, which a type's own value overrides. */
+	full?: boolean;
+	/** Default for every type, which a type's own value overrides. */
+	sort_unions?: boolean;
+	/** Default for every type, which a type's own value overrides. */
+	readable?: boolean | ReadabilityRules;
+	/** Default for every type, which a type's own value overrides. */
+	timeout?: number;
+	/** See `InferredTypeOptions.strict`; also checks every type's keys. */
+	strict?: boolean;
+}
+
+/** What `expectTypes` checked, when every check passed. */
+export interface ExpectedTypes {
+	/**
+	 * What each type's checks returned, in order. With a group budget,
+	 * every one has its own `cost`, counted alone.
+	 */
+	types: ExpectedType[];
+	/** The cost of all the types together, when the group has a budget. */
+	cost?: HoverCost;
+}
+
+/** One failed `expectType` or `expectTypes` check. */
 export interface TypeExpectationFailure {
 	check: keyof TypeExpectations;
+	/**
+	 * In `expectTypes`, the failed type's index in `types`; absent for the
+	 * group budget.
+	 */
+	index?: number;
 	message: string;
 }
 
 /**
- * Thrown by `expectType`, listing every check that failed. When the
- * printed text differs, `actual` and `expected` hold it, so Vitest and
- * Jest show their diff as well.
+ * Thrown by `expectType` and `expectTypes`, listing every check that
+ * failed. When exactly one printed text differs, `actual` and `expected`
+ * hold it, so Vitest and Jest show their diff as well.
  */
 export class TypeExpectationError extends Error {
 	readonly failures: TypeExpectationFailure[];
@@ -414,6 +483,17 @@ export function inferredTypeCost(
 	...extra: unknown[]
 ): HoverCost | HoverCost[] | Record<string, HoverCost> {
 	const helper = "inferredTypeCost";
+	if (
+		typeof selector === "object" &&
+		selector &&
+		"costCompiler" in selector
+	) {
+		throw testingError(
+			"INVALID_ARGUMENT",
+			`${helper} only counts, so it takes compiler, not costCompiler.`,
+			"Rename costCompiler to compiler: it picks the TypeScript 6 that counts.",
+		);
+	}
 	const request = createRequest(helper, file, selector, extra);
 	if (request.backend === "typescript7") {
 		throw costNeedsTypeScript6(helper);
@@ -502,10 +582,11 @@ export function inferredTypeIssues(
  * The text comes from the selector's backend and `compiler`, exactly as
  * `inferredType` returns it (`sort_unions` and `full` apply). Costs are
  * always counted on TypeScript 6, also with `backend: "typescript7"`:
- * TypeScript 7 reports no counts. `compiler` applies to the count too;
- * with `backend: "typescript7"`, `"project"` counts on the project's
- * TypeScript 6 when it has one and on the bundled one otherwise. A failed
- * budget names the compiler that counted. Synchronous on both backends; a
+ * TypeScript 7 reports no counts. `costCompiler` picks the TypeScript 6
+ * that counts, and defaults to `compiler`; with `backend: "typescript7"`,
+ * a `compiler: "project"` counts on the project's TypeScript 6 when it has
+ * one and on the bundled one otherwise. A failed budget names the
+ * compilers that counted and printed. Synchronous on both backends; a
  * third argument throws.
  *
  * @example
@@ -527,10 +608,222 @@ export function expectType(
 	selector: ExpectTypeSelector,
 	...extra: unknown[]
 ): ExpectedType {
-	const helper = "expectType";
+	const checked = checkType("expectType", file, selector, extra, false);
+	const { failures } = checked;
+	if (failures.length > 0) {
+		const header = `expectType failed ${plural(failures.length, "check")} for ${describeTarget(selector)} at ${checked.where}:`;
+		throw expectationError([header, ...bullets(failures)], failures, [
+			checked,
+		]);
+	}
+	return expectedType(checked, checked.cost);
+}
+
+/**
+ * Assert several targets of one file, each like `expectType`, and a
+ * budget for all of them together, in one call that throws one
+ * `TypeExpectationError` listing every failed check.
+ *
+ * The group's `maxInstantiations` and `maxTypes` count one fresh
+ * TypeScript 6 checker resolving every type in turn, so work the types
+ * share (a schema they all reach, a generic instantiated the same way) is
+ * counted once, as a check of the whole file counts it. That total is the
+ * same in any order of `types`. Each type's own budgets still count it
+ * alone, and a failed group budget lists every type's count alone, which
+ * add up to more than the total. Options set on the group apply to every
+ * type; `project`, `compiler`, and `costCompiler` can only be set there,
+ * since the total is counted on one program. Synchronous; a third
+ * argument throws.
+ *
+ * @example
+ * ```ts
+ * expectTypes(import.meta.url, {
+ *   types: [
+ *     { name: "userSchema", maxInstantiations: 3_000 },
+ *     { name: "User", printed: "{ id: string; name: string; }" },
+ *   ],
+ *   maxInstantiations: 5_000,
+ * });
+ * ```
+ */
+export function expectTypes(
+	file: TestingFile,
+	selector: ExpectTypesSelector,
+): ExpectedTypes;
+export function expectTypes(
+	file: TestingFile,
+	selector: ExpectTypesSelector,
+	...extra: unknown[]
+): ExpectedTypes {
+	const helper = "expectTypes";
 	const request = createRequest(helper, file, selector, extra);
-	const { printed, maxInstantiations, maxTypes, readable, ...rest } =
+	const { types, maxInstantiations, maxTypes, project, compiler, strict } =
 		selector;
+	if (!Array.isArray(types) || types.length === 0) {
+		throw testingError(
+			"INVALID_ARGUMENT",
+			`${helper} needs types as a non-empty array of expectType selectors, got ${JSON.stringify(types)}.`,
+			'Pass { types: [{ name: "a", printed: "string" }, { name: "b" }], maxInstantiations: 5_000 }.',
+		);
+	}
+	assertBudget(helper, "maxInstantiations", maxInstantiations);
+	assertBudget(helper, "maxTypes", maxTypes);
+	assertCompilerMode(helper, "costCompiler", selector.costCompiler);
+	const grouped = maxInstantiations !== undefined || maxTypes !== undefined;
+	const defaults = Object.fromEntries(
+		Object.entries(selector).filter(([key]) =>
+			ROW_DEFAULT_KEYS.includes(key),
+		),
+	);
+	const rows = types.map((row: unknown, index) => {
+		const label = `${helper} types[${index}]`;
+		if (typeof row !== "object" || row === null || Array.isArray(row)) {
+			throw testingError(
+				"INVALID_ARGUMENT",
+				`${label} needs an expectType selector object, got ${JSON.stringify(row)}.`,
+				SELECTOR_SHAPES,
+			);
+		}
+		const fixed = GROUP_ONLY_KEYS.find((key) => key in row);
+		if (fixed) {
+			throw testingError(
+				"INVALID_ARGUMENT",
+				`${label} sets ${fixed}, which ${helper} takes once, for every type.`,
+				`Move ${fixed} next to types: the group budget counts every type on one program.`,
+			);
+		}
+		return { ...defaults, ...row } as ExpectTypeSelector;
+	});
+	// One TypeScript 6 counts every type, so the default for a TypeScript 7
+	// type applies to all of them (see expectType).
+	const costCompiler =
+		selector.costCompiler ??
+		(compilerMode(compiler) === "project" &&
+		rows.some((row) => (row.backend ?? request.backend) === "typescript7")
+			? "auto"
+			: undefined);
+	const shared = Object.fromEntries(
+		Object.entries({ project, compiler, costCompiler, strict }).filter(
+			([, value]) => value !== undefined,
+		),
+	);
+	const checked = rows.map((row, index) =>
+		checkType(
+			`${helper} types[${index}]`,
+			file,
+			{ ...row, ...shared },
+			[],
+			grouped,
+		),
+	);
+
+	const failures: TypeExpectationFailure[] = [];
+	const lines: string[] = [];
+	checked.forEach((type, index) => {
+		if (type.failures.length === 0) return;
+		const row = rows[index] as ExpectTypeSelector;
+		lines.push(
+			`- types[${index}], ${describeTarget(row)} at ${type.where}:`,
+		);
+		for (const failure of type.failures) {
+			failures.push({ ...failure, index });
+		}
+		lines.push(
+			...bullets(type.failures)
+				.join("\n")
+				.split("\n")
+				.map((line) => `  ${line}`),
+		);
+	});
+	const typeFailures = failures.length;
+
+	let cost: HoverCost | undefined;
+	let alone: HoverCost[] | undefined;
+	if (grouped) {
+		const on = { project, compiler: costCompiler ?? compiler };
+		alone = countCosts(request, on, false, rows);
+		cost = countCombinedCost(request, on, rows);
+		const note = compilersNote(
+			cost,
+			checked.map((type) => type.result),
+		);
+		for (const [check, budget, unit] of [
+			["maxInstantiations", maxInstantiations, "instantiations"],
+			["maxTypes", maxTypes, "types"],
+		] as const) {
+			const count = cost[unit];
+			if (budget === undefined || count <= budget) continue;
+			const each = alone.map((own) => own[unit]);
+			const message = [
+				`${count} ${unit} for the ${types.length} types together, over the budget of ${budget} by ${count - budget} (${note}).`,
+				`Each alone (${each.reduce((sum, value) => sum + value, 0)} in all, with the work they share in each):`,
+				...rows.map(
+					(row, index) =>
+						`  types[${index}], ${describeTarget(row)}: ${each[index]}`,
+				),
+			].join("\n");
+			failures.push({ check, message });
+			lines.push(`- group ${check}: ${message.replaceAll("\n", "\n  ")}`);
+		}
+	}
+
+	if (failures.length > 0) {
+		const typesFailed = new Set(
+			failures.flatMap((failure) =>
+				failure.index === undefined ? [] : [failure.index],
+			),
+		).size;
+		const parts = [
+			typesFailed > 0
+				? `${typesFailed} of ${plural(types.length, "type")}`
+				: undefined,
+			failures.length > typeFailures ? "the group budget" : undefined,
+		].filter((part) => part !== undefined);
+		const where =
+			path.relative(process.cwd(), request.file) || request.file;
+		const header = `expectTypes failed ${plural(failures.length, "check")} in ${where}, for ${parts.join(" and ")}:`;
+		throw expectationError([header, ...lines], failures, checked);
+	}
+	return cost
+		? {
+				types: checked.map((type, index) =>
+					expectedType(type, alone?.[index]),
+				),
+				cost,
+			}
+		: { types: checked.map((type) => expectedType(type, type.cost)) };
+}
+
+/** One `expectType`'s lookups and checks, before anything is thrown. */
+interface CheckedType {
+	result: HoverResult;
+	where: string;
+	cost?: HoverCost;
+	failures: TypeExpectationFailure[];
+	/** The text, when `printed` failed. */
+	text?: { actual: string; expected: string };
+}
+
+/**
+ * Run `expectType`'s checks for `selector`, collecting what failed. In a
+ * group (`grouped`), a type may check nothing of its own.
+ */
+function checkType(
+	helper: string,
+	file: TestingFile,
+	selector: ExpectTypeSelector,
+	extra: unknown[],
+	grouped: boolean,
+): CheckedType {
+	const request = createRequest(helper, file, selector, extra);
+	const {
+		printed,
+		maxInstantiations,
+		maxTypes,
+		readable,
+		costCompiler,
+		...rest
+	} = selector;
 	if (printed !== undefined && typeof printed !== "string") {
 		throw testingError(
 			"INVALID_ARGUMENT",
@@ -540,12 +833,13 @@ export function expectType(
 	}
 	assertBudget(helper, "maxInstantiations", maxInstantiations);
 	assertBudget(helper, "maxTypes", maxTypes);
+	assertCompilerMode(helper, "costCompiler", costCompiler);
 	const rules =
 		readable === undefined || readable === false
 			? undefined
 			: readabilityRules(helper, "readable", readable);
 	const budgeted = maxInstantiations !== undefined || maxTypes !== undefined;
-	if (printed === undefined && !budgeted && rules === undefined) {
+	if (!grouped && printed === undefined && !budgeted && rules === undefined) {
 		throw testingError(
 			"INVALID_ARGUMENT",
 			`${helper} got nothing to check.`,
@@ -558,10 +852,11 @@ export function expectType(
 	// TypeScript 7 counts nothing, so its project compiler can't either:
 	// the project's TypeScript 6 counts when it has one, else the bundled.
 	const counting =
-		request.backend === "typescript7" &&
+		costCompiler ??
+		(request.backend === "typescript7" &&
 		compilerMode(rest.compiler) === "project"
 			? "auto"
-			: rest.compiler;
+			: rest.compiler);
 	const cost = budgeted
 		? (countCosts(
 				request,
@@ -575,8 +870,6 @@ export function expectType(
 	if (printed !== undefined && actual !== printed) {
 		failures.push({ check: "printed", message: textDiff(printed, actual) });
 	}
-	const counter = (cost as { compiler?: CompilerInfo } | undefined)?.compiler;
-	const counted = `counted on ${counter ? `${counter.name} ${counter.version}, ${counter.source}` : "TypeScript 6"}${request.backend === "typescript7" ? "; the printed type is TypeScript 7's" : ""}`;
 	for (const [check, budget, count, unit] of [
 		[
 			"maxInstantiations",
@@ -589,7 +882,7 @@ export function expectType(
 		if (budget !== undefined && count !== undefined && count > budget) {
 			failures.push({
 				check,
-				message: `${count} ${unit}, over the budget of ${budget} by ${count - budget} (${counted}).`,
+				message: `${count} ${unit}, over the budget of ${budget} by ${count - budget} (${compilersNote(cost, [result])}).`,
 			});
 		}
 	}
@@ -599,7 +892,7 @@ export function expectType(
 			failures.push({
 				check: "readable",
 				message: [
-					`${issues.length} readability issue${issues.length === 1 ? "" : "s"}${printed === undefined || actual === printed ? ` in ${actual}` : ""}:`,
+					`${plural(issues.length, "readability issue")}${printed === undefined || actual === printed ? ` in ${actual}` : ""}:`,
 					...issues.map(
 						(issue) => `  ${issue.rule}: ${issue.message}`,
 					),
@@ -607,22 +900,75 @@ export function expectType(
 			});
 		}
 	}
-	if (failures.length > 0) {
-		const where = `${path.relative(process.cwd(), request.file) || request.file}:${result.line}:${result.column}`;
-		const header = `expectType failed ${failures.length} check${failures.length === 1 ? "" : "s"} for ${describeTarget(selector)} at ${where}:`;
-		const body = failures.map(
-			(failure) =>
-				`- ${failure.check}: ${failure.message.replaceAll("\n", "\n  ")}`,
-		);
-		throw new TypeExpectationError(
-			[header, ...body].join("\n"),
-			failures,
-			failures.some((failure) => failure.check === "printed")
-				? { actual, expected: printed as string }
-				: undefined,
-		);
+	const where = `${path.relative(process.cwd(), request.file) || request.file}:${result.line}:${result.column}`;
+	const text =
+		printed !== undefined && actual !== printed
+			? { actual, expected: printed }
+			: undefined;
+	return { result, where, cost, failures, text };
+}
+
+/** What a passing `expectType` returns, naming the compiler that printed. */
+function expectedType(
+	checked: CheckedType,
+	cost: HoverCost | undefined,
+): ExpectedType {
+	const printed = checked.result.signature;
+	const expected: ExpectedType = cost ? { printed, cost } : { printed };
+	const printer = (checked.result as { compiler?: CompilerInfo }).compiler;
+	return printer ? withCompilerInfo(expected, printer) : expected;
+}
+
+/** The error for `failures`; a test runner diffs the text when one differs. */
+function expectationError(
+	lines: string[],
+	failures: TypeExpectationFailure[],
+	checked: readonly CheckedType[],
+): TypeExpectationError {
+	const texts = checked.flatMap((type) => (type.text ? [type.text] : []));
+	return new TypeExpectationError(
+		lines.join("\n"),
+		failures,
+		texts.length === 1 ? texts[0] : undefined,
+	);
+}
+
+function bullets(failures: TypeExpectationFailure[]): string[] {
+	return failures.map(
+		(failure) =>
+			`- ${failure.check}: ${failure.message.replaceAll("\n", "\n  ")}`,
+	);
+}
+
+function plural(count: number, noun: string): string {
+	return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** Which compilers counted a cost and printed the types it budgets. */
+function compilersNote(
+	cost: HoverCost | undefined,
+	results: readonly HoverResult[],
+): string {
+	const name = (info: CompilerInfo | undefined) =>
+		info && `${info.name} ${info.version}, ${info.source}`;
+	const counted =
+		name((cost as { compiler?: CompilerInfo } | undefined)?.compiler) ??
+		"TypeScript 6";
+	const printers = [
+		...new Set(
+			results.flatMap((result) => {
+				const printer = name(
+					(result as { compiler?: CompilerInfo }).compiler,
+				);
+				return printer ? [printer] : [];
+			}),
+		),
+	];
+	if (printers.length === 0) return `counted on ${counted}`;
+	if (printers.length === 1 && printers[0] === counted) {
+		return `counted and printed on ${counted}`;
 	}
-	return cost ? { printed: actual, cost } : { printed: actual };
+	return `counted on ${counted}; printed on ${printers.join(" and ")}`;
 }
 
 /**
@@ -736,6 +1082,49 @@ function countCosts(
 			(index !== undefined && items[index]) || {},
 		);
 	}
+}
+
+/**
+ * The TypeScript 6 cost of every item together, from one fresh checker
+ * (see `measureCombinedCost`), on the compiler `options.compiler` selects.
+ */
+function countCombinedCost(
+	request: Request,
+	options: { project?: string; compiler?: CompilerMode },
+	items: readonly object[],
+): HoverCost {
+	const targets: CostTarget[] = items.map((item) => {
+		const target = resolveTarget(request, item, "start");
+		return target.kind === "name"
+			? { name: target.name, line: target.line }
+			: { line: target.line, column: target.column };
+	});
+	const { project } = options;
+	const compiler = resolveTypeScript6(
+		compilerMode(options.compiler),
+		compilerDirectory(request.file, project),
+	);
+	return withCompilerInfo(
+		withTypeScript(compiler.ts, () =>
+			measureCombinedCost(request.file, targets, project),
+		),
+		compiler.info,
+	);
+}
+
+function assertCompilerMode(
+	helper: string,
+	field: string,
+	value: unknown,
+): void {
+	if (value === undefined || COMPILER_MODES.includes(value as CompilerMode)) {
+		return;
+	}
+	throw testingError(
+		"INVALID_ARGUMENT",
+		`${helper} got unknown ${field} ${JSON.stringify(value)}.`,
+		'Use "bundled" (prinfer\'s own TypeScript), "project" (the project\'s), or "auto" (the project\'s when it has a supported one).',
+	);
 }
 
 function assertBudget(helper: string, field: string, value: unknown): void {
@@ -854,8 +1243,42 @@ const TYPE_SELECTOR_KEYS = [
 const EXTRA_SELECTOR_KEYS: Record<string, string[]> = {
 	inferredTypeCost: ["names", "targets"],
 	inferredTypeIssues: ["rules"],
-	expectType: ["printed", "maxInstantiations", "maxTypes", "readable"],
+	expectType: [
+		"printed",
+		"maxInstantiations",
+		"maxTypes",
+		"readable",
+		"costCompiler",
+	],
 };
+
+/** The keys of `expectTypes` (see ExpectTypesSelector). */
+const EXPECT_TYPES_KEYS = [
+	"types",
+	"maxInstantiations",
+	"maxTypes",
+	"project",
+	"compiler",
+	"costCompiler",
+	"backend",
+	"full",
+	"sort_unions",
+	"readable",
+	"timeout",
+	"strict",
+];
+
+/** `expectTypes` options that only the group takes. */
+const GROUP_ONLY_KEYS = ["project", "compiler", "costCompiler"];
+
+/** `expectTypes` options that are defaults for every type. */
+const ROW_DEFAULT_KEYS = [
+	"backend",
+	"full",
+	"sort_unions",
+	"readable",
+	"timeout",
+];
 
 /** The keys of one target in a batched inferredTypeCost. */
 const TARGET_KEYS = ["name", "line", "column", "text", "occurrence"];
@@ -877,6 +1300,9 @@ function selectorExample(helper: string): string {
 	}
 	if (helper === "expectType") {
 		return `${helper}(file, { name: "result", printed: "string", maxInstantiations: 500 })`;
+	}
+	if (helper === "expectTypes") {
+		return `${helper}(file, { types: [{ name: "a", printed: "string" }, { name: "b" }], maxInstantiations: 5_000 })`;
 	}
 	// inferredTypeCost has no TypeScript 7 backend to show.
 	return helper === "inferredTypeCost"
@@ -957,6 +1383,14 @@ function assertKnownKeys(
 /** The keys a helper's selector takes, by its shape. */
 function selectorKeys(helper: string, selector: object): string[] {
 	if (helper === "inferredCompletions") return COMPLETIONS_SELECTOR_KEYS;
+	if (helper === "expectTypes") return EXPECT_TYPES_KEYS;
+	// A type of expectTypes ("expectTypes types[0]") takes expectType's keys.
+	if (helper.startsWith("expectTypes ")) {
+		return [
+			...TYPE_SELECTOR_KEYS,
+			...(EXTRA_SELECTOR_KEYS.expectType ?? []),
+		];
+	}
 	// A batch takes only its own options. Mixed with a target, it is left
 	// to inferredTypeCost's own, clearer error.
 	if (
