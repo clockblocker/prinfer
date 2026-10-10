@@ -53,3 +53,22 @@ export const lookups = {
 export function keyOf(key: string): string {
 	return key;
 }
+
+export class Holder<const T extends 1 | 2> {
+	constructor(public held: T) {}
+	hold<const U>(item: U): U {
+		return item;
+	}
+}
+export function holdAll<const T extends readonly unknown[]>(items: T): T {
+	return items;
+}
+export type Sink<in T> = (item: T) => void;
+export type Source<out T> = () => T;
+export interface Cell<in out T> {
+	content: T;
+}
+export class Channel<in out K, const V> {
+	constructor(public payload: V) {}
+	relay?: (channel: K) => K;
+}

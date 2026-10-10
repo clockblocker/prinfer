@@ -473,10 +473,17 @@ function optionalFacts(
 			const symbol = checker.getPropertyOfType(type, step.property);
 			if (!symbol) return undefined;
 			current = { symbol };
-		} else {
-			const signature = type.getCallSignatures()[step.signature];
+		} else if ("signature" in step || "construct" in step) {
+			const signature =
+				"signature" in step
+					? type.getCallSignatures()[step.signature]
+					: type.getConstructSignatures()[step.construct];
 			if (!signature) return undefined;
 			current = { signature };
+		} else {
+			const next = innerType(checker, type, step);
+			if (!next) return undefined;
+			current = { type: next };
 		}
 	}
 	if (!("symbol" in current)) return undefined;
@@ -515,6 +522,48 @@ function optionalFacts(
 			added.length === annotated.length &&
 			added.every((member) => annotated.includes(member)),
 	};
+}
+
+/** The type an index, element, type argument, or member step leads to. */
+function innerType(
+	checker: ts.TypeChecker,
+	type: ts.Type,
+	step: OptionalStep,
+): ts.Type | undefined {
+	if ("index" in step) {
+		return checker.getIndexInfosOfType(type)[step.index]?.type;
+	}
+	if ("member" in step) {
+		if (!type.isUnionOrIntersection()) return undefined;
+		const { types } = type;
+		const members = type.isUnion() ? withBooleanOnce(types) : types;
+		return members.length === step.members
+			? members[step.member]
+			: undefined;
+	}
+	const isReference =
+		type.flags & ts.TypeFlags.Object &&
+		(type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference;
+	const typeArguments =
+		"typeArgument" in step &&
+		type.aliasSymbol?.name === step.of &&
+		type.aliasTypeArguments
+			? type.aliasTypeArguments
+			: isReference
+				? checker.getTypeArguments(type as ts.TypeReference)
+				: [];
+	if ("element" in step) return typeArguments[step.element];
+	if ("typeArgument" in step) return typeArguments[step.typeArgument];
+	return undefined;
+}
+
+/** Union members as printed: `true` and `false` together once, as `boolean`. */
+function withBooleanOnce(types: readonly ts.Type[]): readonly ts.Type[] {
+	const booleans = types.filter(
+		(member) => member.flags & ts.TypeFlags.BooleanLiteral,
+	);
+	if (booleans.length < 2) return types;
+	return types.filter((member) => member !== booleans[1]);
 }
 
 /**
