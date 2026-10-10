@@ -1,5 +1,59 @@
 # prinfer
 
+## 3.2.0
+
+### Minor Changes
+
+- 04a14ac: Type costs replace type-resolution timing. `include_cost` (library, MCP hover tools, `prinfer/testing`), `--cost` (CLI), and the new `inferredTypeCost` helper report `cost: { instantiations, types }`: the type instantiations and types a fresh TypeScript 6 checker needs to resolve the type and write it out untruncated. A new checker for each count means no earlier lookup has done part of the work, so the numbers are the same on every run, in every process, in any order, and with any display option. A test can budget a type:
+
+  ```ts
+  expect(
+    inferredTypeCost(import.meta.url, { name: "userSchema" }).instantiations
+  ).toBeLessThan(5_000);
+  ```
+
+  Costs are TypeScript 6 only, because TypeScript 7 reports no instantiation counts. On the MCP server, a hover with `include_cost` and no `backend` runs on TypeScript 6. An explicit `typescript7` backend, `--cost --backend typescript7`, and `inferredTypeCost`/`include_cost` with `backend: "typescript7"` fail with `INVALID_ARGUMENT`.
+
+  Behavior change: `timing` is no longer reported. Identical runs of the same lookup measured from 13 to 91 ms, too noisy to compare. Code that passes the old options keeps compiling and running, but gets no timing:
+
+  - `include_timing` and the `HoverTiming` type, `HoverResult.timing`, and `hoverTimingSchema` are deprecated and have no effect. `timing` is gone from the contract's hover result schema and from the MCP output schema.
+  - `--timing` and `-t` are still accepted and print a deprecation warning on stderr (none with `--json`, which keeps stderr empty).
+  - The MCP server no longer reads `PRINFER_INCLUDE_TIMING`.
+
+  To migrate, replace `include_timing`/`--timing` with `include_cost`/`--cost`, and replace assertions on `timing.resolution_ms` with a budget on `cost.instantiations`.
+
+- 35ea165: New `sort_unions` option prints union members in a fixed order, the same on TypeScript 6 and TypeScript 7, which order members differently. A `prinfer/testing` snapshot written with `inferredType(import.meta.url, { name: "x", sort_unions: true })` now holds on both backends. Every union in the type is sorted, at any depth: members by their printed text, with `null` and `undefined` last. Off by default; also available on the library's hover options and as `--sort-unions` on the CLI.
+- 421214f: `prinfer/testing` catches two easy mistakes in untyped test files. Options passed as a third argument, such as `inferredType(file, { name }, { backend: "typescript7" })`, used to be ignored without an error. Now they throw, with a message saying to move them into the selector.
+
+  New `strict` selector option for `inferredType`, `inferredTypeInfo`, `inferredTypeCost` and `inferredCompletions`. With `strict: true`, an unknown selector key throws and names the closest valid key (`includeDocs` gets "Did you mean include_docs?"). Without it, unknown keys are ignored as before.
+
+- 6b0097b: `prinfer/testing`: the TypeScript 7 helpers are now synchronous. `inferredType` and `inferredTypeInfo` with `backend: "typescript7"`, and `inferredCompletions`, return a plain value instead of a promise. Before, a missing `await` under `bun test` made `toMatchInlineSnapshot()` record `Promise {}`, and the test passed. Now the snapshot records the type.
+
+  The TypeScript 7 compiler runs in a worker thread, and each call blocks until it answers. The worker and its compiler don't keep the process alive. If `@typescript/native` fails to load, the call throws a `TYPESCRIPT_ERROR` with the loader's reason right away instead of waiting for the timeout. The CLI, the MCP server and the library still use the async client.
+
+  New `timeout` selector option (milliseconds, default 60000). A test runner's own timeout can't interrupt a blocked call. A TypeScript 7 call that gets no answer in time throws a `TYPESCRIPT_ERROR` and stops that compiler. The next call starts a new one, so a hung compiler fails one test instead of the whole run.
+
+  `closeTestingSessions()` still returns a promise, settles on Node and Bun, and is still optional.
+
+  This changes how TypeScript 7 results behave in tests that relied on them being promises:
+
+  - `expect(await inferredType(...))` keeps working, since awaiting a plain value returns it. The `await` is now optional.
+  - `.resolves` no longer applies: `await expect(inferredType(file, { name, backend: "typescript7" })).resolves.toBe(...)` fails because the value is not a promise. Write `expect(inferredType(file, { name, backend: "typescript7" })).toBe(...)`.
+  - Errors are now thrown synchronously instead of rejecting, so `.rejects` and `.catch()` no longer see them. Use `expect(() => inferredType(...)).toThrow(...)` or `try`/`catch`.
+  - The TypeScript types follow: `inferredType` returns `string`, `inferredTypeInfo` returns `HoverResult` and `inferredCompletions` returns `string[]` on both backends.
+
+### Patch Changes
+
+- 1cb5b50: `prinfer --version` prints the package version. It used to fail with "Unknown option --version".
+- 6ca7ab0: Signatures print the same on every backend in two more places:
+
+  - An optional property of an object type inside an array, tuple, type argument, union, intersection, or index or construct signature drops the `| undefined` its `?` implies on TypeScript 6 and the TypeScript 7 API too: `(rows: { z?: string; }[]): void`, as tsc and the TypeScript 7 language server print it. They used to print `z?: string | undefined` there. The language server backend also writes `Array<T>` and `ReadonlyArray<T>` as `T[]` and `readonly T[]`, and the TypeScript 7 API no longer prints tuples as `[ a, b ]`.
+  - The TypeScript 7 language server backend keeps the `const`, `in`, and `out` modifiers of a type alias's, class's, or interface's type parameters: `Holder<const T extends 1 | 2>`. It used to print `Holder<T extends 1 | 2>`.
+
+- 85fb65c: `prinfer/testing`: on Node, a script that ran a TypeScript 7 lookup and then called `await closeTestingSessions()` at top level now exits normally. Before this fix the await never settled and Node exited with code 13 ("unsettled top-level await"). prinfer unrefs the idle compiler process so it can't keep your process alive, and that stayed in effect while `closeTestingSessions()` waited for the compiler to answer, so Node's event loop emptied out before the reply came. The compiler is now held only while it shuts down. Idle sessions still don't keep the process alive, and calling `closeTestingSessions()` is still optional.
+- 393b361: `prinfer/testing`: if a TypeScript 7 compiler process exits mid-run, prinfer now starts a new one. `bun test` kills every child process when any test times out, and that includes the shared compiler. Before this fix, every later TypeScript 7 call in the run hung or failed with "snapshot 1 not found", and `closeTestingSessions()` hung in `afterAll`. A call that was in flight when the process exited, or that fails while the process shuts down, now retries once with a fresh compiler. Teardown no longer waits on a dead process.
+- e88ef58: TypeScript 7 testing API: a name in a type position (`Holder` in `let h: Holder<1>`, `ns.T`, an imported type, an enum, a type parameter, `interface A extends B<1>`) printed `any`; it now prints the declared type, as on TypeScript 6 (`Holder<T>`). The language-server backend's `unionMembers` for such a name (`let p: Pair`) now matches too.
+
 ## 3.1.0
 
 ### Minor Changes
