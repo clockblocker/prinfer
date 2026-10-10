@@ -27,6 +27,38 @@ const targetsPath = path.join(
 	"targets.ts",
 );
 
+/**
+ * The `ps` state of a process (`Z` for a zombie), or undefined once it is
+ * gone. Linux `pgrep` lists zombies and macOS `pgrep` does not, so process
+ * checks go through this.
+ */
+function processState(pid: number): string | undefined {
+	const found = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)]);
+	return found.stdout.toString().trim() || undefined;
+}
+
+/** The live child processes of this process, zombies left out. */
+function liveChildren(): number[] {
+	const found = Bun.spawnSync(["pgrep", "-P", String(process.pid)]);
+	return found.stdout
+		.toString()
+		.split("\n")
+		.filter(Boolean)
+		.map(Number)
+		.filter((pid) => !processState(pid)?.startsWith("Z"));
+}
+
+/** Wait until a process is gone, reaped by its parent; return its state. */
+async function reaped(pid: number, ms = 2_000): Promise<string | undefined> {
+	const deadline = Date.now() + ms;
+	let state = processState(pid);
+	while (state !== undefined && Date.now() < deadline) {
+		await Bun.sleep(20);
+		state = processState(pid);
+	}
+	return state;
+}
+
 function thrown(run: () => unknown): PrinferError {
 	try {
 		run();
@@ -501,18 +533,10 @@ describe("TypeScript 7 results are plain values", () => {
 	});
 
 	test("a hung compiler is killed at the timeout and replaced", async () => {
-		const children = () => {
-			const found = Bun.spawnSync(["pgrep", "-P", String(process.pid)]);
-			return found.stdout
-				.toString()
-				.split("\n")
-				.filter(Boolean)
-				.map(Number);
-		};
 		await closeTestingSessions();
-		const before = new Set(children());
+		const before = new Set(liveChildren());
 		expect(inferredType(targets, pick)).toBe("Drink");
-		const compilers = children().filter((pid) => !before.has(pid));
+		const compilers = liveChildren().filter((pid) => !before.has(pid));
 		expect(compilers).toHaveLength(1);
 		const [compiler] = compilers as [number];
 		// A stopped process never answers, and never acts on SIGTERM.
@@ -529,9 +553,9 @@ describe("TypeScript 7 results are plain values", () => {
 			expect(error.message).toContain("did not answer within 1500ms");
 			expect(Date.now() - started).toBeLessThan(5_000);
 			expect(inferredType(targets, pick)).toBe("Drink");
-			// The stopped compiler was killed, not left behind.
-			await Bun.sleep(100);
-			expect(children()).not.toContain(compiler);
+			// The stopped compiler was killed and reaped, not left behind as
+			// a process or a zombie.
+			expect(await reaped(compiler)).toBeUndefined();
 		} finally {
 			try {
 				process.kill(compiler, "SIGKILL");
@@ -539,6 +563,19 @@ describe("TypeScript 7 results are plain values", () => {
 				// Already gone.
 			}
 		}
+	});
+
+	test("closeTestingSessions() leaves no compiler behind, not even a zombie", async () => {
+		await closeTestingSessions();
+		const before = new Set(liveChildren());
+		expect(inferredType(targets, pick)).toBe("Drink");
+		const compilers = liveChildren().filter((pid) => !before.has(pid));
+		expect(compilers).toHaveLength(1);
+		await closeTestingSessions();
+		// The worker thread that spawned it has stopped: a compiler that
+		// exits after that is never reaped, and stays a zombie until the
+		// test process ends.
+		expect(await reaped(compilers[0] as number)).toBeUndefined();
 	});
 
 	test("a worker that can't load @typescript/native fails at once, not at the timeout", async () => {
@@ -835,8 +872,10 @@ describe("teardown", () => {
 				'import { execFileSync } from "node:child_process";',
 				"// Usage: kill-compilers.ts <parent pid> <wait for a new one: 0|1>",
 				"const [parent, waitForNew] = process.argv.slice(2);",
+				"// Linux pgrep lists zombies: a compiler killed earlier and not yet reaped.",
+				'const live = (pid) => { try { return !execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z"); } catch { return false; } };',
 				"const children = () => {",
-				'	try { return execFileSync("pgrep", ["-P", String(parent)], { encoding: "utf8" }).split("\\n").map(Number).filter((pid) => pid && pid !== process.pid); }',
+				'	try { return execFileSync("pgrep", ["-P", String(parent)], { encoding: "utf8" }).split("\\n").map(Number).filter((pid) => pid && pid !== process.pid && live(pid)); }',
 				"	catch { return []; }",
 				"};",
 				"const known = new Set(waitForNew === '1' ? children() : []);",

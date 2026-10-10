@@ -141,6 +141,34 @@ function warnFallback(reason: string): void {
 	);
 }
 
+/**
+ * How long closing or killing a session waits for its compiler to exit.
+ * Below the abort timeout in native-sync.ts, so a killed compiler is reaped
+ * before the worker answers.
+ */
+const EXIT_WAIT_MS = 750;
+
+/**
+ * Resolve once the process has exited, or after `ms`. Its exit event comes
+ * after the runtime reaped it. The testing worker thread that spawned it is
+ * terminated right after teardown, and a process that exits after that is
+ * never reaped: it stays a zombie until the test process ends.
+ */
+function waitForExit(child: ChildProcess, ms: number): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) {
+		return Promise.resolve();
+	}
+	return new Promise((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			child.off("exit", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		child.once("exit", done);
+	});
+}
+
 /** Ref or unref the compiler process and the pipes prinfer talks over. */
 function setChildReferenced(child: ChildProcess, active: boolean): void {
 	const method = active ? "ref" : "unref";
@@ -226,7 +254,11 @@ class NativeApiSession {
 		this.snapshot = undefined;
 		this.documents.clear();
 		// The connection to an exited process is closed: nothing to release.
-		if (this.dead) return;
+		if (this.dead) {
+			// Bun can close stdin before the process is reaped.
+			if (this.child) await waitForExit(this.child, EXIT_WAIT_MS);
+			return;
+		}
 		// Disposing the snapshot is a request to the idle, unref'd process.
 		// On Node nothing else may hold the event loop while it is answered
 		// (`await closeTestingSessions()` at top level), so the loop drains
@@ -238,19 +270,24 @@ class NativeApiSession {
 		const child = lookup?.status === "found" ? lookup.child : undefined;
 		if (child) setChildReferenced(child, true);
 		try {
-			// A process that got SIGTERM may exit without answering.
-			await Promise.race([
-				(async () => {
-					await snapshot?.dispose();
-					await this.api.close();
-				})(),
-				this.exited,
-			]);
-		} catch {
-			// It answers with errors until it exits; stop it.
-			this.child?.kill();
+			try {
+				// A process that got SIGTERM may exit without answering.
+				await Promise.race([
+					(async () => {
+						await snapshot?.dispose();
+						await this.api.close();
+					})(),
+					this.exited,
+				]);
+			} catch {
+				// It answers with errors until it exits; stop it.
+				this.child?.kill();
+			}
+			// Its stdin is closed and it exits on its own: wait for that, so
+			// it is reaped before the testing worker thread is terminated.
+			const exiting = child ?? this.child;
+			if (exiting) await waitForExit(exiting, EXIT_WAIT_MS);
 		} finally {
-			// Its stdin is closed and it exits on its own; do not wait for it.
 			if (child) setChildReferenced(child, false);
 		}
 	}
@@ -260,16 +297,18 @@ class NativeApiSession {
 	 * killed rather than closed: requests to a process that is exiting can
 	 * fail with unhandled rejections inside vscode-jsonrpc. A compiler that
 	 * stopped answering gets SIGKILL: a stopped or wedged process may never
-	 * act on SIGTERM.
+	 * act on SIGTERM. Settles once the process has exited (and so has been
+	 * reaped), or after EXIT_WAIT_MS.
 	 */
-	retire(signal?: NodeJS.Signals): void {
+	retire(signal?: NodeJS.Signals): Promise<void> {
 		if (sessions.get(this.key) === this) sessions.delete(this.key);
 		const lookup = compilerProcessLocator.locate(this.api);
 		const child =
 			this.child ??
 			(lookup.status === "found" ? lookup.child : undefined);
-		if (child) child.kill(signal);
-		else void this.close().catch(() => undefined);
+		if (!child) return this.close().catch(() => undefined);
+		child.kill(signal);
+		return waitForExit(child, EXIT_WAIT_MS);
 	}
 
 	/**
@@ -597,11 +636,13 @@ export async function closeNativeApiSessions(): Promise<void> {
 /**
  * Kill every compiler process without waiting on its requests, for a
  * compiler that stopped answering. The next call starts a new session.
+ * Settles once the killed processes have exited, so they are reaped before
+ * the testing worker thread is terminated.
  */
-export function killNativeApiSessions(): void {
+export async function killNativeApiSessions(): Promise<void> {
 	const active = [...sessions.values()];
 	sessions.clear();
-	for (const session of active) session.retire("SIGKILL");
+	await Promise.all(active.map((session) => session.retire("SIGKILL")));
 }
 
 /**
@@ -1299,7 +1340,7 @@ async function runInSession<T>(
 		return await session.run(file, operation);
 	} catch (error) {
 		if (error instanceof PrinferError && !session.dead) throw error;
-		session.retire();
+		void session.retire();
 		return getSession(file, project).run(file, operation);
 	}
 }
