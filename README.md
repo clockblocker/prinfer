@@ -52,6 +52,16 @@ The second argument picks the target:
 
 `inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
 
+TypeScript 6 and TypeScript 7 print union members in different orders (`"idle" | "error"` on one, `"error" | "idle"` on the other), so a snapshot written on one backend fails on the other. Pass `sort_unions: true` to print every union, at any depth, in a fixed order that is the same on both: members sorted by their text, with `null` and `undefined` last.
+
+```typescript
+expect(
+  inferredType(import.meta.url, { name: "status", sort_unions: true }),
+).toMatchInlineSnapshot(`""error" | "idle" | "loading" | null"`);
+```
+
+The order is by UTF-16 code unit, so numbers compare as text (`1 | 10 | 2`). Only union members move. Property order can still differ: for `cond ? { ok: true, value: 1 } : { ok: false, error: "e" }`, TypeScript 6 prints `{ ok: false; error: string; value?: undefined; }` where TypeScript 7 prints `{ value?: undefined; ok: false; error: string; }`, and a mapped type over a union of keys lists its properties in each backend's union order. The option is off by default; the library's hover options and the CLI (`--sort-unions`) take it too.
+
 To pin what a function infers for an argument you have no value for, declare the argument in a fixture file and point the helper at it. A `declare const` in the test file itself has no runtime value, so the test throws a `ReferenceError` as soon as it runs.
 
 ```typescript
@@ -424,6 +434,7 @@ prinfer src/utils.ts:11:33
 
 prinfer src/utils.ts:format --docs      # include JSDoc
 prinfer src/utils.ts:largeType --full   # turn off TypeScript's own truncation
+prinfer src/utils.ts:status --sort-unions  # union members in a fixed order, the same on both backends
 prinfer src/utils.ts:largeType --max-chars 0   # print the whole type (default cap: 4000 chars)
 prinfer src/utils.ts:format --timing    # type-resolution timing
 prinfer src/utils.ts:format -p ./tsconfig.json
@@ -511,7 +522,7 @@ hover("./src/utils.ts", "names", { line: 11 });
 hover("./src/utils.ts", 11, 33);
 // => { signature: "{ id: number; name: string; }", line: 11, column: 33, kind: "parameter", name: "user", ... }
 
-// Options: include_docs, full (no truncation), include_timing, project
+// Options: include_docs, full (no truncation), sort_unions, include_timing, project
 hover("./src/utils.ts", "format", { include_docs: true }).documentation;
 // => "Formats a number with a fixed number of digits."
 

@@ -314,6 +314,25 @@ describe("CLI", () => {
 		expect(exitCode).toBe(0);
 	});
 
+	test("prints union members in a fixed order with --sort-unions", async () => {
+		const file = path.join(fixturesDir, "hover-parity.ts");
+		const unsorted = await runCli([`${file}:UnitRoute`]);
+		expect(unsorted.stdout).toContain(
+			'type UnitRoute = "metric" | "imperial"',
+		);
+		for (const backend of ["typescript6", "typescript7"]) {
+			const { stdout, stderr, exitCode } = await runCli([
+				`${file}:UnitRoute`,
+				"--sort-unions",
+				"--backend",
+				backend,
+			]);
+			expect(stdout).toContain('type UnitRoute = "imperial" | "metric"');
+			expect(stderr).toBe("");
+			expect(exitCode).toBe(0);
+		}
+	});
+
 	test("emits contract v1 JSON for a successful lookup", async () => {
 		const { stdout, stderr, exitCode } = await runCli([
 			`${sampleFile}:4:17`,

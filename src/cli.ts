@@ -76,6 +76,8 @@ Options:
   --docs, -d           Include JSDoc/TSDoc documentation
   --timing, -t         Include type-resolution timing
   --full, -f           Disable TypeScript's type truncation ("... 12 more ...")
+  --sort-unions        Print union members in a fixed order (null, undefined last),
+                       the same on typescript6 and typescript7
   --max-chars <n>      Print at most n characters of type text (default ${DEFAULT_MAX_CHARS};
                        0 for no limit). Applies to text output; --json is never cut
   --suggestions        check: also report suggestions such as unused variables
@@ -142,6 +144,7 @@ interface CliHoverOptions {
 	includeDocs: boolean;
 	includeTiming: boolean;
 	full: boolean;
+	sortUnions: boolean;
 	maxChars: number;
 	json: boolean;
 	project?: string;
@@ -172,6 +175,7 @@ const HOVER_KEYS = new Set([
 	"docs",
 	"timing",
 	"full",
+	"sortUnions",
 	"json",
 	"text",
 	"occurrence",
@@ -419,6 +423,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		includeDocs: values.has("docs"),
 		includeTiming: values.has("timing"),
 		full: values.has("full"),
+		sortUnions: values.has("sortUnions"),
 		maxChars:
 			parseInteger(values.get("maxChars"), "--max-chars", 0, fail) ??
 			DEFAULT_MAX_CHARS,
@@ -493,6 +498,7 @@ async function runHover(
 		include_docs: options.includeDocs,
 		include_timing: options.includeTiming,
 		full: options.full,
+		sort_unions: options.sortUnions,
 		project: options.project,
 	};
 	if (options.backend === "typescript7") {
