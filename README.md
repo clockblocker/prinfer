@@ -29,9 +29,9 @@ test("groupBy keeps its public signature", () => {
     .toMatchInlineSnapshot(`"<T, K extends PropertyKey>(items: readonly T[], key: (item: T) => K): Record<K, T[]>"`);
 });
 
-test("Role offers its members", async () => {
-  await expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
-    .resolves.toMatchInlineSnapshot(`
+test("Role offers its members", () => {
+  expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
+    .toMatchInlineSnapshot(`
     [
       "admin",
       "member",
@@ -50,7 +50,19 @@ The second argument picks the target:
 - `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
 - `{ line, column }`: a 1-based position.
 
-`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
+Options (`backend`, `project`, `full`, `include_docs`, `sort_unions`, `include_cost`, `timeout`, `strict`) go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`. There is no third argument; passing one throws. Keys a helper doesn't know are ignored. Pass `strict: true` to make them throw, with the closest valid key: test runners don't type-check test files, so a camelCase `sortUnions` for `sort_unions` would otherwise do nothing and give no error.
+
+`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output. Every helper is synchronous on both backends, so there is no promise to forget to await. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
+
+TypeScript 6 and TypeScript 7 print union members in different orders (`"idle" | "error"` on one, `"error" | "idle"` on the other), so a snapshot written on one backend fails on the other. Pass `sort_unions: true` to print every union, at any depth, in a fixed order that is the same on both: members sorted by their text, with `null` and `undefined` last.
+
+```typescript
+expect(
+  inferredType(import.meta.url, { name: "status", sort_unions: true }),
+).toMatchInlineSnapshot(`""error" | "idle" | "loading" | null"`);
+```
+
+The order is by UTF-16 code unit, so numbers compare as text (`1 | 10 | 2`). Only union members move. Property order can still differ: for `cond ? { ok: true, value: 1 } : { ok: false, error: "e" }`, TypeScript 6 prints `{ ok: false; error: string; value?: undefined; }` where TypeScript 7 prints `{ value?: undefined; ok: false; error: string; }`, and a mapped type over a union of keys lists its properties in each backend's union order. The option is off by default; the library's hover options and the CLI (`--sort-unions`) take it too.
 
 To pin what a function infers for an argument you have no value for, declare the argument in a fixture file and point the helper at it. A `declare const` in the test file itself has no runtime value, so the test throws a `ReferenceError` as soon as it runs.
 
@@ -65,13 +77,32 @@ expect(inferredType(new URL("./groupBy.fixture.ts", import.meta.url), { name: "b
   .toMatchInlineSnapshot(`"Record<string, User[]>"`);
 ```
 
-`inferredCompletions` uses TypeScript 7 and resolves to every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
+`inferredCompletions` uses TypeScript 7 and returns every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
 
-TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early.
+TypeScript 7 runs in a worker thread, with one compiler process per project; each call blocks until the compiler answers. Neither keeps the test process alive, so no teardown is needed; `closeTestingSessions()` (e.g. in `afterAll`) shuts them down early. A test runner's own timeout cannot interrupt a blocked call, so prinfer has its own: a call that gets no answer within `timeout` milliseconds (default 60000, enough for a cold load of a large project) throws, and the next call starts a new compiler. A hung compiler fails one test instead of stalling the run. For a project that takes longer to load, raise it on the first call, or on all of them with a shared selector such as `const ts7 = { backend: "typescript7", timeout: 120_000 } as const`. If the compiler process exits, the call in flight retries once and later calls start a new one.
 
-Failed lookups throw (or reject) with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
+Failed lookups throw with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
 
 `prinfer/vitest` remains as a deprecated alias for `prinfer/testing`.
+
+### Type cost budgets
+
+`inferredTypeCost` counts the work TypeScript does for a type, so a test can stop an expensive type from getting more expensive:
+
+```typescript
+import { inferredTypeCost } from "prinfer/testing";
+
+test("userSchema stays cheap to infer", () => {
+  expect(inferredTypeCost(import.meta.url, { name: "userSchema" }).instantiations)
+    .toBeLessThan(5_000);
+});
+```
+
+It takes the same selector as `inferredType`, `strict` included, and like it throws on a third argument. It returns `{ instantiations, types }`: the type instantiations (what `tsc --extendedDiagnostics` reports as `Instantiations`) and the types that a fresh TypeScript 6 checker creates while it resolves the target and writes out its untruncated type. Each count gets a new checker, so no earlier lookup has done part of the work. The numbers are the same on every run, in every process, in any test order, and with any display option. Only the code, the compiler options, and the TypeScript version change them, so pin `typescript` in a project that budgets types. prinfer reports no wall-clock time: identical runs of the same lookup differ by several times.
+
+The count covers what the target's type takes: for `const x = expr`, checking `expr`; for a function without a return type annotation, inferring the return type from its `return` statements. Code the type doesn't depend on is not counted, such as an initializer under an annotation (`const x: T = expr` takes its type from `T`). Target that expression with `{ line, text }` to count it.
+
+TypeScript 7 exposes no instantiation counts, so costs are TypeScript 6 only: with `backend: "typescript7"`, `inferredTypeCost` and `include_cost` throw. The other surfaces take `include_cost` (MCP, library) or `--cost` (CLI) and add the same numbers to the hover result as `cost`.
 
 ## Install
 
@@ -283,6 +314,7 @@ Every hover returns the same fields on every backend and surface:
 - `display` is the editor's hover text (`const names: string[]`, object types over several lines). Only the TypeScript 7 language server reports it.
 - `kind` is the editor's label: `function`, `method`, `const`, `let`, `var`, `parameter`, `property`, `type`, `interface`, `class`, `enum`, and so on, plus `call` for the callee of a call.
 - `overloads`, `unionMembers` (members of a union type), and `alternatives` appear when they apply.
+- `cost` is `{ instantiations, types }` when the call passes `include_cost: true`: the checker work the type takes, the same on every run (see [Type cost budgets](#type-cost-budgets)). It is counted on TypeScript 6, so a hover with `include_cost` and no `backend` runs there, and one with `backend: "typescript7"` fails with `INVALID_ARGUMENT`. The text adds `Cost: 195 instantiations, 212 types`.
 
 ### completions
 
@@ -355,10 +387,11 @@ A `redundant` annotation can be deleted without changing the type. A `widening` 
 | MCP server | TS7; `backend: "typescript6"` | TS6, top 50 | TS7; `backend: "typescript6"` | TS6 |
 | CLI | TS6; `--backend typescript7` | TS6, top 50 | TS6; `--backend typescript7` | TS6 |
 | Library (`prinfer`) | TS6 | TS6, all entries | TS6 | TS6 |
-| `prinfer/testing` | TS6, sync; `backend: "typescript7"` returns a promise | TS7, every name | none | none |
+| `prinfer/testing` | TS6; `backend: "typescript7"`; both sync | TS7, every name, sync | none | none |
 
 - `typescript7` runs the native TypeScript 7 language server (the testing helpers use its standalone compiler API). One warm session per project is shared across requests, and its output is closest to what your editor shows.
 - `typescript6` uses the TypeScript 6 compiler API in-process. If a lookup fails or looks wrong on TypeScript 7, retry that call with `typescript6`.
+- [Type costs](#type-cost-budgets) (`include_cost`, `--cost`, `inferredTypeCost`) are counted on TypeScript 6 on every surface.
 
 The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. Both backends pick the same symbol for `hover_by_name`, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
 
@@ -370,10 +403,9 @@ Environment variables on the server process:
 
 | Variable | Effect |
 | :- | :- |
-| `PRINFER_BACKEND=typescript6` | Default backend for `hover_by_name`, `hover`, `batch_hover`, and `diagnostics`. An explicit `backend` argument still wins. |
-| `PRINFER_INCLUDE_TIMING=1` | Add type-resolution timing to every hover result (`1` or `true`). |
+| `PRINFER_BACKEND=typescript6` | Default backend for `hover_by_name`, `hover`, `batch_hover`, and `diagnostics`. An explicit `backend` argument, or `include_cost`, still wins. |
 
-Timing appears as `Type resolution: 82.06 ms` in text and `timing: { resolution_ms }` in structured content. It covers only the type lookup itself: the in-process checker call on TypeScript 6, the language-server hover exchange on TypeScript 7. Startup, project loading, file reads, and name or text resolution are excluded. In `batch_hover` each successful item gets its own timing.
+`PRINFER_INCLUDE_TIMING` is no longer read; pass `include_cost` for [type costs](#type-cost-budgets) instead.
 
 ## Error contract
 
@@ -424,8 +456,9 @@ prinfer src/utils.ts:11:33
 
 prinfer src/utils.ts:format --docs      # include JSDoc
 prinfer src/utils.ts:largeType --full   # turn off TypeScript's own truncation
+prinfer src/utils.ts:status --sort-unions  # union members in a fixed order, the same on both backends
 prinfer src/utils.ts:largeType --max-chars 0   # print the whole type (default cap: 4000 chars)
-prinfer src/utils.ts:format --timing    # type-resolution timing
+prinfer src/utils.ts:format --cost      # type instantiations, the same every run (TS6)
 prinfer src/utils.ts:format -p ./tsconfig.json
 
 # Completions at a cursor: the top 50, filtered by the text typed left of the cursor
@@ -511,9 +544,11 @@ hover("./src/utils.ts", "names", { line: 11 });
 hover("./src/utils.ts", 11, 33);
 // => { signature: "{ id: number; name: string; }", line: 11, column: 33, kind: "parameter", name: "user", ... }
 
-// Options: include_docs, full (no truncation), include_timing, project
+// Options: include_docs, full (no truncation), sort_unions, include_cost, project
 hover("./src/utils.ts", "format", { include_docs: true }).documentation;
 // => "Formats a number with a fixed number of digits."
+hover("./src/utils.ts", "names", { include_cost: true }).cost;
+// => { instantiations, types }, the same on every run; see Type cost budgets
 
 // Several positions in one file, one program load
 const batch = batchHover("./src/utils.ts", [

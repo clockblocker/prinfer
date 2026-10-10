@@ -67,6 +67,15 @@ export class PrinferError extends Error {
 }
 
 /**
+ * Why a type cost needs the TypeScript 6 backend. TypeScript 7.0 counts
+ * instantiations (`tsc --extendedDiagnostics`), but neither its API nor its
+ * language server reports a count, and that compiler total covers a whole
+ * program and changes with `--checkers`.
+ */
+export const COST_NEEDS_TYPESCRIPT6 =
+	"Type costs are counted by the TypeScript 6 checker; TypeScript 7 reports no instantiation counts.";
+
+/**
  * Resolve a source path against cwd and throw a FILE_NOT_FOUND error when it
  * does not exist or is not a regular file (a directory would otherwise fail
  * deep inside TypeScript with an unhelpful message).

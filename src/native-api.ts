@@ -12,16 +12,23 @@ import {
 } from "@typescript/native/unstable/ast";
 import {
 	isClassDeclaration,
+	isExpressionWithTypeArguments,
 	isFunctionDeclaration,
+	isHeritageClause,
 	isIdentifier,
+	isImportTypeNode,
 	isInterfaceDeclaration,
 	isMethodDeclaration,
 	isMethodSignatureDeclaration,
 	isParameterDeclaration,
+	isPropertyAccessExpression,
 	isPropertyAssignment,
 	isPropertyDeclaration,
 	isPropertySignatureDeclaration,
+	isQualifiedName,
 	isTypeAliasDeclaration,
+	isTypeNode,
+	isTypeQueryNode,
 	isVariableDeclaration,
 } from "@typescript/native/unstable/ast/is";
 import {
@@ -52,6 +59,7 @@ import {
 	type OptionalStep,
 	singleLine,
 } from "./core/signature-text.js";
+import { sortResultUnions } from "./core/union-order.js";
 import { PrinferError } from "./errors.js";
 import type {
 	CompletionOptions,
@@ -133,6 +141,15 @@ function warnFallback(reason: string): void {
 	);
 }
 
+/** Ref or unref the compiler process and the pipes prinfer talks over. */
+function setChildReferenced(child: ChildProcess, active: boolean): void {
+	const method = active ? "ref" : "unref";
+	child[method]();
+	for (const stream of [child.stdin, child.stdout]) {
+		(stream as { ref?(): void; unref?(): void } | null)?.[method]?.();
+	}
+}
+
 class NativeApiSession {
 	private readonly api: API;
 	private readonly key: string;
@@ -146,13 +163,35 @@ class NativeApiSession {
 	/** The process cannot be unref'd, so idle sessions are closed instead. */
 	private fallback = false;
 	private idleTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The compiler process, once watched for exit. */
+	private child: ChildProcess | undefined;
+	/** Set once the compiler process has exited; the session is unusable. */
+	private exitError: PrinferError | undefined;
+	/** Rejects when the compiler process exits, failing in-flight requests. */
+	private readonly exited: Promise<never>;
+	private rejectExited: (error: PrinferError) => void = () => undefined;
 
 	constructor(key: string, root: string, projectFile?: string) {
 		this.api = new API({ cwd: root });
 		this.key = key;
 		this.projectFile = projectFile;
+		this.exited = new Promise<never>((_, reject) => {
+			this.rejectExited = reject;
+		});
+		this.exited.catch(() => undefined);
 		const lookup = compilerProcessLocator.locate(this.api);
 		if (lookup.status === "missing") this.useFallback(lookup.reason);
+	}
+
+	/** The compiler process has exited, so no request can succeed. */
+	get dead(): boolean {
+		const child = this.child;
+		// Bun can destroy stdin before the exit event arrives; a request
+		// written then fails with an unhandled rejection in vscode-jsonrpc.
+		if (!this.exitError && child && (child.stdin?.destroyed ?? false)) {
+			this.handleExit(child.exitCode, child.signalCode);
+		}
+		return this.exitError !== undefined;
 	}
 
 	run<T>(
@@ -162,7 +201,13 @@ class NativeApiSession {
 		this.pending += 1;
 		this.cancelIdleClose();
 		this.setReferenced(true);
-		const result = this.tail.then(() => this.runNow(file, operation));
+		this.watchExit();
+		// A request to an exited process never settles, so race the exit.
+		const result = this.tail.then(() =>
+			this.dead
+				? Promise.reject(this.exitError)
+				: Promise.race([this.runNow(file, operation), this.exited]),
+		);
 		this.tail = result.then(
 			() => undefined,
 			() => undefined,
@@ -177,10 +222,94 @@ class NativeApiSession {
 	async close(): Promise<void> {
 		this.cancelIdleClose();
 		await this.tail;
-		await this.snapshot?.dispose();
+		const snapshot = this.snapshot;
 		this.snapshot = undefined;
 		this.documents.clear();
-		await this.api.close();
+		// The connection to an exited process is closed: nothing to release.
+		if (this.dead) return;
+		// Disposing the snapshot is a request to the idle, unref'd process.
+		// On Node nothing else may hold the event loop while it is answered
+		// (`await closeTestingSessions()` at top level), so the loop drains
+		// and the await never settles: hold the process for the teardown.
+		// `api.close()` clears the client's process field, so look it up now.
+		const lookup = this.fallback
+			? undefined
+			: compilerProcessLocator.locate(this.api);
+		const child = lookup?.status === "found" ? lookup.child : undefined;
+		if (child) setChildReferenced(child, true);
+		try {
+			// A process that got SIGTERM may exit without answering.
+			await Promise.race([
+				(async () => {
+					await snapshot?.dispose();
+					await this.api.close();
+				})(),
+				this.exited,
+			]);
+		} catch {
+			// It answers with errors until it exits; stop it.
+			this.child?.kill();
+		} finally {
+			// Its stdin is closed and it exits on its own; do not wait for it.
+			if (child) setChildReferenced(child, false);
+		}
+	}
+
+	/**
+	 * Stop routing calls here after a compiler failure. The process is
+	 * killed rather than closed: requests to a process that is exiting can
+	 * fail with unhandled rejections inside vscode-jsonrpc. A compiler that
+	 * stopped answering gets SIGKILL: a stopped or wedged process may never
+	 * act on SIGTERM.
+	 */
+	retire(signal?: NodeJS.Signals): void {
+		if (sessions.get(this.key) === this) sessions.delete(this.key);
+		const lookup = compilerProcessLocator.locate(this.api);
+		const child =
+			this.child ??
+			(lookup.status === "found" ? lookup.child : undefined);
+		if (child) child.kill(signal);
+		else void this.close().catch(() => undefined);
+	}
+
+	/**
+	 * Watch the compiler process so its exit retires the session: `bun test`
+	 * kills every live child process when a test times out, and a crash
+	 * ends it too. The first request spawns the process a few ticks after
+	 * it starts, so poll until it appears.
+	 */
+	private watchExit(): void {
+		if (this.child || this.fallback) return;
+		const lookup = compilerProcessLocator.locate(this.api);
+		if (lookup.status === "not-spawned") {
+			if (this.pending === 0) return;
+			const timer = setTimeout(() => this.watchExit(), 10);
+			timer.unref?.();
+			return;
+		}
+		if (lookup.status !== "found") return;
+		const { child } = lookup;
+		this.child = child;
+		if (child.exitCode !== null || child.signalCode !== null) {
+			this.handleExit(child.exitCode, child.signalCode);
+		} else {
+			child.once("exit", (code, signal) => this.handleExit(code, signal));
+		}
+	}
+
+	private handleExit(
+		code: number | null,
+		signal: NodeJS.Signals | null,
+	): void {
+		if (this.exitError) return;
+		const how = signal ?? (code === null ? "input closed" : `code ${code}`);
+		this.exitError = new PrinferError(
+			"TYPESCRIPT_ERROR",
+			`The TypeScript 7 compiler process exited (${how}).`,
+			"bun test kills child processes when a test times out; the next call restarts the compiler. Raise the test timeout if a cold TypeScript 7 project load exceeds it.",
+		);
+		if (sessions.get(this.key) === this) sessions.delete(this.key);
+		this.rejectExited(this.exitError);
 	}
 
 	/**
@@ -192,12 +321,7 @@ class NativeApiSession {
 		if (this.fallback) return;
 		const lookup = compilerProcessLocator.locate(this.api);
 		if (lookup.status !== "found") return;
-		const { child } = lookup;
-		const method = active ? "ref" : "unref";
-		child[method]();
-		for (const stream of [child.stdin, child.stdout]) {
-			(stream as { ref?(): void; unref?(): void } | null)?.[method]?.();
-		}
+		setChildReferenced(lookup.child, active);
 	}
 
 	/**
@@ -299,16 +423,13 @@ export async function nativeApiCompletionNames(
 	const entryFileAbs = resolveFile(file);
 	const text = fs.readFileSync(entryFileAbs, "utf8");
 	const position = sourcePosition(entryFileAbs, text, line, column);
-	return getSession(entryFileAbs, options?.project).run(
-		entryFileAbs,
-		async ({ checker }) => {
-			const completions = await checker.getCompletionsAtPosition(
-				entryFileAbs,
-				position,
-			);
-			return completions?.entries.map((entry) => entry.name) ?? [];
-		},
-	);
+	return runInSession(entryFileAbs, options?.project, async ({ checker }) => {
+		const completions = await checker.getCompletionsAtPosition(
+			entryFileAbs,
+			position,
+		);
+		return completions?.entries.map((entry) => entry.name) ?? [];
+	});
 }
 
 export async function nativeApiTypeInfo(
@@ -320,15 +441,13 @@ export async function nativeApiTypeInfo(
 	const entryFileAbs = resolveFile(file);
 	const text = fs.readFileSync(entryFileAbs, "utf8");
 	const position = sourcePosition(entryFileAbs, text, line, column);
-	return getSession(entryFileAbs, options?.project).run(
-		entryFileAbs,
-		(project, sourceFile) =>
-			nativeTypeInfoAt(
-				project,
-				sourceFile,
-				{ file: entryFileAbs, text, line, column, position },
-				options,
-			),
+	return runInSession(entryFileAbs, options?.project, (project, sourceFile) =>
+		nativeTypeInfoAt(
+			project,
+			sourceFile,
+			{ file: entryFileAbs, text, line, column, position },
+			options,
+		),
 	);
 }
 
@@ -357,7 +476,6 @@ export async function nativeTypeInfoAt(
 	options?: HoverOptions,
 ): Promise<HoverResult> {
 	const { file, text, line, column, position } = cursor;
-	const resolutionStarted = performance.now();
 	const type = await hoveredType(project, sourceFile, file, position);
 	if (!type) {
 		throw new PrinferError(
@@ -371,11 +489,7 @@ export async function nativeTypeInfoAt(
 		{ file, sourceFile, syntax: parseSyntax(file, text), position },
 		{ ...options, line, column },
 	);
-	if (options?.include_timing) {
-		result.timing = {
-			resolution_ms: roundMs(performance.now() - resolutionStarted),
-		};
-	}
+	if (options?.sort_unions) sortResultUnions(result);
 	return result;
 }
 
@@ -481,6 +595,16 @@ export async function closeNativeApiSessions(): Promise<void> {
 }
 
 /**
+ * Kill every compiler process without waiting on its requests, for a
+ * compiler that stopped answering. The next call starts a new session.
+ */
+export function killNativeApiSessions(): void {
+	const active = [...sessions.values()];
+	sessions.clear();
+	for (const session of active) session.retire("SIGKILL");
+}
+
+/**
  * A signature printed the way TypeScript 6's signatureToString prints it,
  * on one line: `<T>(value: T): T`.
  */
@@ -558,12 +682,20 @@ async function nativeOptionalFacts(
 			const symbol = await checker.getPropertyOfType(type, step.property);
 			if (!symbol) return undefined;
 			current = { symbol };
-		} else {
-			const signature = (
-				await checker.getSignaturesOfType(type, SignatureKind.Call)
-			)[step.signature];
+		} else if ("signature" in step || "construct" in step) {
+			const [kind, index] =
+				"signature" in step
+					? [SignatureKind.Call, step.signature]
+					: [SignatureKind.Construct, step.construct];
+			const signature = (await checker.getSignaturesOfType(type, kind))[
+				index
+			];
 			if (!signature) return undefined;
 			current = { signature };
+		} else {
+			const next = await nativeInnerType(checker, type, step);
+			if (!next) return undefined;
+			current = { type: next };
 		}
 	}
 	if (!("symbol" in current)) return undefined;
@@ -610,6 +742,48 @@ async function nativeOptionalFacts(
 }
 
 /**
+ * The type an index, element, type argument, or member step leads to; the
+ * TypeScript 7 counterpart of innerType in core/hover.ts.
+ */
+async function nativeInnerType(
+	checker: Checker,
+	type: Type,
+	step: OptionalStep,
+): Promise<Type | undefined> {
+	if ("index" in step) {
+		return (await checker.getIndexInfosOfType(type))[step.index]?.valueType;
+	}
+	if ("member" in step) {
+		if (!(type.flags & (TypeFlags.Union | TypeFlags.Intersection))) {
+			return undefined;
+		}
+		const types = (await (type as UnionType).getTypes()) ?? [];
+		const booleans = types.filter(
+			(member) => member.flags & TypeFlags.BooleanLiteral,
+		);
+		// Printed members: `true | false` once, as `boolean`.
+		const members =
+			type.flags & TypeFlags.Union && booleans.length >= 2
+				? types.filter((member) => member !== booleans[1])
+				: types;
+		return members.length === step.members
+			? members[step.member]
+			: undefined;
+	}
+	const alias =
+		"typeArgument" in step ? await type.getAliasSymbol() : undefined;
+	const typeArguments =
+		alias && "of" in step && alias.name === step.of
+			? await type.getAliasTypeArguments()
+			: type.isTypeReference()
+				? await checker.getTypeArguments(type)
+				: [];
+	if ("element" in step) return typeArguments[step.element];
+	if ("typeArgument" in step) return typeArguments[step.typeArgument];
+	return undefined;
+}
+
+/**
  * The type at a position as quick info reports it: an optional property
  * has the type quick info shows (with exactOptionalPropertyTypes,
  * `digits?: number` is a number when present), anything else its type at
@@ -626,6 +800,13 @@ export async function hoveredType(
 		checker.getTypeAtPosition(file, position),
 		checker.getSymbolAtPosition(file, position),
 	]);
+	const token = tokenAtPosition(sourceFile, position);
+	// TypeScript 7 has no type at a name in a type position (`Holder` in
+	// `let h: Holder<1>`) and reports the error type, `any`. TypeScript 6
+	// shows the declared type of the name's symbol, `Holder<T>`.
+	if (symbol && token && isTypeReferenceName(token)) {
+		return checker.getDeclaredTypeOfSymbol(symbol);
+	}
 	if (
 		!symbol ||
 		!(symbol.flags & SymbolFlags.Property) ||
@@ -633,8 +814,52 @@ export async function hoveredType(
 	) {
 		return type;
 	}
-	const token = tokenAtPosition(sourceFile, position);
 	return token ? checker.getTypeOfSymbolAtLocation(symbol, token) : type;
+}
+
+/**
+ * Whether `name` names a type in a type position: the rule of TypeScript
+ * 6's isPartOfTypeNode for an identifier, under which getTypeAtLocation
+ * gives the declared type of the name's symbol. The right side of a
+ * qualified name (`ns.T`) or of a property access in a heritage clause
+ * (`implements ns.I`) counts; its left side, a namespace, does not.
+ */
+function isTypeReferenceName(name: Node): boolean {
+	if (!isIdentifier(name)) return false;
+	let node: Node = name;
+	const { parent } = node;
+	if (
+		(isQualifiedName(parent) && parent.right === node) ||
+		(isPropertyAccessExpression(parent) && parent.name === node)
+	) {
+		node = parent;
+	}
+	const container = node.parent;
+	if (!container || isTypeQueryNode(container)) return false;
+	if (isImportTypeNode(container)) return !container.isTypeOf;
+	// `interface A extends B<1>` and `class A implements B<1>` name types;
+	// `class A extends B<1>` names a value, the base class. (TypeScript 7
+	// counts ExpressionWithTypeArguments as a type node; TypeScript 6 does
+	// not, so it is decided first.)
+	if (isExpressionWithTypeArguments(container)) {
+		const clause = container.parent;
+		return (
+			isHeritageClause(clause) &&
+			!(
+				clause.token === SyntaxKind.ExtendsKeyword &&
+				isClassLike(clause.parent)
+			)
+		);
+	}
+	return isTypeNode(container);
+}
+
+function isClassLike(node: Node | undefined): boolean {
+	return (
+		node !== undefined &&
+		(node.kind === SyntaxKind.ClassDeclaration ||
+			node.kind === SyntaxKind.ClassExpression)
+	);
 }
 
 /**
@@ -1058,6 +1283,27 @@ function findSyntaxNodeAt(
 	}
 }
 
+/**
+ * Run an operation in the file's session. When the compiler fails under it
+ * (the process exited, or a request failed outside prinfer's own checks,
+ * as when a process that got SIGTERM answers before it exits), retire the
+ * session and retry once in a fresh one.
+ */
+async function runInSession<T>(
+	file: string,
+	project: string | undefined,
+	operation: (project: Project, sourceFile: SourceFile) => Promise<T>,
+): Promise<T> {
+	const session = getSession(file, project);
+	try {
+		return await session.run(file, operation);
+	} catch (error) {
+		if (error instanceof PrinferError && !session.dead) throw error;
+		session.retire();
+		return getSession(file, project).run(file, operation);
+	}
+}
+
 function getSession(file: string, project?: string): NativeApiSession {
 	const resolved = resolveProject(file, project);
 	let session = sessions.get(resolved.key);
@@ -1221,8 +1467,4 @@ function nodeNameText(node: Node): string | undefined {
 	if (isIdentifier(node)) return node.text;
 	const name = nodeName(node);
 	return name && isIdentifier(name) ? name.text : undefined;
-}
-
-function roundMs(value: number): number {
-	return Math.round(value * 100) / 100;
 }

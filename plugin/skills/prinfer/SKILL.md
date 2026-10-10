@@ -53,8 +53,8 @@ test("groupBy keys by the callback's return type", () => {
 - Snapshots hold the whole type, untruncated, so any change inside it fails. `full: false` gives the editor's shortened `{ ...; }` form.
 - Another module: `new URL("../src/users.ts", import.meta.url)` as the file. Targets: `{ name }`, `{ line, text }`, `{ line, column }`.
 - To probe a type you have no value for, put `declare const input: User[]` and the expression in a separate fixture file and pass `new URL("./probe.fixture.ts", import.meta.url)`. In the test file itself, a `declare const` has no runtime value and the test throws a `ReferenceError`.
-- `inferredType` is synchronous on TypeScript 6; `backend: "typescript7"` returns a promise.
-- `await expect(inferredCompletions(file, { line, text })).resolves.toMatchInlineSnapshot()` pins every completion name (TypeScript 7, no limit, cursor right after `text`).
+- `inferredType` is synchronous on both backends: TypeScript 6 by default, TypeScript 7 with `backend: "typescript7"`.
+- `expect(inferredCompletions(file, { line, text })).toMatchInlineSnapshot()` pins every completion name (TypeScript 7, no limit, cursor right after `text`).
 
 ## Backend
 

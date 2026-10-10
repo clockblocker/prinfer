@@ -12,6 +12,11 @@ export default defineConfig({
     mcp: "src/mcp.ts",
     testing: "src/testing.ts",
     vitest: "src/vitest.ts",
+    // Worker thread behind the synchronous TypeScript 7 testing helpers;
+    // src/native-sync.ts starts native-worker-boot from next to the bundle
+    // that imports it, and the boot module imports native-worker.
+    "native-worker-boot": "src/native-worker-boot.ts",
+    "native-worker": "src/native-worker.ts",
   },
   format: ["esm", "cjs"],
   // Declaration bundling still runs through the TS 6 compatibility API.
@@ -24,6 +29,9 @@ export default defineConfig({
   define: {
     __PRINFER_VERSION__: JSON.stringify(version),
   },
+  // CJS builds get import.meta.url, which src/native-sync.ts uses to find
+  // the worker entry.
+  shims: true,
   splitting: false,
   sourcemap: true,
   clean: true,

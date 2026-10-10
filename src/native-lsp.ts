@@ -26,7 +26,12 @@ import {
 import { lookupName } from "./core/name-lookup.js";
 import { findNodeAtPosition } from "./core/node-find.js";
 import { getNameNode } from "./core/node-match.js";
-import { singleLine } from "./core/signature-text.js";
+import {
+	arraySyntax,
+	singleLine,
+	withTypeParameterModifiers,
+} from "./core/signature-text.js";
+import { sortResultUnions } from "./core/union-order.js";
 import {
 	type FileChange,
 	WorkspaceFiles,
@@ -197,7 +202,6 @@ class NativeLspClient {
 	): Promise<{
 		result: LspHover | null;
 		text: string;
-		resolutionMs: number;
 		extras: HoverExtras;
 	}> {
 		await this.ready;
@@ -212,7 +216,6 @@ class NativeLspClient {
 		);
 		await this.acquireHoverLength(full);
 		try {
-			const resolutionStarted = performance.now();
 			const result = (await this.request("textDocument/hover", {
 				textDocument: { uri },
 				position: toLspPosition(document.text, {
@@ -220,7 +223,6 @@ class NativeLspClient {
 					character: position.column - 1,
 				}),
 			})) as LspHover | null;
-			const resolutionMs = roundMs(performance.now() - resolutionStarted);
 			const extras = result
 				? await this.hoverExtras(
 						file,
@@ -228,7 +230,7 @@ class NativeLspClient {
 						full,
 					)
 				: {};
-			return { result, text: document.text, resolutionMs, extras };
+			return { result, text: document.text, extras };
 		} finally {
 			this.releaseHoverLength();
 		}
@@ -655,7 +657,6 @@ export async function nativeHover(
 	const {
 		result: hover,
 		text,
-		resolutionMs,
 		extras,
 	} = await client.hover(
 		entryFileAbs,
@@ -671,29 +672,53 @@ export async function nativeHover(
 		column,
 		options?.include_docs ?? false,
 	);
+	const node = syntaxAt(entryFileAbs, line, column);
 	// The hover text can't tell a callee from its declaration; the syntax
 	// can. Calls are reported as `call` with a call signature, as on
 	// TypeScript 6.
-	if (isCallee(entryFileAbs, line, column)) {
+	if (node && ts.isCallExpression(node)) {
 		result.kind = "call";
 		result.signature = arrowToCallSignature(result.signature);
+	}
+	// The hover of a type alias, class, or interface drops `const`, `in`,
+	// and `out` from its type parameters; the declaration has them.
+	if (
+		node &&
+		(ts.isTypeAliasDeclaration(node) ||
+			ts.isClassDeclaration(node) ||
+			ts.isInterfaceDeclaration(node)) &&
+		(result.kind === "type" ||
+			result.kind === "class" ||
+			result.kind === "interface")
+	) {
+		result.signature = withTypeParameterModifiers(
+			result.signature,
+			node.typeParameters?.map((parameter) => ({
+				name: parameter.name.text,
+				modifiers:
+					parameter.modifiers?.map((modifier) =>
+						modifier.getText(),
+					) ?? [],
+			})) ?? [],
+		);
 	}
 	if (extras.overloads) result.overloads = extras.overloads;
 	if (extras.unionMembers !== undefined)
 		result.unionMembers = extras.unionMembers;
-	if (options?.include_timing) {
-		result.timing = { resolution_ms: resolutionMs };
-	}
+	if (options?.sort_unions) sortResultUnions(result);
 	return result;
 }
 
-/** Whether the position is on the callee name of a call expression. */
-function isCallee(file: string, line: number, column: number): boolean {
+/** The TypeScript 6 syntax node hovered at a position, if it parses. */
+function syntaxAt(
+	file: string,
+	line: number,
+	column: number,
+): ts.Node | undefined {
 	try {
-		const node = findNodeAtPosition(parseSource(file), line, column);
-		return node !== undefined && ts.isCallExpression(node);
+		return findNodeAtPosition(parseSource(file), line, column);
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 
@@ -1002,16 +1027,40 @@ export function parseHoverMarkdown(markdown: string): ParsedHover {
 			undefined
 		: undefined;
 	const described = describeSignature(display);
+	const kind = KIND_ALIASES.get(described.kind) ?? described.kind;
+	const signature = singleLine(described.signature);
+	// The declared name of `type Name<T> = …` or `Name<T>` is not a type.
+	const nameEnd = declaredNameEnd(signature, kind, described.name);
 	return {
 		display,
 		documentation,
 		...described,
-		kind: KIND_ALIASES.get(described.kind) ?? described.kind,
-		signature: singleLine(described.signature),
+		kind,
+		signature:
+			signature.slice(0, nameEnd) + arraySyntax(signature.slice(nameEnd)),
 		...(described.returnType
-			? { returnType: singleLine(described.returnType) }
+			? { returnType: arraySyntax(singleLine(described.returnType)) }
 			: {}),
 	};
+}
+
+/** The end of the declared name a type alias, class, or interface starts with. */
+function declaredNameEnd(
+	signature: string,
+	kind: string,
+	name: string | undefined,
+): number {
+	if (!name) return 0;
+	if (kind === "type" && signature.startsWith(`type ${name}`)) {
+		return `type ${name}`.length;
+	}
+	if (
+		(kind === "class" || kind === "interface") &&
+		signature.startsWith(name)
+	) {
+		return name.length;
+	}
+	return 0;
 }
 
 function describeSignature(display: string): {
@@ -1220,8 +1269,4 @@ function matchBracket(text: string, open: number): number {
 /** UTF-16 offset of a 1-based TypeScript-rules position in `text`. */
 function offsetOf(text: string, position: HoverPosition): number {
 	return (lineStarts(text)[position.line - 1] ?? 0) + position.column - 1;
-}
-
-function roundMs(value: number): number {
-	return Math.round(value * 1000) / 1000;
 }

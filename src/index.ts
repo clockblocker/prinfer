@@ -11,6 +11,8 @@ import {
 	getHoverInfo,
 	loadProgram,
 	lookupName,
+	measureHoverCost,
+	sortResultUnions,
 } from "./core/index.js";
 import type {
 	AnnotationFinding,
@@ -29,6 +31,7 @@ import type {
 	FileDiagnostic,
 	HoverAlternative,
 	HoverByNameOptions,
+	HoverCost,
 	HoverOptions,
 	HoverPosition,
 	HoverResult,
@@ -61,6 +64,7 @@ export {
 	diagnosticsSuccessSchema,
 	fileDiagnosticSchema,
 	type HoverSuccess,
+	hoverCostSchema,
 	hoverResultSchema,
 	hoverSuccess,
 	hoverSuccessSchema,
@@ -100,6 +104,7 @@ export type {
 	FileDiagnostic,
 	HoverAlternative,
 	HoverByNameOptions,
+	HoverCost,
 	HoverOptions,
 	HoverPosition,
 	HoverResult,
@@ -259,8 +264,13 @@ function hoverByPositionImpl(
 	column: number,
 	options?: HoverOptions,
 ): HoverResult {
-	const { project, include_docs = false, full = false } = options ?? {};
-	const includeTiming = options?.include_timing ?? false;
+	const {
+		project,
+		include_docs = false,
+		include_cost = false,
+		full = false,
+		sort_unions = false,
+	} = options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
 
@@ -283,11 +293,10 @@ function hoverByPositionImpl(
 		throw new Error(`No symbol found at ${entryFileAbs}:${line}:${column}`);
 	}
 
-	const typeResolutionStarted = performance.now();
 	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
-	const typeResolutionMs = performance.now() - typeResolutionStarted;
-	if (includeTiming) {
-		result.timing = { resolution_ms: roundMs(typeResolutionMs) };
+	if (sort_unions) sortResultUnions(result);
+	if (include_cost) {
+		result.cost = measureHoverCost(program, node, sourceFile);
 	}
 	return result;
 }
@@ -300,8 +309,9 @@ function hoverByNameImpl(
 	const {
 		project,
 		include_docs = false,
-		include_timing = false,
+		include_cost = false,
 		full = false,
+		sort_unions = false,
 		line,
 	} = options ?? {};
 
@@ -325,11 +335,10 @@ function hoverByNameImpl(
 	program.getTypeChecker();
 	const { node, alternatives } = lookupName(sourceFile, name, line, file);
 
-	const typeResolutionStarted = performance.now();
 	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
-	const typeResolutionMs = performance.now() - typeResolutionStarted;
-	if (include_timing) {
-		result.timing = { resolution_ms: roundMs(typeResolutionMs) };
+	if (sort_unions) sortResultUnions(result);
+	if (include_cost) {
+		result.cost = measureHoverCost(program, node, sourceFile);
 	}
 	if (alternatives) result.alternatives = alternatives;
 	return result;
@@ -367,8 +376,9 @@ export function batchHover(
 	const {
 		project,
 		include_docs = false,
-		include_timing = false,
+		include_cost = false,
 		full = false,
+		sort_unions = false,
 	} = options ?? {};
 
 	const entryFileAbs = path.resolve(process.cwd(), file);
@@ -417,7 +427,6 @@ export function batchHover(
 				});
 				continue;
 			}
-			const typeResolutionStarted = performance.now();
 			const result = getHoverInfo(
 				program,
 				node,
@@ -425,11 +434,9 @@ export function batchHover(
 				include_docs,
 				full,
 			);
-			const typeResolutionMs = performance.now() - typeResolutionStarted;
-			if (include_timing) {
-				result.timing = {
-					resolution_ms: roundMs(typeResolutionMs),
-				};
+			if (sort_unions) sortResultUnions(result);
+			if (include_cost) {
+				result.cost = measureHoverCost(program, node, sourceFile);
 			}
 			items.push({ position: pos, result });
 		} catch (err) {
@@ -450,8 +457,4 @@ export function batchHover(
 		successCount: items.filter((i) => i.result).length,
 		errorCount: items.filter((i) => i.error).length,
 	};
-}
-
-function roundMs(value: number): number {
-	return Math.round(value * 1000) / 1000;
 }

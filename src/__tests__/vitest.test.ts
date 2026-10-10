@@ -27,8 +27,8 @@ describe("test-runner snapshot integration", () => {
 		expect(result.kind).toBe("const");
 	});
 
-	test("captures TypeScript 7 completion names", async () => {
-		await expect(
+	test("captures TypeScript 7 completion names", () => {
+		expect(
 			inferredCompletions(
 				new URL("./fixtures/completions.ts", import.meta.url),
 				{
@@ -37,30 +37,29 @@ describe("test-runner snapshot integration", () => {
 					backend: "typescript7",
 				},
 			),
-		).resolves.toEqual(["coffee", "tea"]);
+		).toEqual(["coffee", "tea"]);
 	});
 
-	test("uses the asynchronous TypeScript 7 backend for inferred types", async () => {
+	test("returns TypeScript 7 inferred types synchronously", () => {
 		const result = inferredType(import.meta.url, {
 			name: "capturedGenericResult",
 			backend: "typescript7",
 		});
 
-		expect(result).toBeInstanceOf(Promise);
-		await expect(result).resolves.toContain('value: "preserved-literal";');
+		expect(result).toContain('value: "preserved-literal";');
 	});
 
-	test("expands aliases and indexed accesses in full TypeScript 7 output", async () => {
+	test("expands aliases and indexed accesses in full TypeScript 7 output", () => {
 		const fixture = new URL(
 			"./fixtures/native-fidelity.ts",
 			import.meta.url,
 		);
-		const relation = await inferredType(fixture, {
+		const relation = inferredType(fixture, {
 			name: "ExpandedRelationClaim",
 			full: true,
 			backend: "typescript7",
 		});
-		const reading = await inferredType(fixture, {
+		const reading = inferredType(fixture, {
 			name: "ExpandedIndexedReading",
 			full: true,
 			backend: "typescript7",
@@ -76,14 +75,14 @@ describe("test-runner snapshot integration", () => {
 		expect(reading).not.toContain('NoteData["reading"]');
 	});
 
-	test("snapshots untruncated types by default on both backends", async () => {
+	test("snapshots untruncated types by default on both backends", () => {
 		const fixture = new URL(
 			"./fixtures/native-fidelity.ts",
 			import.meta.url,
 		);
 		const selector = { name: "ExpandedRelationClaim" };
 		const ts6 = inferredType(fixture, selector);
-		const ts7 = await inferredType(fixture, {
+		const ts7 = inferredType(fixture, {
 			...selector,
 			backend: "typescript7",
 		});
@@ -95,14 +94,14 @@ describe("test-runner snapshot integration", () => {
 		expect(ts7).toBe(ts6);
 	});
 
-	test("full: false opts back into editor-style truncation", async () => {
+	test("full: false opts back into editor-style truncation", () => {
 		const fixture = new URL(
 			"./fixtures/native-fidelity.ts",
 			import.meta.url,
 		);
 		const selector = { name: "ExpandedRelationClaim", full: false };
 		const ts6 = inferredType(fixture, selector);
-		const ts7 = await inferredType(fixture, {
+		const ts7 = inferredType(fixture, {
 			...selector,
 			backend: "typescript7",
 		});
@@ -115,25 +114,23 @@ describe("test-runner snapshot integration", () => {
 		);
 	});
 
-	test("uses the explicit TypeScript 7 project and reports timing", async () => {
+	test("uses the explicit TypeScript 7 project", () => {
 		const fixture = new URL(
 			"./fixtures/native-fidelity.ts",
 			import.meta.url,
 		);
-		const result = await inferredTypeInfo(fixture, {
+		const result = inferredTypeInfo(fixture, {
 			name: "nullable",
 			project: new URL("./fixtures/tsconfig.loose.json", import.meta.url)
 				.pathname,
-			include_timing: true,
 			backend: "typescript7",
 		});
 
 		expect(result.signature).toBe("any");
-		expect(result.timing?.resolution_ms).toBeGreaterThanOrEqual(0);
 	});
 
-	test("returns TypeScript 7 symbol metadata by position", async () => {
-		const result = await inferredTypeInfo(
+	test("returns TypeScript 7 symbol metadata by position", () => {
+		const result = inferredTypeInfo(
 			new URL("./fixtures/with-jsdoc.ts", import.meta.url),
 			{
 				line: 9,

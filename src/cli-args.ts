@@ -136,10 +136,13 @@ export function shellHint(arg: string): string | undefined {
 export const FLAGS: Record<string, { key: string; value?: true }> = {
 	"--docs": { key: "docs" },
 	"-d": { key: "docs" },
+	"--cost": { key: "cost" },
+	// Deprecated: accepted with a warning, no longer reported.
 	"--timing": { key: "timing" },
 	"-t": { key: "timing" },
 	"--full": { key: "full" },
 	"-f": { key: "full" },
+	"--sort-unions": { key: "sortUnions" },
 	"--json": { key: "json" },
 	"--suggestions": { key: "suggestions" },
 	"--text": { key: "text", value: true },

@@ -8,6 +8,7 @@ import {
 	nativeApiTypeInfoByName,
 } from "../native-api.js";
 import { closeNativeSessions, nativeHoverByName } from "../native-lsp.js";
+import { closeTestingSessions, inferredTypeInfo } from "../testing.js";
 import type { HoverResult } from "../types.js";
 
 // Optional parameters and properties print the way `tsc` writes them in
@@ -46,6 +47,22 @@ export function overloaded(x: number): void;
 export function overloaded(x: unknown, y?: number) {}
 export declare function generic<T>(x: T, y?: T): void;
 export const instantiated = generic(1);
+export function inArray(rows: { z?: string | number }[]): void {}
+export function inGenericArray(rows: Array<{ z?: string }>): void {}
+export function inReadonlyArray(rows: readonly { z?: string }[], more: ReadonlyArray<{ z?: number }>): void {}
+export function inTuple(pair: [{ z?: string }, number], rest: [number, ...{ z?: string }[]]): void {}
+export function nestedInArray(rows: { items: { z?: string }[] }[]): void {}
+export type Rows = { z?: string | number }[];
+export function rowsOf(): { z?: string }[] { return []; }
+export function inTypeArguments(p: Promise<{ z?: string }>, m: Map<string, { z?: number }>, r: Record<string, { z?: boolean }>): void {}
+export function inMembers(both: { z?: string } & { w: number }, either: { z?: string } | { w?: number }): void {}
+export function inSignatures(index: { [key: string]: { z?: string } }, make: new (n?: number) => { z?: string }): void {}
+export function declaredInArray(rows: { z?: string | undefined }[]): void {}
+export const rowsVariable: Array<{ z?: string }> = [];
+export type ElementsOf<T> = { z?: T }[];
+export declare function genericRows<T>(rows: { z?: T }[]): void;
+export const genericRowsCall = genericRows([{ z: 1 }]);
+export declare function sortedRows(rows: { z?: "b" | "a" | number }[], pair: [{ y?: undefined | "d" | "c" }, 2 | 1], more: Array<{ w?: false | "x" }>): Array<"q" | "p">;
 `;
 
 const roots: string[] = [];
@@ -77,19 +94,32 @@ function project(exact: boolean): string {
 afterAll(async () => {
 	closeNativeSessions();
 	await closeNativeApiSessions();
+	await closeTestingSessions();
 	for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
 });
 
 type Lookup = (
 	file: string,
 	name: string,
-	options?: { line?: number },
+	options?: { line?: number; sort_unions?: boolean },
 ) => Promise<HoverResult>;
 
 const backends: Array<[string, Lookup]> = [
 	["typescript6", async (file, name, options) => hover(file, name, options)],
 	["typescript7 (language server)", nativeHoverByName],
 	["typescript7 (testing API)", nativeApiTypeInfoByName],
+	// The same API through the synchronous prinfer/testing worker.
+	[
+		"typescript7 (prinfer/testing)",
+		async (file, name, options) =>
+			inferredTypeInfo(file, {
+				name,
+				line: options?.line,
+				sort_unions: options?.sort_unions,
+				full: false,
+				backend: "typescript7",
+			}),
+	],
 ];
 
 function comparable(result: HoverResult) {
@@ -173,6 +203,84 @@ const shared: Array<[string, number | undefined, Partial<HoverResult>]> = [
 		},
 	],
 	["declared", undefined, { signature: "number | undefined" }],
+	// Object types inside arrays, tuples, type arguments, unions,
+	// intersections, and index and construct signatures.
+	[
+		"inArray",
+		undefined,
+		{ signature: "(rows: { z?: string | number; }[]): void" },
+	],
+	[
+		"inGenericArray",
+		undefined,
+		{ signature: "(rows: { z?: string; }[]): void" },
+	],
+	[
+		"inReadonlyArray",
+		undefined,
+		{
+			signature:
+				"(rows: readonly { z?: string; }[], more: readonly { z?: number; }[]): void",
+		},
+	],
+	[
+		"inTuple",
+		undefined,
+		{
+			signature:
+				"(pair: [{ z?: string; }, number], rest: [number, ...{ z?: string; }[]]): void",
+		},
+	],
+	[
+		"nestedInArray",
+		undefined,
+		{ signature: "(rows: { items: { z?: string; }[]; }[]): void" },
+	],
+	[
+		"Rows",
+		undefined,
+		{ signature: "type Rows = { z?: string | number; }[]" },
+	],
+	[
+		"rowsOf",
+		undefined,
+		{ signature: "(): { z?: string; }[]", returnType: "{ z?: string; }[]" },
+	],
+	[
+		"inTypeArguments",
+		undefined,
+		{
+			signature:
+				"(p: Promise<{ z?: string; }>, m: Map<string, { z?: number; }>, r: Record<string, { z?: boolean; }>): void",
+		},
+	],
+	[
+		"inMembers",
+		undefined,
+		{
+			signature:
+				"(both: { z?: string; } & { w: number; }, either: { z?: string; } | { w?: number; }): void",
+		},
+	],
+	[
+		"inSignatures",
+		undefined,
+		{
+			signature:
+				"(index: { [key: string]: { z?: string; }; }, make: new (n?: number) => { z?: string; }): void",
+		},
+	],
+	[
+		"declaredInArray",
+		undefined,
+		{ signature: "(rows: { z?: string | undefined; }[]): void" },
+	],
+	["rowsVariable", undefined, { signature: "{ z?: string; }[]" }],
+	[
+		"ElementsOf",
+		undefined,
+		{ signature: "type ElementsOf<T> = { z?: T; }[]" },
+	],
 ];
 
 // With exactOptionalPropertyTypes, `?` no longer implies `| undefined`:
@@ -206,6 +314,15 @@ const byMode: Record<
 				unionMembers: 2,
 			},
 		],
+		[
+			"genericRows",
+			47,
+			{
+				signature:
+					"<number>(rows: { z?: number | undefined; }[]): void",
+				kind: "call",
+			},
+		],
 	],
 	exact: [
 		[
@@ -215,6 +332,14 @@ const byMode: Record<
 		],
 		["digits", 16, { signature: "number", kind: "property" }],
 		["content", undefined, { signature: "string", kind: "property" }],
+		[
+			"genericRows",
+			47,
+			{
+				signature: "<number>(rows: { z?: number; }[]): void",
+				kind: "call",
+			},
+		],
 	],
 };
 
@@ -233,3 +358,25 @@ for (const mode of ["loose", "exact"] as const) {
 		}
 	});
 }
+
+// sort_unions sorts the text after the nested-optional, array, and tuple
+// rewrites, so every backend prints the same sorted text.
+describe("sort_unions with optional properties in arrays and tuples", () => {
+	for (const mode of ["loose", "exact"] as const) {
+		test(`sortedRows (exactOptionalPropertyTypes ${mode === "exact" ? "on" : "off"})`, async () => {
+			const file = project(mode === "exact");
+			const results = await Promise.all(
+				backends.map(([, lookup]) =>
+					lookup(file, "sortedRows", { sort_unions: true }),
+				),
+			);
+			const [first, ...rest] = results.map(comparable);
+			expect(first).toMatchObject({
+				signature:
+					'(rows: { z?: "a" | "b" | number; }[], pair: [{ y?: "c" | "d" | undefined; }, 1 | 2], more: { w?: "x" | false; }[]): ("p" | "q")[]',
+				returnType: '("p" | "q")[]',
+			});
+			for (const other of rest) expect(other).toEqual(first as never);
+		}, 30_000);
+	}
+});

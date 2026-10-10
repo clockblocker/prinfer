@@ -23,7 +23,11 @@ import {
 	resolveTextColumn,
 } from "./core/index.js";
 import { formatErrorText, reportError } from "./error-report.js";
-import { assertSourceFile, PrinferError } from "./errors.js";
+import {
+	assertSourceFile,
+	COST_NEEDS_TYPESCRIPT6,
+	PrinferError,
+} from "./errors.js";
 import { DEFAULT_MAX_CHARS, formatHoverText } from "./hover-format.js";
 import { batchHover, diagnostics, hover } from "./index.js";
 import {
@@ -54,23 +58,23 @@ Setup:
   server with a client. Without a global install: npx -y prinfer mcp
 
 Provided tools:
-  hover_by_name(file, name, line?, include_docs?, full?, max_chars?, project?, backend?)
-  hover(file, line, text? | column?, occurrence?, include_docs?, full?, max_chars?, project?, backend?)
-  batch_hover(positions, file?, include_docs?, full?, max_chars?, project?, backend?)
+  hover_by_name(file, name, line?, include_docs?, include_cost?, full?, max_chars?, project?, backend?)
+  hover(file, line, text? | column?, occurrence?, include_docs?, include_cost?, full?, max_chars?, project?, backend?)
+  batch_hover(positions, file?, include_docs?, include_cost?, full?, max_chars?, project?, backend?)
   completions(file, line, column, prefix?, limit?, project?)
   diagnostics(file, include_suggestions?, project?, backend?)
   annotations(file, project?)
 
 Backends:
   hover_by_name, hover, batch_hover and diagnostics default to typescript7.
-  completions (top 50 by default) and annotations always use typescript6.
+  completions (top 50 by default) and annotations always use typescript6, as
+  do hovers with include_cost.
 
 Hover text is capped at ${DEFAULT_MAX_CHARS} characters per type (max_chars; 0 for no
 cap); structuredContent always has the complete result.
 
 Environment:
   PRINFER_BACKEND=typescript6   Backend for hover and diagnostics tools (default typescript7)
-  PRINFER_INCLUDE_TIMING=1      Add type-resolution timing to every hover result
 
 See also:
   prinfer --help    CLI: type lookups, completions, check, and annotations
@@ -188,10 +192,23 @@ function useNative(backend?: Backend): boolean {
 	);
 }
 
-/** Timing is a server-wide diagnostic switch rather than a per-call flag. */
-function timingEnabled(): boolean {
-	const value = process.env.PRINFER_INCLUDE_TIMING?.toLowerCase();
-	return value === "1" || value === "true";
+/**
+ * The backend of a hover call: include_cost runs on TypeScript 6 unless
+ * the call explicitly asks for TypeScript 7, which cannot count.
+ */
+function hoverBackend(
+	backend: Backend | undefined,
+	includeCost: boolean | undefined,
+): Backend | undefined {
+	if (!includeCost) return backend;
+	if (backend === "typescript7") {
+		throw new PrinferError(
+			"INVALID_ARGUMENT",
+			`include_cost needs backend "typescript6". ${COST_NEEDS_TYPESCRIPT6}`,
+			'Omit backend, or pass backend "typescript6", with include_cost.',
+		);
+	}
+	return "typescript6";
 }
 
 function readSource(file: string): string {
@@ -561,6 +578,10 @@ const includeDocsSchema = z
 	.boolean()
 	.optional()
 	.describe("Also return JSDoc/TSDoc");
+const includeCostSchema = z
+	.boolean()
+	.optional()
+	.describe("Count type instantiations (same every run); typescript6");
 const backendSchema = z
 	.enum(["typescript6", "typescript7"])
 	.optional()
@@ -628,6 +649,7 @@ function createServer(): McpServer {
 						.optional()
 						.describe("1-based line, to pick among repeated names"),
 					include_docs: includeDocsSchema,
+					include_cost: includeCostSchema,
 					...hoverTextShape,
 					project: projectSchema,
 					backend: backendSchema,
@@ -640,6 +662,7 @@ function createServer(): McpServer {
 			name,
 			line,
 			include_docs,
+			include_cost,
 			full,
 			max_chars,
 			project,
@@ -651,13 +674,8 @@ function createServer(): McpServer {
 					file,
 					name,
 					line,
-					{
-						include_docs,
-						include_timing: timingEnabled(),
-						full,
-						project,
-					},
-					backend,
+					{ include_docs, include_cost, full, project },
+					hoverBackend(backend, include_cost),
 				);
 				return {
 					content: [
@@ -696,6 +714,7 @@ function createServer(): McpServer {
 					occurrence: occurrenceSchema,
 					column: columnSchema.optional(),
 					include_docs: includeDocsSchema,
+					include_cost: includeCostSchema,
 					...hoverTextShape,
 					project: projectSchema,
 					backend: backendSchema,
@@ -710,6 +729,7 @@ function createServer(): McpServer {
 			occurrence,
 			column,
 			include_docs,
+			include_cost,
 			full,
 			max_chars,
 			project,
@@ -729,13 +749,8 @@ function createServer(): McpServer {
 					file,
 					line,
 					resolvedColumn,
-					{
-						include_docs,
-						include_timing: timingEnabled(),
-						full,
-						project,
-					},
-					backend,
+					{ include_docs, include_cost, full, project },
+					hoverBackend(backend, include_cost),
 				);
 				const output = formatHoverResult(
 					result,
@@ -794,6 +809,7 @@ function createServer(): McpServer {
 						.max(MAX_BATCH_POSITIONS)
 						.describe(`1-${MAX_BATCH_POSITIONS} lookups`),
 					include_docs: includeDocsSchema,
+					include_cost: includeCostSchema,
 					...hoverTextShape,
 					project: projectSchema,
 					backend: backendSchema,
@@ -805,6 +821,7 @@ function createServer(): McpServer {
 			file,
 			positions,
 			include_docs,
+			include_cost,
 			full,
 			max_chars,
 			project,
@@ -813,13 +830,12 @@ function createServer(): McpServer {
 			try {
 				const result = await runBatchHover(
 					positions,
-					{ file, project, backend },
 					{
-						include_docs,
-						include_timing: timingEnabled(),
-						full,
+						file,
 						project,
+						backend: hoverBackend(backend, include_cost),
 					},
+					{ include_docs, include_cost, full, project },
 				);
 				return {
 					content: [

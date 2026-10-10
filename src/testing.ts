@@ -4,15 +4,10 @@ import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { contractError } from "./contract.js";
 import { resolveTextColumn } from "./core/text-target.js";
-import { PrinferError } from "./errors.js";
+import { COST_NEEDS_TYPESCRIPT6, PrinferError } from "./errors.js";
 import { hover } from "./index.js";
-import {
-	closeNativeApiSessions,
-	nativeApiCompletionNames,
-	nativeApiTypeInfo,
-	nativeApiTypeInfoByName,
-} from "./native-api.js";
-import type { HoverOptions, HoverResult } from "./types.js";
+import { callNative, closeNative, DEFAULT_TIMEOUT_MS } from "./native-sync.js";
+import type { HoverCost, HoverOptions, HoverResult } from "./types.js";
 
 /**
  * A source file for the testing helpers. Pass `import.meta.url` for the test
@@ -31,6 +26,15 @@ interface InferredCompletionsOptions {
 	 * tool and `prinfer complete` use TypeScript 6 and return 50 by default.)
 	 */
 	backend?: "typescript7";
+	/** See `InferredTypeOptions.timeout`. */
+	timeout?: number;
+	/**
+	 * Throw on selector keys this helper doesn't know, with the closest valid
+	 * key (default false: unknown keys are ignored). Tests usually run without
+	 * type checking, so this is what catches `includeDocs` for
+	 * `include_docs`.
+	 */
+	strict?: boolean;
 }
 
 export interface InferredCompletionsPosition
@@ -70,11 +74,26 @@ export interface InferredTypeOptions
 	 */
 	full?: boolean;
 	/**
-	 * `prinfer/testing` defaults to `"typescript6"` and returns synchronously.
-	 * `"typescript7"` returns a promise. (The MCP server defaults to
-	 * TypeScript 7; the CLI and library to TypeScript 6.)
+	 * `prinfer/testing` defaults to `"typescript6"`. Both backends return
+	 * synchronously. (The MCP server defaults to TypeScript 7; the CLI and
+	 * library to TypeScript 6.)
 	 */
 	backend?: "typescript6" | "typescript7";
+	/**
+	 * Milliseconds a TypeScript 7 call may block before it throws (default
+	 * 60000, enough for a cold load of a large project). The compiler that
+	 * missed it is stopped and the next call starts a new one, so a hung
+	 * compiler fails one test instead of the whole run. A test runner's own
+	 * timeout cannot interrupt the call. Ignored on TypeScript 6.
+	 */
+	timeout?: number;
+	/**
+	 * Throw on selector keys this helper doesn't know, with the closest valid
+	 * key (default false: unknown keys are ignored). Tests usually run without
+	 * type checking, so this is what catches `includeDocs` for
+	 * `include_docs`.
+	 */
+	strict?: boolean;
 }
 
 export interface InferredTypeTarget extends InferredTypeOptions {
@@ -105,10 +124,6 @@ export type InferredTypeSelector =
 	| InferredTypePosition
 	| InferredTypeTextTarget;
 
-type TypeScript7InferredTypeSelector = InferredTypeSelector & {
-	backend: "typescript7";
-};
-
 type TypeScript6InferredTypeSelector = InferredTypeSelector & {
 	backend?: "typescript6";
 };
@@ -122,6 +137,8 @@ interface Request {
 	input: TestingFile;
 	file: string;
 	backend: "typescript6" | "typescript7";
+	/** Milliseconds a TypeScript 7 call may block. */
+	timeout: number;
 }
 
 /**
@@ -131,16 +148,23 @@ interface Request {
  *
  * @example
  * ```ts
- * await expect(
+ * expect(
  *   inferredCompletions(import.meta.url, { line: 12, text: 'drink("' }),
- * ).resolves.toMatchInlineSnapshot();
+ * ).toMatchInlineSnapshot();
  * ```
+ *
+ * Synchronous: the call blocks until TypeScript 7 answers (see `timeout`).
  */
-export async function inferredCompletions(
+export function inferredCompletions(
 	file: TestingFile,
 	selector: InferredCompletionsSelector,
-): Promise<string[]> {
-	const request = createRequest("inferredCompletions", file, selector);
+): string[];
+export function inferredCompletions(
+	file: TestingFile,
+	selector: InferredCompletionsSelector,
+	...extra: unknown[]
+): string[] {
+	const request = createRequest("inferredCompletions", file, selector, extra);
 	if (request.backend !== "typescript7") {
 		throw testingError(
 			"INVALID_ARGUMENT",
@@ -153,11 +177,15 @@ export async function inferredCompletions(
 		if (target.kind === "name") {
 			throw invalidSelector(request.helper);
 		}
-		return await nativeApiCompletionNames(
-			request.file,
-			target.line,
-			target.column,
-			{ project: selector.project },
+		return callNative(
+			"completionNames",
+			[
+				request.file,
+				target.line,
+				target.column,
+				{ project: projectPath(selector.project) },
+			],
+			request.timeout,
 		);
 	} catch (error) {
 		throw explain(error, request, selector);
@@ -167,9 +195,14 @@ export async function inferredCompletions(
 /**
  * Inspect a source expression for use with a test runner's ordinary snapshot
  * matcher. `import.meta.url` is accepted directly so tests stay relocatable.
- * Types are untruncated unless `full: false`. Without a backend the result
- * is synchronous (TypeScript 6); with `backend: "typescript7"` it is a
- * promise.
+ * Types are untruncated unless `full: false`. The result is synchronous on
+ * both backends: TypeScript 6 by default, or TypeScript 7 with
+ * `backend: "typescript7"`, which blocks until the compiler answers (see
+ * `timeout`).
+ *
+ * Every option goes in the selector, e.g.
+ * `{ name: "result", backend: "typescript7" }`; a third argument throws.
+ * Unknown selector keys are ignored unless `strict: true`.
  *
  * @example
  * ```ts
@@ -180,81 +213,116 @@ export async function inferredCompletions(
  */
 export function inferredType(
 	file: TestingFile,
-	selector: TypeScript7InferredTypeSelector,
-): Promise<string>;
-export function inferredType(
-	file: TestingFile,
-	selector: TypeScript6InferredTypeSelector,
+	selector: InferredTypeSelector,
 ): string;
 export function inferredType(
 	file: TestingFile,
 	selector: InferredTypeSelector,
-): string | Promise<string>;
-export function inferredType(
-	file: TestingFile,
-	selector: InferredTypeSelector,
-): string | Promise<string> {
-	const result = inferredTypeInfoImpl("inferredType", file, selector);
-	return result instanceof Promise
-		? result.then((info) => info.signature)
-		: result.signature;
+	...extra: unknown[]
+): string {
+	return inferredTypeInfoImpl("inferredType", file, selector, extra)
+		.signature;
 }
 
-/** Return the complete prinfer hover result when a test needs more than the type. */
+/**
+ * Return the complete prinfer hover result when a test needs more than the
+ * type. Takes the same selector as `inferredType` and, like it, returns
+ * synchronously on both backends.
+ */
 export function inferredTypeInfo(
 	file: TestingFile,
-	selector: TypeScript7InferredTypeSelector,
-): Promise<HoverResult>;
-export function inferredTypeInfo(
-	file: TestingFile,
-	selector: TypeScript6InferredTypeSelector,
+	selector: InferredTypeSelector,
 ): HoverResult;
 export function inferredTypeInfo(
 	file: TestingFile,
 	selector: InferredTypeSelector,
-): HoverResult | Promise<HoverResult>;
-export function inferredTypeInfo(
+	...extra: unknown[]
+): HoverResult {
+	return inferredTypeInfoImpl("inferredTypeInfo", file, selector, extra);
+}
+
+/**
+ * Count the checker work behind a type, for a test that keeps it within a
+ * budget. The counts come from a fresh TypeScript 6 checker (see
+ * `HoverCost`), so they are the same on every run, in any test order, and
+ * change only when the code, the compiler options, or the TypeScript
+ * version does. Synchronous; TypeScript 6 only. Takes the same selector
+ * as `inferredType`, `strict` included; a third argument throws.
+ *
+ * @example
+ * ```ts
+ * expect(
+ *   inferredTypeCost(import.meta.url, { name: "userSchema" }).instantiations,
+ * ).toBeLessThan(2_000);
+ * ```
+ */
+export function inferredTypeCost(
 	file: TestingFile,
-	selector: InferredTypeSelector,
-): HoverResult | Promise<HoverResult> {
-	return inferredTypeInfoImpl("inferredTypeInfo", file, selector);
+	selector: TypeScript6InferredTypeSelector,
+): HoverCost;
+export function inferredTypeCost(
+	file: TestingFile,
+	selector: TypeScript6InferredTypeSelector,
+	...extra: unknown[]
+): HoverCost {
+	const helper = "inferredTypeCost";
+	const request = createRequest(helper, file, selector, extra);
+	if (request.backend === "typescript7") {
+		throw costNeedsTypeScript6(helper);
+	}
+	const result = inferredTypeInfoImpl(
+		helper,
+		file,
+		{ ...selector, include_cost: true },
+		[],
+	);
+	return result.cost as HoverCost;
 }
 
 /**
  * Close the shared TypeScript 7 compiler sessions used by the testing helpers.
  * Optional: idle sessions do not keep the process alive. Call it to release
- * the compiler processes early, e.g. from `afterAll`.
+ * the compiler processes early, e.g. from `afterAll`. The compilers are shut
+ * down before it returns; the promise settles once their worker thread has
+ * stopped, so awaiting it is optional too.
  */
 export function closeTestingSessions(): Promise<void> {
-	return closeNativeApiSessions();
+	return closeNative();
 }
 
 function inferredTypeInfoImpl(
 	helper: string,
 	file: TestingFile,
 	selector: InferredTypeSelector,
-): HoverResult | Promise<HoverResult> {
-	const request = createRequest(helper, file, selector);
+	extra: unknown[],
+): HoverResult {
+	const request = createRequest(helper, file, selector, extra);
 	if (request.backend === "typescript7") {
-		return (async () => {
-			try {
-				const target = resolveTarget(request, selector, "start");
-				const options = hoverOptions(selector);
-				return target.kind === "name"
-					? await nativeApiTypeInfoByName(request.file, target.name, {
-							...options,
-							line: target.line,
-						})
-					: await nativeApiTypeInfo(
+		if (selector.include_cost) throw costNeedsTypeScript6(helper);
+		try {
+			const target = resolveTarget(request, selector, "start");
+			const options = {
+				...hoverOptions(selector),
+				project: projectPath(selector.project),
+			};
+			return target.kind === "name"
+				? callNative(
+						"typeInfoByName",
+						[
 							request.file,
-							target.line,
-							target.column,
-							options,
-						);
-			} catch (error) {
-				throw explain(error, request, selector);
-			}
-		})();
+							target.name,
+							{ ...options, line: target.line },
+						],
+						request.timeout,
+					)
+				: callNative(
+						"typeInfo",
+						[request.file, target.line, target.column, options],
+						request.timeout,
+					);
+		} catch (error) {
+			throw explain(error, request, selector);
+		}
 	}
 
 	try {
@@ -271,14 +339,67 @@ function inferredTypeInfoImpl(
 	}
 }
 
+const COMPLETIONS_SELECTOR_KEYS = [
+	"line",
+	"column",
+	"text",
+	"occurrence",
+	"cursor",
+	"project",
+	"backend",
+	"timeout",
+	"strict",
+];
+
+/** `cursor` stays accepted: it has always worked with `text` at runtime. */
+const TYPE_SELECTOR_KEYS = [
+	"name",
+	"line",
+	"column",
+	"text",
+	"occurrence",
+	"cursor",
+	"project",
+	"full",
+	"include_docs",
+	"include_cost",
+	"sort_unions",
+	"include_timing",
+	"backend",
+	"timeout",
+	"strict",
+];
+
+/** A selector example that shows options sitting next to the target. */
+function selectorExample(helper: string): string {
+	if (helper === "inferredCompletions") {
+		return `${helper}(file, { line: 3, text: "user.", project: "./tsconfig.json" })`;
+	}
+	// inferredTypeCost has no TypeScript 7 backend to show.
+	return helper === "inferredTypeCost"
+		? `${helper}(file, { name: "result", project: "./tsconfig.json" })`
+		: `${helper}(file, { name: "result", backend: "typescript7" })`;
+}
+
 function createRequest(
 	helper: string,
 	input: TestingFile,
-	selector: { backend?: string } | undefined,
+	selector:
+		| { backend?: string; strict?: boolean; timeout?: unknown }
+		| undefined,
+	extra: unknown[],
 ): Request {
+	if (extra.length > 0) {
+		throw testingError(
+			"INVALID_ARGUMENT",
+			`${helper} takes two arguments (file, selector), got ${extra.length + 2}.`,
+			`Move options into the selector object: ${selectorExample(helper)}.`,
+		);
+	}
 	if (typeof selector !== "object" || selector === null) {
 		throw invalidSelector(helper);
 	}
+	if (selector.strict === true) assertKnownKeys(helper, selector);
 	const backend =
 		selector.backend ??
 		(helper === "inferredCompletions" ? "typescript7" : "typescript6");
@@ -291,7 +412,42 @@ function createRequest(
 				: 'Use backend: "typescript7", or omit it for the synchronous TypeScript 6 default.',
 		);
 	}
-	return { helper, input, file: sourcePath(input), backend };
+	const timeout = selector.timeout ?? DEFAULT_TIMEOUT_MS;
+	if (
+		typeof timeout !== "number" ||
+		!(timeout > 0) ||
+		timeout === Number.POSITIVE_INFINITY
+	) {
+		throw testingError(
+			"INVALID_ARGUMENT",
+			`${helper} needs timeout as a positive number of milliseconds, got ${JSON.stringify(selector.timeout)}.`,
+			`Omit timeout for the default of ${DEFAULT_TIMEOUT_MS}ms, or pass e.g. { timeout: 120_000 }.`,
+		);
+	}
+	return { helper, input, file: sourcePath(input), backend, timeout };
+}
+
+/** With `strict: true`, a misspelled option throws instead of being ignored. */
+function assertKnownKeys(helper: string, selector: object): void {
+	const known =
+		helper === "inferredCompletions"
+			? COMPLETIONS_SELECTOR_KEYS
+			: TYPE_SELECTOR_KEYS;
+	const unknown = Object.keys(selector).find((key) => !known.includes(key));
+	if (unknown === undefined) return;
+	const closest = [...known].sort(
+		(left, right) =>
+			editDistance(left, unknown) - editDistance(right, unknown),
+	)[0];
+	const guess =
+		closest && editDistance(closest, unknown) <= 3
+			? `Did you mean ${closest}? `
+			: "";
+	throw testingError(
+		"INVALID_ARGUMENT",
+		`${helper} got unknown selector key ${JSON.stringify(unknown)}.`,
+		`${guess}Selector keys: ${known.join(", ")}.`,
+	);
 }
 
 function resolveTarget(
@@ -376,8 +532,14 @@ function resolveTarget(
 
 /** Snapshots default to untruncated types, so a change anywhere in a type fails. */
 function hoverOptions(selector: InferredTypeSelector): HoverOptions {
-	const { project, include_docs, include_timing, full = true } = selector;
-	return { project, include_docs, include_timing, full };
+	const {
+		project,
+		include_docs,
+		include_cost,
+		full = true,
+		sort_unions,
+	} = selector;
+	return { project, include_docs, include_cost, full, sort_unions };
 }
 
 function assertPositive(helper: string, field: string, value: unknown): void {
@@ -403,6 +565,14 @@ function invalidSelector(helper: string): PrinferError {
 		"INVALID_ARGUMENT",
 		`${helper} needs exactly one target.`,
 		shapes,
+	);
+}
+
+function costNeedsTypeScript6(helper: string): PrinferError {
+	return testingError(
+		"INVALID_ARGUMENT",
+		`${helper} cannot count type costs on backend "typescript7". ${COST_NEEDS_TYPESCRIPT6}`,
+		"Omit backend to count on TypeScript 6.",
 	);
 }
 
@@ -558,6 +728,13 @@ function readSource(file: string): string {
 		throw new PrinferError("FILE_NOT_FOUND", `File not found: ${file}`);
 	}
 	return fs.readFileSync(file, "utf8");
+}
+
+/** Resolved here, against the caller's cwd, before it reaches the worker. */
+function projectPath(project: string | undefined): string | undefined {
+	return project === undefined
+		? undefined
+		: path.resolve(process.cwd(), project);
 }
 
 /** URLs and `file:` strings are converted; other strings resolve against process.cwd(). */

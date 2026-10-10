@@ -183,6 +183,32 @@ describe("parseHoverMarkdown (TypeScript 7 hover output)", () => {
 		expect(arrowToCallSignature("string[]")).toBe("string[]");
 	});
 
+	test("writes Array<T> and ReadonlyArray<T> as T[] and readonly T[]", () => {
+		for (const [type, expected] of [
+			["Array<{ z?: string; }>", "{ z?: string; }[]"],
+			["ReadonlyArray<number>", "readonly number[]"],
+			["Array<string | number>", "(string | number)[]"],
+			["Array<() => void>", "(() => void)[]"],
+			["Array<Array<string>>", "string[][]"],
+			["Array<ReadonlyArray<string>>", "(readonly string[])[]"],
+			["ReadonlyArray<string>[number]", "(readonly string[])[number]"],
+			['Array<"Array<string>">', '"Array<string>"[]'],
+			["Map<string, Array<number>>", "Map<string, number[]>"],
+			["NS.Array<string>", "NS.Array<string>"],
+			["{ Array<T>(x: T): void; }", "{ Array<T>(x: T): void; }"],
+		] as const) {
+			expect(
+				parseHoverMarkdown(block(`const x: ${type}`)).signature,
+			).toBe(expected);
+		}
+		expect(parseHoverMarkdown(block("interface Array<T>")).signature).toBe(
+			"Array<T>",
+		);
+		expect(
+			parseHoverMarkdown(block("type Array<T> = Array<T>")).signature,
+		).toBe("type Array<T> = T[]");
+	});
+
 	test("keeps documentation after the code block", () => {
 		const parsed = parseHoverMarkdown(
 			block(

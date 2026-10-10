@@ -15,6 +15,7 @@ import {
 	nativeApiTypeInfoByName,
 } from "../native-api.js";
 import { closeNativeSessions, nativeHoverByName } from "../native-lsp.js";
+import { closeTestingSessions, inferredTypeInfo } from "../testing.js";
 import type { HoverResult } from "../types.js";
 
 const fixture = path.join(import.meta.dir, "fixtures", "hover-parity.ts");
@@ -23,6 +24,7 @@ const objectKeys = path.join(import.meta.dir, "fixtures", "object-keys.ts");
 afterAll(async () => {
 	closeNativeSessions();
 	await closeNativeApiSessions();
+	await closeTestingSessions();
 });
 
 type Lookup = (
@@ -39,6 +41,25 @@ const backends: Array<[string, Lookup]> = [
 	[
 		"typescript7 (testing API)",
 		(name, options) => nativeApiTypeInfoByName(fixture, name, options),
+	],
+];
+
+/**
+ * Every backend, plus the testing API through the synchronous
+ * prinfer/testing worker. That helper wraps lookup errors with its own
+ * suggestions, so the error-shape tests below use `backends`.
+ */
+const lookups: Array<[string, Lookup]> = [
+	...backends,
+	[
+		"typescript7 (prinfer/testing)",
+		async (name, options) =>
+			inferredTypeInfo(fixture, {
+				name,
+				line: options?.line,
+				full: options?.full ?? false,
+				backend: "typescript7",
+			}),
 	],
 ];
 
@@ -149,13 +170,44 @@ const cases: Array<[string, number | undefined, Partial<HoverResult>]> = [
 			],
 		},
 	],
+	// Type parameter modifiers: `const`, `in`, `out`.
+	[
+		"Holder",
+		undefined,
+		{ signature: "Holder<const T extends 1 | 2>", kind: "class" },
+	],
+	["hold", undefined, { signature: "<const U>(item: U): U", kind: "method" }],
+	[
+		"holdAll",
+		undefined,
+		{
+			signature: "<const T extends readonly unknown[]>(items: T): T",
+			kind: "function",
+		},
+	],
+	[
+		"Sink",
+		undefined,
+		{ signature: "type Sink<in T> = (item: T) => void", kind: "type" },
+	],
+	[
+		"Source",
+		undefined,
+		{ signature: "type Source<out T> = () => T", kind: "type" },
+	],
+	["Cell", undefined, { signature: "Cell<in out T>", kind: "interface" }],
+	[
+		"Channel",
+		undefined,
+		{ signature: "Channel<in out K, const V>", kind: "class" },
+	],
 ];
 
 describe("backends agree on the canonical hover result", () => {
 	for (const [name, line, expected] of cases) {
 		test(`${name}${line ? `:${line}` : ""}`, async () => {
 			const results = await Promise.all(
-				backends.map(([, lookup]) => lookup(name, { line })),
+				lookups.map(([, lookup]) => lookup(name, { line })),
 			);
 			const [first, ...rest] = results.map(comparable);
 			expect(first).toMatchObject(expected);
@@ -174,7 +226,7 @@ describe("backends agree on the canonical hover result", () => {
 });
 
 describe("full turns off truncation on every backend", () => {
-	for (const [backend, lookup] of backends) {
+	for (const [backend, lookup] of lookups) {
 		test(backend, async () => {
 			const truncated = await lookup("Codes");
 			expect(truncated.signature).toMatch(/\.\.\. \d+ more \.\.\./);
@@ -199,7 +251,7 @@ describe("full turns off truncation on every backend", () => {
 
 	test("full agrees across backends", async () => {
 		const signatures = await Promise.all(
-			backends.map(([, lookup]) =>
+			lookups.map(([, lookup]) =>
 				lookup("Codes", { full: true }).then((r) => r.signature),
 			),
 		);
