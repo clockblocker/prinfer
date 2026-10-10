@@ -501,7 +501,7 @@ describe("teardown", () => {
 			...body,
 		].join("\n");
 
-	/** Run a script that never calls closeTestingSessions; return its stderr. */
+	/** Run a script that must exit on its own, promptly; return its stderr. */
 	async function exitsWithoutTeardown(
 		command: string[],
 		stdout = "Drink\ndrink,size\n",
@@ -572,7 +572,8 @@ describe("teardown", () => {
 		expect(stderr.split("prinfer: cannot find").length - 1).toBe(1);
 	}, 30_000);
 
-	test("a Node process exits after TypeScript 7 calls without closeTestingSessions", async () => {
+	/** The built entry Node imports, rebuilt when the sources are newer. */
+	function builtTesting(): string {
 		const dist = path.join(packageRoot, "dist", "testing.js");
 		const sources = [
 			path.join(packageRoot, "src", "testing.ts"),
@@ -592,11 +593,40 @@ describe("teardown", () => {
 			});
 			expect(build.exitCode).toBe(0);
 		}
+		return dist;
+	}
+
+	test("a Node process exits after TypeScript 7 calls without closeTestingSessions", async () => {
 		const stderr = await exitsWithoutTeardown([
 			"node",
-			writeScript("script.mjs", script(dist)),
+			writeScript("script.mjs", script(builtTesting())),
 		]);
 		expect(stderr).not.toContain("prinfer:");
+	}, 60_000);
+
+	test("a top-level await closeTestingSessions() settles on Node", async () => {
+		// The idle compiler process is unref'd, so on Node nothing held the
+		// event loop while closing waited for its answer: the loop drained
+		// and Node exited with code 13 (unsettled top-level await).
+		const dist = builtTesting();
+		const body = [
+			...calls,
+			"await closeTestingSessions();",
+			'console.log("closed");',
+			// A call after closing restarts the compiler; close it again.
+			'console.log(await inferredType(file, { name: "pick", backend: "typescript7" }));',
+			"await closeTestingSessions();",
+			'console.log("closed");',
+		];
+		const source = [
+			`import { closeTestingSessions } from ${JSON.stringify(dist)};`,
+			script(dist, [], body),
+		].join("\n");
+		const stderr = await exitsWithoutTeardown(
+			["node", writeScript("close.mjs", source)],
+			"Drink\ndrink,size\nclosed\nDrink\nclosed\n",
+		);
+		expect(stderr).not.toContain("unsettled top-level await");
 	}, 60_000);
 
 	test("bun test killing the compiler on a test timeout does not break later calls", async () => {
