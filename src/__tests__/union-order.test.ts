@@ -165,7 +165,7 @@ describe("sort_unions across backends", () => {
 		test(`${name} prints the same on TypeScript 6 and 7`, async () => {
 			expect(inferredType(file, { name, ...sorted })).toBe(text);
 			expect(
-				await inferredType(file, {
+				inferredType(file, {
 					name,
 					backend: "typescript7",
 					...sorted,

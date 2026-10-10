@@ -29,9 +29,9 @@ test("groupBy keeps its public signature", () => {
     .toMatchInlineSnapshot(`"<T, K extends PropertyKey>(items: readonly T[], key: (item: T) => K): Record<K, T[]>"`);
 });
 
-test("Role offers its members", async () => {
-  await expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
-    .resolves.toMatchInlineSnapshot(`
+test("Role offers its members", () => {
+  expect(inferredCompletions(import.meta.url, { line: 7, text: '"' }))
+    .toMatchInlineSnapshot(`
     [
       "admin",
       "member",
@@ -50,9 +50,9 @@ The second argument picks the target:
 - `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
 - `{ line, column }`: a 1-based position.
 
-Options (`backend`, `project`, `full`, `include_docs`, `sort_unions`, `include_cost`, `strict`) go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`. There is no third argument; passing one throws. Keys a helper doesn't know are ignored. Pass `strict: true` to make them throw, with the closest valid key: test runners don't type-check test files, so a camelCase `sortUnions` for `sort_unions` would otherwise do nothing and give no error.
+Options (`backend`, `project`, `full`, `include_docs`, `sort_unions`, `include_cost`, `timeout`, `strict`) go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`. There is no third argument; passing one throws. Keys a helper doesn't know are ignored. Pass `strict: true` to make them throw, with the closest valid key: test runners don't type-check test files, so a camelCase `sortUnions` for `sort_unions` would otherwise do nothing and give no error.
 
-`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) are synchronous and use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output; the call then returns a promise, so write `expect(await inferredType(...))` or `await expect(inferredType(...)).resolves`. If you forget, Vitest and Jest fail the snapshot with a message saying to await it. Bun records the promise as `Promise {}` and the test passes, so in Bun check that every TypeScript 7 call is awaited. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
+`inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output. Every helper is synchronous on both backends, so there is no promise to forget to await. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
 
 TypeScript 6 and TypeScript 7 print union members in different orders (`"idle" | "error"` on one, `"error" | "idle"` on the other), so a snapshot written on one backend fails on the other. Pass `sort_unions: true` to print every union, at any depth, in a fixed order that is the same on both: members sorted by their text, with `null` and `undefined` last.
 
@@ -77,11 +77,11 @@ expect(inferredType(new URL("./groupBy.fixture.ts", import.meta.url), { name: "b
   .toMatchInlineSnapshot(`"Record<string, User[]>"`);
 ```
 
-`inferredCompletions` uses TypeScript 7 and resolves to every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
+`inferredCompletions` uses TypeScript 7 and returns every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
 
-TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early. If the process exits, as when `bun test` kills child processes after a test times out, the next call starts a new one.
+TypeScript 7 runs in a worker thread, with one compiler process per project; each call blocks until the compiler answers. Neither keeps the test process alive, so no teardown is needed; `closeTestingSessions()` (e.g. in `afterAll`) shuts them down early. A test runner's own timeout cannot interrupt a blocked call, so prinfer has its own: a call that gets no answer within `timeout` milliseconds (default 60000, enough for a cold load of a large project) throws, and the next call starts a new compiler. A hung compiler fails one test instead of stalling the run. For a project that takes longer to load, raise it on the first call, or on all of them with a shared selector such as `const ts7 = { backend: "typescript7", timeout: 120_000 } as const`. If the compiler process exits, the call in flight retries once and later calls start a new one.
 
-Failed lookups throw (or reject) with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
+Failed lookups throw with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
 
 `prinfer/vitest` remains as a deprecated alias for `prinfer/testing`.
 
@@ -387,7 +387,7 @@ A `redundant` annotation can be deleted without changing the type. A `widening` 
 | MCP server | TS7; `backend: "typescript6"` | TS6, top 50 | TS7; `backend: "typescript6"` | TS6 |
 | CLI | TS6; `--backend typescript7` | TS6, top 50 | TS6; `--backend typescript7` | TS6 |
 | Library (`prinfer`) | TS6 | TS6, all entries | TS6 | TS6 |
-| `prinfer/testing` | TS6, sync; `backend: "typescript7"` returns a promise | TS7, every name | none | none |
+| `prinfer/testing` | TS6; `backend: "typescript7"`; both sync | TS7, every name, sync | none | none |
 
 - `typescript7` runs the native TypeScript 7 language server (the testing helpers use its standalone compiler API). One warm session per project is shared across requests, and its output is closest to what your editor shows.
 - `typescript6` uses the TypeScript 6 compiler API in-process. If a lookup fails or looks wrong on TypeScript 7, retry that call with `typescript6`.

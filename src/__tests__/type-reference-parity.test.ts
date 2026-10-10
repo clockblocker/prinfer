@@ -141,15 +141,13 @@ const cases: Array<[string, string, Partial<HoverResult>]> = [
 describe("type references read the same type on TypeScript 6 and 7", () => {
 	const file = project();
 	for (const [context, text, expected] of cases) {
-		test(`${context} at ${text}`, async () => {
+		test(`${context} at ${text}`, () => {
 			const selector = { line: lineOf(context), text };
 			const ts6 = comparable(inferredTypeInfo(file, selector));
 			expect(ts6).toMatchObject(expected);
+			// Through the synchronous prinfer/testing worker.
 			const ts7 = comparable(
-				await inferredTypeInfo(file, {
-					...selector,
-					backend: "typescript7",
-				}),
+				inferredTypeInfo(file, { ...selector, backend: "typescript7" }),
 			);
 			expect(ts7).toEqual(ts6);
 		});

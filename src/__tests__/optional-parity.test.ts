@@ -8,6 +8,7 @@ import {
 	nativeApiTypeInfoByName,
 } from "../native-api.js";
 import { closeNativeSessions, nativeHoverByName } from "../native-lsp.js";
+import { closeTestingSessions, inferredTypeInfo } from "../testing.js";
 import type { HoverResult } from "../types.js";
 
 // Optional parameters and properties print the way `tsc` writes them in
@@ -93,6 +94,7 @@ function project(exact: boolean): string {
 afterAll(async () => {
 	closeNativeSessions();
 	await closeNativeApiSessions();
+	await closeTestingSessions();
 	for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -106,6 +108,18 @@ const backends: Array<[string, Lookup]> = [
 	["typescript6", async (file, name, options) => hover(file, name, options)],
 	["typescript7 (language server)", nativeHoverByName],
 	["typescript7 (testing API)", nativeApiTypeInfoByName],
+	// The same API through the synchronous prinfer/testing worker.
+	[
+		"typescript7 (prinfer/testing)",
+		async (file, name, options) =>
+			inferredTypeInfo(file, {
+				name,
+				line: options?.line,
+				sort_unions: options?.sort_unions,
+				full: false,
+				backend: "typescript7",
+			}),
+	],
 ];
 
 function comparable(result: HoverResult) {

@@ -258,11 +258,17 @@ class NativeApiSession {
 	/**
 	 * Stop routing calls here after a compiler failure. The process is
 	 * killed rather than closed: requests to a process that is exiting can
-	 * fail with unhandled rejections inside vscode-jsonrpc.
+	 * fail with unhandled rejections inside vscode-jsonrpc. A compiler that
+	 * stopped answering gets SIGKILL: a stopped or wedged process may never
+	 * act on SIGTERM.
 	 */
-	retire(): void {
+	retire(signal?: NodeJS.Signals): void {
 		if (sessions.get(this.key) === this) sessions.delete(this.key);
-		if (this.child) this.child.kill();
+		const lookup = compilerProcessLocator.locate(this.api);
+		const child =
+			this.child ??
+			(lookup.status === "found" ? lookup.child : undefined);
+		if (child) child.kill(signal);
 		else void this.close().catch(() => undefined);
 	}
 
@@ -586,6 +592,16 @@ export async function closeNativeApiSessions(): Promise<void> {
 	const active = [...sessions.values()];
 	sessions.clear();
 	await Promise.all(active.map((session) => session.close()));
+}
+
+/**
+ * Kill every compiler process without waiting on its requests, for a
+ * compiler that stopped answering. The next call starts a new session.
+ */
+export function killNativeApiSessions(): void {
+	const active = [...sessions.values()];
+	sessions.clear();
+	for (const session of active) session.retire("SIGKILL");
 }
 
 /**

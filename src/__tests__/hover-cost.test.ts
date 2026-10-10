@@ -140,7 +140,7 @@ describe("inferredTypeCost", () => {
 		).toBeUndefined();
 	});
 
-	test("refuses TypeScript 7, which reports no counts", async () => {
+	test("refuses TypeScript 7, which reports no counts", () => {
 		expect(() =>
 			inferredTypeCost(costFile, {
 				name: "piped",
@@ -148,11 +148,16 @@ describe("inferredTypeCost", () => {
 			} as unknown as Parameters<typeof inferredTypeCost>[1]),
 		).toThrow(/TypeScript 7 reports no instantiation counts/);
 
-		const error = await inferredTypeInfo(costFile, {
-			name: "piped",
-			backend: "typescript7",
-			include_cost: true,
-		}).catch((caught: unknown) => caught);
+		let error: unknown;
+		try {
+			inferredTypeInfo(costFile, {
+				name: "piped",
+				backend: "typescript7",
+				include_cost: true,
+			});
+		} catch (caught) {
+			error = caught;
+		}
 		expect(error).toBeInstanceOf(PrinferError);
 		expect(error).toMatchObject({ code: "INVALID_ARGUMENT" });
 		expect((error as Error).message).toContain("Omit backend");
