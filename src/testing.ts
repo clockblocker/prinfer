@@ -31,6 +31,13 @@ interface InferredCompletionsOptions {
 	 * tool and `prinfer complete` use TypeScript 6 and return 50 by default.)
 	 */
 	backend?: "typescript7";
+	/**
+	 * Throw on selector keys this helper doesn't know, with the closest valid
+	 * key (default false: unknown keys are ignored). Tests usually run without
+	 * type checking, so this is what catches `includeDocs` for
+	 * `include_docs`.
+	 */
+	strict?: boolean;
 }
 
 export interface InferredCompletionsPosition
@@ -75,6 +82,13 @@ export interface InferredTypeOptions
 	 * TypeScript 7; the CLI and library to TypeScript 6.)
 	 */
 	backend?: "typescript6" | "typescript7";
+	/**
+	 * Throw on selector keys this helper doesn't know, with the closest valid
+	 * key (default false: unknown keys are ignored). Tests usually run without
+	 * type checking, so this is what catches `includeDocs` for
+	 * `include_docs`.
+	 */
+	strict?: boolean;
 }
 
 export interface InferredTypeTarget extends InferredTypeOptions {
@@ -135,12 +149,31 @@ interface Request {
  *   inferredCompletions(import.meta.url, { line: 12, text: 'drink("' }),
  * ).resolves.toMatchInlineSnapshot();
  * ```
+ *
+ * The result is always a promise: await it, or use `.resolves`. Snapshotting
+ * the promise itself fails in Vitest and Jest with a message saying so.
  */
-export async function inferredCompletions(
+export function inferredCompletions(
 	file: TestingFile,
 	selector: InferredCompletionsSelector,
+): Promise<string[]>;
+export function inferredCompletions(
+	file: TestingFile,
+	selector: InferredCompletionsSelector,
+	...extra: unknown[]
 ): Promise<string[]> {
-	const request = createRequest("inferredCompletions", file, selector);
+	return InferredTypePromise.wrap(
+		"inferredCompletions",
+		inferredCompletionsImpl(file, selector, extra),
+	);
+}
+
+async function inferredCompletionsImpl(
+	file: TestingFile,
+	selector: InferredCompletionsSelector,
+	extra: unknown[],
+): Promise<string[]> {
+	const request = createRequest("inferredCompletions", file, selector, extra);
 	if (request.backend !== "typescript7") {
 		throw testingError(
 			"INVALID_ARGUMENT",
@@ -169,7 +202,13 @@ export async function inferredCompletions(
  * matcher. `import.meta.url` is accepted directly so tests stay relocatable.
  * Types are untruncated unless `full: false`. Without a backend the result
  * is synchronous (TypeScript 6); with `backend: "typescript7"` it is a
- * promise.
+ * promise: await it, or use `.resolves`. Snapshotting that promise itself
+ * fails in Vitest and Jest with a message saying so; Bun prints it as
+ * `Promise {}`, so check that a TypeScript 7 call is awaited.
+ *
+ * Every option goes in the selector, e.g.
+ * `{ name: "result", backend: "typescript7" }`; a third argument throws.
+ * Unknown selector keys are ignored unless `strict: true`.
  *
  * @example
  * ```ts
@@ -193,14 +232,23 @@ export function inferredType(
 export function inferredType(
 	file: TestingFile,
 	selector: InferredTypeSelector,
+	...extra: unknown[]
 ): string | Promise<string> {
-	const result = inferredTypeInfoImpl("inferredType", file, selector);
+	const helper = "inferredType";
+	const result = inferredTypeInfoImpl(helper, file, selector, extra);
 	return result instanceof Promise
-		? result.then((info) => info.signature)
+		? InferredTypePromise.wrap(
+				helper,
+				result.then((info) => info.signature),
+			)
 		: result.signature;
 }
 
-/** Return the complete prinfer hover result when a test needs more than the type. */
+/**
+ * Return the complete prinfer hover result when a test needs more than the
+ * type. Takes the same selector as `inferredType`, and like it returns a
+ * promise with `backend: "typescript7"`.
+ */
 export function inferredTypeInfo(
 	file: TestingFile,
 	selector: TypeScript7InferredTypeSelector,
@@ -216,8 +264,13 @@ export function inferredTypeInfo(
 export function inferredTypeInfo(
 	file: TestingFile,
 	selector: InferredTypeSelector,
+	...extra: unknown[]
 ): HoverResult | Promise<HoverResult> {
-	return inferredTypeInfoImpl("inferredTypeInfo", file, selector);
+	const helper = "inferredTypeInfo";
+	const result = inferredTypeInfoImpl(helper, file, selector, extra);
+	return result instanceof Promise
+		? InferredTypePromise.wrap(helper, result)
+		: result;
 }
 
 /**
@@ -233,8 +286,9 @@ function inferredTypeInfoImpl(
 	helper: string,
 	file: TestingFile,
 	selector: InferredTypeSelector,
+	extra: unknown[],
 ): HoverResult | Promise<HoverResult> {
-	const request = createRequest(helper, file, selector);
+	const request = createRequest(helper, file, selector, extra);
 	if (request.backend === "typescript7") {
 		return (async () => {
 			try {
@@ -271,14 +325,57 @@ function inferredTypeInfoImpl(
 	}
 }
 
+const COMPLETIONS_SELECTOR_KEYS = [
+	"line",
+	"column",
+	"text",
+	"occurrence",
+	"cursor",
+	"project",
+	"backend",
+	"strict",
+];
+
+/** `cursor` stays accepted: it has always worked with `text` at runtime. */
+const TYPE_SELECTOR_KEYS = [
+	"name",
+	"line",
+	"column",
+	"text",
+	"occurrence",
+	"cursor",
+	"project",
+	"full",
+	"include_docs",
+	"include_timing",
+	"backend",
+	"strict",
+];
+
+/** A selector example that shows options sitting next to the target. */
+function selectorExample(helper: string): string {
+	return helper === "inferredCompletions"
+		? `${helper}(file, { line: 3, text: "user.", project: "./tsconfig.json" })`
+		: `${helper}(file, { name: "result", backend: "typescript7" })`;
+}
+
 function createRequest(
 	helper: string,
 	input: TestingFile,
-	selector: { backend?: string } | undefined,
+	selector: { backend?: string; strict?: boolean } | undefined,
+	extra: unknown[],
 ): Request {
+	if (extra.length > 0) {
+		throw testingError(
+			"INVALID_ARGUMENT",
+			`${helper} takes two arguments (file, selector), got ${extra.length + 2}.`,
+			`Move options into the selector object: ${selectorExample(helper)}.`,
+		);
+	}
 	if (typeof selector !== "object" || selector === null) {
 		throw invalidSelector(helper);
 	}
+	if (selector.strict === true) assertKnownKeys(helper, selector);
 	const backend =
 		selector.backend ??
 		(helper === "inferredCompletions" ? "typescript7" : "typescript6");
@@ -292,6 +389,29 @@ function createRequest(
 		);
 	}
 	return { helper, input, file: sourcePath(input), backend };
+}
+
+/** With `strict: true`, a misspelled option throws instead of being ignored. */
+function assertKnownKeys(helper: string, selector: object): void {
+	const known =
+		helper === "inferredCompletions"
+			? COMPLETIONS_SELECTOR_KEYS
+			: TYPE_SELECTOR_KEYS;
+	const unknown = Object.keys(selector).find((key) => !known.includes(key));
+	if (unknown === undefined) return;
+	const closest = [...known].sort(
+		(left, right) =>
+			editDistance(left, unknown) - editDistance(right, unknown),
+	)[0];
+	const guess =
+		closest && editDistance(closest, unknown) <= 3
+			? `Did you mean ${closest}? `
+			: "";
+	throw testingError(
+		"INVALID_ARGUMENT",
+		`${helper} got unknown selector key ${JSON.stringify(unknown)}.`,
+		`${guess}Selector keys: ${known.join(", ")}.`,
+	);
 }
 
 function resolveTarget(
@@ -420,6 +540,51 @@ function testingError(
 	);
 	if (cause) error.cause = cause;
 	return error;
+}
+
+/**
+ * The promise a TypeScript 7 helper returns. Behaves like any promise; it
+ * only changes how a forgotten `await` shows up. Vitest's and Jest's snapshot
+ * serializers call `toJSON`, so `expect(promise).toMatchInlineSnapshot()`
+ * fails with the fix instead of writing `Promise {}` into the test file.
+ * Bun's serializer prints every promise as `Promise {}` and reads nothing
+ * from it, so there the hint only reaches `util.inspect` output.
+ */
+class InferredTypePromise<T> extends Promise<T> {
+	// `then` and friends return plain promises, which serialize normally.
+	static override get [Symbol.species](): PromiseConstructor {
+		return Promise;
+	}
+
+	static wrap<T>(helper: string, promise: Promise<T>): Promise<T> {
+		const result = new InferredTypePromise<T>((resolve, reject) => {
+			promise.then(resolve, reject);
+		});
+		result.#helper = helper;
+		return result;
+	}
+
+	#helper = "inferredType";
+
+	toJSON(): never {
+		throw testingError(
+			"INVALID_ARGUMENT",
+			`${this.#helper} returned a promise that was not awaited, so the snapshot would record "Promise {}" instead of its value.`,
+			unawaitedSuggestion(this.#helper),
+		);
+	}
+
+	[Symbol.for("nodejs.util.inspect.custom")](): string {
+		return `Promise { prinfer: ${unawaitedSuggestion(this.#helper)} }`;
+	}
+}
+
+function unawaitedSuggestion(helper: string): string {
+	const result =
+		helper === "inferredCompletions"
+			? helper
+			: `${helper} with backend "typescript7"`;
+	return `${result} returns a promise: write expect(await ${helper}(...)) or await expect(${helper}(...)).resolves.`;
 }
 
 /** Rewrite a lookup failure so the test output says what to change. */
