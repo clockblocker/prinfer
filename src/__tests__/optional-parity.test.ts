@@ -61,6 +61,7 @@ export const rowsVariable: Array<{ z?: string }> = [];
 export type ElementsOf<T> = { z?: T }[];
 export declare function genericRows<T>(rows: { z?: T }[]): void;
 export const genericRowsCall = genericRows([{ z: 1 }]);
+export declare function sortedRows(rows: { z?: "b" | "a" | number }[], pair: [{ y?: undefined | "d" | "c" }, 2 | 1], more: Array<{ w?: false | "x" }>): Array<"q" | "p">;
 `;
 
 const roots: string[] = [];
@@ -98,7 +99,7 @@ afterAll(async () => {
 type Lookup = (
 	file: string,
 	name: string,
-	options?: { line?: number },
+	options?: { line?: number; sort_unions?: boolean },
 ) => Promise<HoverResult>;
 
 const backends: Array<[string, Lookup]> = [
@@ -343,3 +344,25 @@ for (const mode of ["loose", "exact"] as const) {
 		}
 	});
 }
+
+// sort_unions sorts the text after the nested-optional, array, and tuple
+// rewrites, so every backend prints the same sorted text.
+describe("sort_unions with optional properties in arrays and tuples", () => {
+	for (const mode of ["loose", "exact"] as const) {
+		test(`sortedRows (exactOptionalPropertyTypes ${mode === "exact" ? "on" : "off"})`, async () => {
+			const file = project(mode === "exact");
+			const results = await Promise.all(
+				backends.map(([, lookup]) =>
+					lookup(file, "sortedRows", { sort_unions: true }),
+				),
+			);
+			const [first, ...rest] = results.map(comparable);
+			expect(first).toMatchObject({
+				signature:
+					'(rows: { z?: "a" | "b" | number; }[], pair: [{ y?: "c" | "d" | undefined; }, 1 | 2], more: { w?: "x" | false; }[]): ("p" | "q")[]',
+				returnType: '("p" | "q")[]',
+			});
+			for (const other of rest) expect(other).toEqual(first as never);
+		}, 30_000);
+	}
+});
