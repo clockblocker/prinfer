@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkerFactory } from "../core/hover-cost.js";
-import { withTypeScript } from "../core/ts-runtime.js";
+import { measureHoverCost } from "../core/index.js";
+import {
+	bundledTypeScript,
+	type TypeScript,
+	withTypeScript,
+} from "../core/ts-runtime.js";
 import { PrinferError } from "../errors.js";
 import {
 	batchHover,
@@ -132,15 +137,57 @@ describe("include_cost", () => {
 	test("counts the same with a new program per count", () => {
 		clearProgramCache();
 		const withFactory = costs(names);
-		const { createTypeChecker } = checkerFactory;
-		checkerFactory.createTypeChecker = undefined;
+		const { of } = checkerFactory;
+		checkerFactory.of = () => undefined;
 		try {
 			clearProgramCache();
 			expect(costs(names)).toEqual(withFactory);
 		} finally {
-			checkerFactory.createTypeChecker = createTypeChecker;
+			checkerFactory.of = of;
 		}
-		expect(typeof createTypeChecker).toBe("function");
+		expect(typeof of(bundledTypeScript)).toBe("function");
+	});
+
+	test("counts on the TypeScript instance that made the program", () => {
+		const expected = costs(["piped"]).piped;
+		const other = freshTypeScript();
+		const create = checkerFactory.of(other);
+		if (!create) throw new Error("no createTypeChecker");
+		let checkers = 0;
+		let programs = 0;
+		const count = (instance: TypeScript): HoverCost =>
+			withTypeScript(instance, () => {
+				const program = loadProgram(costFile);
+				const sourceFile = program.getSourceFile(costFile);
+				if (!sourceFile) throw new Error("fixture not loaded");
+				program.getTypeChecker();
+				const node = findNodeByNameAndLine(sourceFile, "piped");
+				if (!node) throw new Error("no piped");
+				programs = 0;
+				return measureHoverCost(program, node, sourceFile);
+			});
+		const counting: TypeScript = {
+			...other,
+			createTypeChecker(program: unknown) {
+				checkers++;
+				return create(program as never);
+			},
+		} as TypeScript;
+		expect(count(counting)).toEqual(expected as HoverCost);
+		expect(checkers).toBe(1);
+		// Without the factory, a new program of the same instance counts.
+		const withoutFactory: TypeScript = {
+			...other,
+			createTypeChecker: undefined,
+			createProgram(...args: unknown[]) {
+				programs++;
+				return (other.createProgram as (...a: unknown[]) => unknown)(
+					...args,
+				);
+			},
+		} as TypeScript;
+		expect(count(withoutFactory)).toEqual(expected as HoverCost);
+		expect(programs).toBe(1);
 	});
 
 	test("is kept with the program, as a copy", () => {

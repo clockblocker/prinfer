@@ -6,7 +6,7 @@ import { assertCursorPosition } from "./lines.js";
 import { lookupName } from "./name-lookup.js";
 import { findNodeAtPosition } from "./node-find.js";
 import { loadProgram } from "./program.js";
-import { ts } from "./ts-runtime.js";
+import { type TypeScript, ts } from "./ts-runtime.js";
 
 /**
  * Count the checker work behind a hover; see `HoverCost`. The work is
@@ -123,21 +123,37 @@ const costCache = new WeakMap<ts.Program, WeakMap<ts.Node, HoverCost>>();
 type CountingChecker = ts.TypeChecker &
 	Pick<ts.Program, "getInstantiationCount" | "getTypeCount">;
 
-interface CheckerFactory {
-	createTypeChecker?: (host: ts.Program) => CountingChecker;
-}
+type CreateTypeChecker = (host: ts.Program) => CountingChecker;
+
+const factories = new WeakMap<TypeScript, CreateTypeChecker | null>();
 
 /**
- * TypeScript's checker factory: internal, but exported at runtime. Without
- * it, each count creates a new program over the same files instead, which
- * takes a few milliseconds longer and counts the same. Tests unset it to
- * compare the two.
+ * TypeScript's checker factory: internal, but exported at runtime by every
+ * supported version (5.0 to 6.x). It is taken from the instance that made
+ * the program: another version's checker misreads its files. Without it,
+ * each count creates a new program over the same files instead, which
+ * takes a few milliseconds longer and counts the same. Tests replace `of`
+ * to compare the two.
  */
-export const checkerFactory: CheckerFactory = {
-	createTypeChecker:
-		(ts as unknown as CheckerFactory).createTypeChecker ??
-		(ts as unknown as { default?: CheckerFactory }).default
-			?.createTypeChecker,
+export const checkerFactory = {
+	of(instance: TypeScript): CreateTypeChecker | undefined {
+		let factory = factories.get(instance);
+		if (factory === undefined) {
+			const exported = instance as unknown as {
+				createTypeChecker?: unknown;
+				default?: { createTypeChecker?: unknown };
+			};
+			const found =
+				exported.createTypeChecker ??
+				exported.default?.createTypeChecker;
+			factory =
+				typeof found === "function"
+					? (found as CreateTypeChecker)
+					: null;
+			factories.set(instance, factory);
+		}
+		return factory ?? undefined;
+	},
 };
 
 /** A new, empty checker over `program`'s files and options. */
@@ -145,10 +161,9 @@ function freshChecker(
 	program: ts.Program,
 	sourceFile: ts.SourceFile,
 ): CountingChecker {
-	const { createTypeChecker } = checkerFactory;
-	if (typeof createTypeChecker === "function") {
-		return createTypeChecker(program);
-	}
+	// The active instance made `program`: callers run under runTypeScript6.
+	const createTypeChecker = checkerFactory.of(ts);
+	if (createTypeChecker) return createTypeChecker(program);
 	const fresh = programWithFreshChecker(program);
 	if (fresh.getSourceFile(sourceFile.fileName) !== sourceFile) {
 		throw new Error(
