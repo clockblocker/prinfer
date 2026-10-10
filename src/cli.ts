@@ -28,7 +28,7 @@ import { formatErrorText, reportError } from "./error-report.js";
 import {
 	assertSourceFile,
 	COST_NEEDS_TYPESCRIPT6,
-	PrinferError,
+	TypeprobeError,
 } from "./errors.js";
 import { DEFAULT_MAX_CHARS, formatHoverText } from "./hover-format.js";
 import { diagnostics, hover } from "./index.js";
@@ -37,19 +37,19 @@ import type { DiagnosticsResult, HoverOptions, HoverResult } from "./types.js";
 import { VERSION } from "./version.js";
 
 const HELP = `
-prinfer - TypeScript type inference inspection tool
+typeprobe - TypeScript type inference inspection tool
 
 Usage:
-  prinfer <file>:<name>[:<line>] [options]
-  prinfer <file>:<line>:<text> [options]
-  prinfer <file>:<line> --text <text> [--occurrence <n>] [options]
-  prinfer <file>:<line>:<column> [options]
-  prinfer complete <file>:<line>:<text|column> [--prefix <text>] [--limit <n>] [--json] [--project <tsconfig.json>]
-  prinfer check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]
-  prinfer annotations <file> [--json] [--project <tsconfig.json>]
-  prinfer mcp
-  prinfer setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
-  prinfer setup agents-md [--file <path>] [--print]
+  typeprobe <file>:<name>[:<line>] [options]
+  typeprobe <file>:<line>:<text> [options]
+  typeprobe <file>:<line> --text <text> [--occurrence <n>] [options]
+  typeprobe <file>:<line>:<column> [options]
+  typeprobe complete <file>:<line>:<text|column> [--prefix <text>] [--limit <n>] [--json] [--project <tsconfig.json>]
+  typeprobe check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]
+  typeprobe annotations <file> [--json] [--project <tsconfig.json>]
+  typeprobe mcp
+  typeprobe setup <codex|claude|cursor|vscode|gemini> [--scope <scope>] [--npx] [--print]
+  typeprobe setup agents-md [--file <path>] [--print]
 
 Commands:
   complete             Show TypeScript autocomplete entries at a cursor (top 50 by
@@ -59,9 +59,9 @@ Commands:
                        (redundant) or that are wider than the inferred type
                        (widening); exits 0 unless the check itself fails.
                        Always TypeScript 6
-  mcp                  Start the MCP server on stdio (same as prinfer-mcp)
+  mcp                  Start the MCP server on stdio (same as typeprobe-mcp)
   setup <client>       Register the MCP server with an agent client
-  setup agents-md      Add prinfer usage instructions to AGENTS.md or CLAUDE.md
+  setup agents-md      Add typeprobe usage instructions to AGENTS.md or CLAUDE.md
 
 Targets (lines and columns are 1-based):
   <file>:<name>           A declaration by name (any JavaScript identifier)
@@ -94,36 +94,36 @@ Options:
   --project, -p <path> Path to tsconfig.json (default: the nearest one above the file)
   --backend <name>     typescript6 (default) or typescript7, for type lookups and
                        check; complete and annotations always use typescript6
-  --compiler <mode>    bundled (default): prinfer's own TypeScript 6 and 7;
+  --compiler <mode>    bundled (default): typeprobe's own TypeScript 6 and 7;
                        project: the project's typescript (5.0 to 6.x) and
                        typescript 7, @typescript/native or
                        @typescript/native-preview; auto: the
                        project's when supported, else bundled. Overrides
-                       PRINFER_COMPILER. --json results report the compiler
-  --help, -h           Show this help message (prinfer setup --help for setup options)
-  --version            Print the prinfer version
+                       TYPEPROBE_COMPILER. --json results report the compiler
+  --help, -h           Show this help message (typeprobe setup --help for setup options)
+  --version            Print the typeprobe version
 
 Examples:
-  prinfer src/utils.ts:createHandler --json
-  prinfer src/utils.ts:createHandler:75
-  prinfer src/utils.ts:75:user --docs
-  prinfer src/schema.ts:userSchema --cost
-  prinfer src/utils.ts:75 --text user --occurrence 2
-  prinfer src/utils.ts:75:10
-  prinfer complete src/utils.ts:75:user.
-  prinfer complete src/utils.ts:75:10 --prefix use --limit 20
-  prinfer check src/utils.ts --json
-  prinfer annotations src/utils.ts
-  prinfer src/utils.ts:createHandler --backend typescript7
-  prinfer setup claude
-  prinfer setup cursor --scope project --print
-  prinfer setup agents-md --file CLAUDE.md
-  npx -y prinfer mcp
+  typeprobe src/utils.ts:createHandler --json
+  typeprobe src/utils.ts:createHandler:75
+  typeprobe src/utils.ts:75:user --docs
+  typeprobe src/schema.ts:userSchema --cost
+  typeprobe src/utils.ts:75 --text user --occurrence 2
+  typeprobe src/utils.ts:75:10
+  typeprobe complete src/utils.ts:75:user.
+  typeprobe complete src/utils.ts:75:10 --prefix use --limit 20
+  typeprobe check src/utils.ts --json
+  typeprobe annotations src/utils.ts
+  typeprobe src/utils.ts:createHandler --backend typescript7
+  typeprobe setup claude
+  typeprobe setup cursor --scope project --print
+  typeprobe setup agents-md --file CLAUDE.md
+  npx -y typeprobe mcp
 `.trim();
 
 /**
  * Starts the MCP stdio server from the sibling build output (dist/mcp.js) in
- * this process, so `npx -y prinfer mcp` works without a second bin name.
+ * this process, so `npx -y typeprobe mcp` works without a second bin name.
  */
 async function startMcpServer(): Promise<void> {
 	const script = fs.realpathSync(process.argv[1]);
@@ -132,7 +132,9 @@ async function startMcpServer(): Promise<void> {
 		.map((name) => path.join(dir, name))
 		.find((candidate) => fs.existsSync(candidate));
 	if (!entry) {
-		console.error(`Error: prinfer MCP server not found next to ${script}`);
+		console.error(
+			`Error: typeprobe MCP server not found next to ${script}`,
+		);
 		process.exit(1);
 	}
 	await import(pathToFileURL(entry).href);
@@ -178,11 +180,11 @@ interface CliCompletionOptions {
 type CliOptions = CliHoverOptions | CliCompletionOptions;
 
 const DEFAULT_COMPLETION_LIMIT = 50;
-const HELP_POINTER = "Run prinfer --help for all options.";
+const HELP_POINTER = "Run typeprobe --help for all options.";
 const ANNOTATIONS_USAGE =
-	"Usage: prinfer annotations <file> [--json] [--project <tsconfig.json>]";
+	"Usage: typeprobe annotations <file> [--json] [--project <tsconfig.json>]";
 const CHECK_USAGE =
-	"Usage: prinfer check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]";
+	"Usage: typeprobe check <file> [--suggestions] [--json] [--project <tsconfig.json>] [--backend <typescript6|typescript7>]";
 
 const HOVER_KEYS = new Set([
 	"docs",
@@ -258,7 +260,7 @@ function usageError(
 		console.log(
 			JSON.stringify(
 				contractError(
-					new PrinferError("INVALID_ARGUMENT", message, suggestion),
+					new TypeprobeError("INVALID_ARGUMENT", message, suggestion),
 					{ surface: { interface: "cli", command } },
 				),
 			),
@@ -308,7 +310,7 @@ function parseBackend(
 }
 
 /**
- * --compiler overrides PRINFER_COMPILER for this run: it sets the variable
+ * --compiler overrides TYPEPROBE_COMPILER for this run: it sets the variable
  * every lookup below reads its default from (see `CompilerMode`).
  */
 function applyCompiler(
@@ -599,7 +601,7 @@ async function runDiagnostics(
 }
 
 /**
- * Runs `prinfer check <file>` (args exclude "check") and returns an exit code:
+ * Runs `typeprobe check <file>` (args exclude "check") and returns an exit code:
  * 0 when the file has no type errors, 1 when it has errors or the check fails.
  */
 async function runCheck(args: string[]): Promise<number> {
@@ -624,7 +626,7 @@ async function runCheck(args: string[]): Promise<number> {
 	const backend = parseBackend(values.get("backend"), fail);
 	applyCompiler(values.get("compiler"), fail);
 	const includeSuggestions = values.has("suggestions");
-	if (!file) return fail("check requires a file: prinfer check <file.ts>");
+	if (!file) return fail("check requires a file: typeprobe check <file.ts>");
 
 	try {
 		const result = await runDiagnostics(
@@ -650,7 +652,7 @@ function runCompletion(options: CliCompletionOptions): void {
 	try {
 		assertSourceFile(options.file);
 		// A text target puts the cursor right after the match, like
-		// prinfer/testing's default cursor: "end".
+		// typeprobe/testing's default cursor: "end".
 		if (target.kind === "text") {
 			column = textColumn(options.file, target) + target.text.length;
 		}
@@ -753,7 +755,7 @@ async function runLookup(options: CliHoverOptions): Promise<void> {
 }
 
 /**
- * Runs `prinfer annotations <file>` (args exclude "annotations") and returns
+ * Runs `typeprobe annotations <file>` (args exclude "annotations") and returns
  * an exit code: 0 whatever it finds, 1 when the check itself fails.
  */
 function runAnnotations(args: string[]): number {
@@ -783,7 +785,7 @@ function runAnnotations(args: string[]): number {
 	applyCompiler(values.get("compiler"), fail);
 	if (!file) {
 		return fail(
-			"annotations requires a file: prinfer annotations <file.ts>",
+			"annotations requires a file: typeprobe annotations <file.ts>",
 		);
 	}
 
@@ -813,7 +815,7 @@ async function main(): Promise<void> {
 	if (command === "mcp") {
 		await startMcpServer().catch((error: unknown) => {
 			console.error(
-				`Error: failed to start the prinfer MCP server: ${(error as Error).message}`,
+				`Error: failed to start the typeprobe MCP server: ${(error as Error).message}`,
 			);
 			process.exit(1);
 		});

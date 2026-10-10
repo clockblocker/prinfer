@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "prinfer",
+      "name": "typeprobe",
       "dependencies": {
         "@modelcontextprotocol/server": "^2.0.0",
         "@typescript/native": "npm:typescript@^7.0.2",

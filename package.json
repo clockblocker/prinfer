@@ -1,7 +1,7 @@
 {
-	"name": "prinfer",
+	"name": "typeprobe",
 	"version": "3.4.0",
-	"mcpName": "io.github.clockblocker/prinfer",
+	"mcpName": "io.github.clockblocker/typeprobe",
 	"description": "TypeScript inferred types, completions and type errors for AI coding agents and type tests: an MCP server, a CLI, and snapshot-test helpers",
 	"type": "module",
 	"main": "./dist/index.cjs",
@@ -40,8 +40,8 @@
 		}
 	},
 	"bin": {
-		"prinfer": "dist/cli.js",
-		"prinfer-mcp": "dist/mcp.js"
+		"typeprobe": "dist/cli.js",
+		"typeprobe-mcp": "dist/mcp.js"
 	},
 	"files": [
 		"dist"
@@ -56,6 +56,7 @@
 		"version": "changeset version && node scripts/sync-server-json.mjs",
 		"release": "bun run build && changeset publish",
 		"mcpb": "bun run build && bunx @anthropic-ai/mcpb@2.1.2 validate mcpb/manifest.json && node scripts/pack-mcpb.mjs",
+		"shim:pack": "npm pack ./shim/prinfer",
 		"prepublishOnly": "bun run ci",
 		"prepare": "simple-git-hooks"
 	},
@@ -83,17 +84,18 @@
 		"testing",
 		"type-testing",
 		"snapshot",
-		"type-tests"
+		"type-tests",
+		"prinfer"
 	],
 	"author": "",
 	"license": "MIT",
-	"homepage": "https://clockblocker.github.io/prinfer/",
+	"homepage": "https://clockblocker.github.io/typeprobe/",
 	"bugs": {
-		"url": "https://github.com/clockblocker/prinfer/issues"
+		"url": "https://github.com/clockblocker/typeprobe/issues"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/clockblocker/prinfer.git"
+		"url": "git+https://github.com/clockblocker/typeprobe.git"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.7",

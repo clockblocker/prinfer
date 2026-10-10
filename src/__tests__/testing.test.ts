@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { contractError } from "../contract.js";
 import { NameNotFoundError } from "../core/name-lookup.js";
-import { PrinferError } from "../errors.js";
+import { TypeprobeError } from "../errors.js";
 import { nativeWorkerLocator } from "../native-sync.js";
 import {
 	closeTestingSessions,
@@ -61,12 +61,12 @@ async function reaped(pid: number, ms = 2_000): Promise<string | undefined> {
 	return state;
 }
 
-function thrown(run: () => unknown): PrinferError {
+function thrown(run: () => unknown): TypeprobeError {
 	try {
 		run();
 	} catch (error) {
-		expect(error).toBeInstanceOf(PrinferError);
-		return error as PrinferError;
+		expect(error).toBeInstanceOf(TypeprobeError);
+		return error as TypeprobeError;
 	}
 	throw new Error("Expected the call to throw");
 }
@@ -651,7 +651,7 @@ describe("TypeScript 7 results are plain values", () => {
 		);
 		expect(error.code).toBe("TYPESCRIPT_ERROR");
 		expect(error.message).toContain(
-			"TypeScript 7 did not answer within 1ms; prinfer stopped its compiler, and the next call starts a new one.",
+			"TypeScript 7 did not answer within 1ms; typeprobe stopped its compiler, and the next call starts a new one.",
 		);
 		expect(error.message).toContain("raise the limit with timeout (in ms)");
 		expect(inferredType(targets, pick)).toBe("Drink");
@@ -706,11 +706,11 @@ describe("TypeScript 7 results are plain values", () => {
 	test("a worker that can't load @typescript/native fails at once, not at the timeout", async () => {
 		// The worker module imports @typescript/native; a broken install
 		// makes that import throw and the thread die at startup.
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-worker-"));
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-worker-"));
 		const entry = path.join(dir, "native-worker.ts");
 		fs.writeFileSync(
 			entry,
-			'import "@typescript/native/prinfer-simulated-missing";\nexport {};\n',
+			'import "@typescript/native/typeprobe-simulated-missing";\nexport {};\n',
 		);
 		await closeTestingSessions();
 		const { locate } = nativeWorkerLocator;
@@ -725,7 +725,7 @@ describe("TypeScript 7 results are plain values", () => {
 				expect(Date.now() - started).toBeLessThan(5_000);
 				expect(error.code).toBe("TYPESCRIPT_ERROR");
 				expect(error.message).toContain(
-					"prinfer could not start its TypeScript 7 worker: loading the TypeScript 7 compiler API failed (",
+					"typeprobe could not start its TypeScript 7 worker: loading the TypeScript 7 compiler API failed (",
 				);
 				// The loader's own reason, in the message and as the cause.
 				expect(error.message).toContain("@typescript/native");
@@ -813,7 +813,9 @@ describe("teardown", () => {
 	}
 
 	function writeScript(name: string, source: string): string {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-teardown-"));
+		const dir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "typeprobe-teardown-"),
+		);
 		const file = path.join(dir, name);
 		fs.writeFileSync(file, source);
 		return file;
@@ -853,7 +855,7 @@ describe("teardown", () => {
 		);
 		const stderr = await exitsWithoutTeardown([process.execPath, file]);
 		// The compiler process was found and unref'd, not closed by the fallback.
-		expect(stderr).not.toContain("prinfer:");
+		expect(stderr).not.toContain("typeprobe:");
 	}, 30_000);
 
 	test("without the compiler process handle, async sessions still let Bun exit and warn once", async () => {
@@ -885,11 +887,11 @@ describe("teardown", () => {
 			"Drink\ndrink,size\nDrink\nDrink\n",
 		);
 		expect(stderr).toContain(
-			"prinfer: cannot find the TypeScript 7 compiler process",
+			"typeprobe: cannot find the TypeScript 7 compiler process",
 		);
 		expect(stderr).toContain("simulated by the test");
 		expect(stderr).toContain("closeTestingSessions()");
-		expect(stderr.split("prinfer: cannot find").length - 1).toBe(1);
+		expect(stderr.split("typeprobe: cannot find").length - 1).toBe(1);
 	}, 30_000);
 
 	test("a Node process exits after TypeScript 7 calls without closeTestingSessions", async () => {
@@ -897,7 +899,7 @@ describe("teardown", () => {
 			"node",
 			writeScript("script.mjs", script(builtEntry("testing.js"))),
 		]);
-		expect(stderr).not.toContain("prinfer:");
+		expect(stderr).not.toContain("typeprobe:");
 	}, 60_000);
 
 	test("the CommonJS build finds its worker and exits too", async () => {
@@ -906,7 +908,7 @@ describe("teardown", () => {
 			"node",
 			writeScript("script.cjs", script("", [], calls, load)),
 		]);
-		expect(stderr).not.toContain("prinfer:");
+		expect(stderr).not.toContain("typeprobe:");
 	}, 60_000);
 
 	test("the built worker fails fast on Node when @typescript/native can't load", async () => {
@@ -914,7 +916,7 @@ describe("teardown", () => {
 		// compiler API, under the package so typescript still resolves.
 		const built = path.dirname(builtEntry("testing.js"));
 		const dir = fs.mkdtempSync(
-			path.join(packageRoot, "node_modules", ".prinfer-broken-worker-"),
+			path.join(packageRoot, "node_modules", ".typeprobe-broken-worker-"),
 		);
 		try {
 			for (const name of ["testing.js", "native-worker-boot.js"]) {
@@ -922,7 +924,7 @@ describe("teardown", () => {
 			}
 			fs.writeFileSync(
 				path.join(dir, "native-worker.js"),
-				'import "@typescript/native/prinfer-simulated-missing";\n',
+				'import "@typescript/native/typeprobe-simulated-missing";\n',
 			);
 			const body = [
 				"const started = Date.now();",

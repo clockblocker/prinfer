@@ -87,7 +87,7 @@ class StdioMcpClient {
 		const result = await this.request("initialize", {
 			protocolVersion: "2025-06-18",
 			capabilities: {},
-			clientInfo: { name: "prinfer-test", version: "0.0.0" },
+			clientInfo: { name: "typeprobe-test", version: "0.0.0" },
 		});
 		this.serverInfo = result.serverInfo as Record<string, unknown>;
 		this.instructions = result.instructions as string;
@@ -163,7 +163,7 @@ afterAll(() => client?.close());
 describe("MCP server over stdio", () => {
 	test("reports the package version and tool guidance", () => {
 		expect(client.serverInfo).toMatchObject({
-			name: "prinfer",
+			name: "typeprobe",
 			version: packageVersion,
 		});
 		for (const tool of [
@@ -304,7 +304,9 @@ describe("MCP server over stdio", () => {
 	});
 
 	test("caps hover text with max_chars and keeps structuredContent whole", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-mcp-cap-"));
+		const dir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "typeprobe-mcp-cap-"),
+		);
 		try {
 			const file = path.join(dir, "big.ts");
 			const members = Array.from(
@@ -708,7 +710,7 @@ describe("nearbyCandidates", () => {
 	let file: string;
 
 	beforeAll(() => {
-		dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-candidates-"));
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-candidates-"));
 		file = path.join(dir, "format.ts");
 		fs.writeFileSync(
 			file,
@@ -819,7 +821,7 @@ describe("MCP include_cost", () => {
 
 	beforeAll(async () => {
 		// The removed timing switch must not bring timing back.
-		server = new StdioMcpClient({ PRINFER_INCLUDE_TIMING: "1" });
+		server = new StdioMcpClient({ TYPEPROBE_INCLUDE_TIMING: "1" });
 		await server.initialize();
 	});
 

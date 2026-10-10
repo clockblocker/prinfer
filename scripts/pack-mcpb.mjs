@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Packs prinfer.mcpb for Smithery: mcpb/manifest.json plus the tools the
+// Packs typeprobe.mcpb for Smithery: mcpb/manifest.json plus the tools the
 // built server lists, each with its inputSchema. Smithery rejects a stdio
 // bundle without tools, and rejects tools without an inputSchema, while
 // `mcpb pack` rejects inputSchema as an unknown key. So the checked-in
@@ -13,7 +13,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const output = join(root, "prinfer.mcpb");
+const output = join(root, "typeprobe.mcpb");
 
 function listTools() {
 	const server = spawn(process.execPath, [join(root, "dist/mcp.js")], {
@@ -65,7 +65,7 @@ manifest.tools = tools.map(({ name, description, inputSchema }) => ({
 	inputSchema,
 }));
 
-const staging = mkdtempSync(join(tmpdir(), "prinfer-mcpb-"));
+const staging = mkdtempSync(join(tmpdir(), "typeprobe-mcpb-"));
 try {
 	writeFileSync(
 		join(staging, "manifest.json"),

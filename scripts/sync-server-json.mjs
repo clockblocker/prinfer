@@ -12,7 +12,7 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
 
 const versionKey = /("version"\s*:\s*)"[^"]*"/g;
-// The pinned `npx -y prinfer@<version> mcp` argument in mcpb/manifest.json.
+// The pinned `npx -y typeprobe@<version> mcp` argument in mcpb/manifest.json.
 const pinnedPackage = new RegExp(`"${pkg.name}@[^"]*"`, "g");
 
 function sync(relativePath, check) {

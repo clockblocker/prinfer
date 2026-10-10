@@ -42,10 +42,19 @@ function getSuggestions(error: Error): string {
 }
 
 /**
+ * Marks every TypeprobeError. Each entry point (typeprobe, typeprobe/testing,
+ * their ESM and CommonJS builds) is bundled with its own copy of the class,
+ * so `instanceof` checks this registered symbol instead of the prototype.
+ */
+const TYPEPROBE_ERROR = Symbol.for("typeprobe.TypeprobeError");
+
+/**
  * Error with a stable contract code and a request-specific recovery
  * suggestion, so callers can self-correct without parsing the message.
+ * `instanceof TypeprobeError` matches it whichever entry point threw it
+ * and whichever one the class was imported from.
  */
-export class PrinferError extends Error {
+export class TypeprobeError extends Error {
 	readonly code:
 		| "INVALID_ARGUMENT"
 		| "FILE_NOT_FOUND"
@@ -54,17 +63,49 @@ export class PrinferError extends Error {
 		| "INTERNAL_ERROR";
 	readonly suggestion?: string;
 
+	static [Symbol.hasInstance](value: unknown): boolean {
+		// Subclasses (which inherit this method) keep ordinary prototype
+		// checks, so `this` here must stay the class `instanceof` names.
+		// biome-ignore lint/complexity/noThisInStatic: see above
+		if (this !== TypeprobeError) {
+			// biome-ignore lint/complexity/noThisInStatic: see above
+			return Function.prototype[Symbol.hasInstance].call(this, value);
+		}
+		return (
+			typeof value === "object" &&
+			value !== null &&
+			(value as { [TYPEPROBE_ERROR]?: unknown })[TYPEPROBE_ERROR] === true
+		);
+	}
+
 	constructor(
-		code: PrinferError["code"],
+		code: TypeprobeError["code"],
 		message: string,
 		suggestion?: string,
 	) {
 		super(message);
-		this.name = "PrinferError";
+		this.name = "TypeprobeError";
 		this.code = code;
 		this.suggestion = suggestion;
 	}
 }
+
+// On the prototype, so subclasses and errors rebuilt from a worker thread
+// with Object.create(prototype) carry it too.
+Object.defineProperty(TypeprobeError.prototype, TYPEPROBE_ERROR, {
+	value: true,
+});
+
+/**
+ * The name `TypeprobeError` had while the package was called prinfer. It is
+ * the same class, so `instanceof PrinferError` still matches every error
+ * typeprobe throws.
+ *
+ * @deprecated Use {@link TypeprobeError}.
+ */
+export const PrinferError = TypeprobeError;
+/** @deprecated Use {@link TypeprobeError}. */
+export type PrinferError = TypeprobeError;
 
 /**
  * Why a type cost needs the TypeScript 6 backend. TypeScript 7.0 counts
@@ -86,10 +127,13 @@ export function assertSourceFile(file: string): string {
 	try {
 		stats = fs.statSync(resolved);
 	} catch {
-		throw new PrinferError("FILE_NOT_FOUND", `File not found: ${resolved}`);
+		throw new TypeprobeError(
+			"FILE_NOT_FOUND",
+			`File not found: ${resolved}`,
+		);
 	}
 	if (!stats.isFile()) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"FILE_NOT_FOUND",
 			`Not a file: ${resolved} is a ${stats.isDirectory() ? "directory" : "special file"}`,
 			"Pass the path of a TypeScript or JavaScript source file, not a directory.",

@@ -7,19 +7,23 @@ import {
 	type TypeScript,
 	withTypeScript,
 } from "./core/ts-runtime.js";
-import { PrinferError } from "./errors.js";
+import { envName, readEnv } from "./env.js";
+import { TypeprobeError } from "./errors.js";
 import type { NativeCompiler } from "./native-runtime.js";
 import type { CompilerInfo, CompilerMode } from "./types.js";
 
 /**
- * Which compilers prinfer runs: its bundled ones or the project's (see
+ * Which compilers typeprobe runs: its bundled ones or the project's (see
  * `CompilerMode`). TypeScript 6 is loaded with `require` from the project
  * directory; TypeScript 7 is imported from the package that holds both its
  * API client and its compiler binary, so the two always match.
  */
 
-/** Environment variable that sets the mode when a call doesn't. */
-export const COMPILER_ENV = "PRINFER_COMPILER";
+/**
+ * Environment variable that sets the mode when a call doesn't. The
+ * deprecated PRINFER_COMPILER is read when it is unset (see env.ts).
+ */
+export const COMPILER_ENV = envName("COMPILER");
 
 /** Every `CompilerMode`. */
 export const COMPILER_MODES: readonly CompilerMode[] = [
@@ -30,22 +34,22 @@ export const COMPILER_MODES: readonly CompilerMode[] = [
 
 /**
  * Oldest TypeScript the TypeScript 6 backend loads from a project: 5.0.
- * Every API prinfer calls exists from 5.0 on (moduleResolution "bundler"
- * is new in it). prinfer's TypeScript 6 tests pass unchanged on 5.9 and
+ * Every API typeprobe calls exists from 5.0 on (moduleResolution "bundler"
+ * is new in it). typeprobe's TypeScript 6 tests pass unchanged on 5.9 and
  * 6.0; 5.0 to 5.8 print some types and messages differently.
  */
 const MIN_TYPESCRIPT6_MAJOR = 5;
 
-/** The mode a call runs in: its own option, PRINFER_COMPILER, or bundled. */
+/** The mode a call runs in: its own option, TYPEPROBE_COMPILER, or bundled. */
 export function compilerMode(option?: unknown): CompilerMode {
-	const fromEnv = option === undefined;
-	const value = fromEnv ? process.env[COMPILER_ENV] || "bundled" : option;
+	const env = option === undefined ? readEnv("COMPILER") : undefined;
+	const value = option === undefined ? (env?.value ?? "bundled") : option;
 	if (COMPILER_MODES.includes(value as CompilerMode))
 		return value as CompilerMode;
-	throw new PrinferError(
+	throw new TypeprobeError(
 		"INVALID_ARGUMENT",
-		`Unknown compiler ${JSON.stringify(value)}${fromEnv ? ` in ${COMPILER_ENV}` : ""}.`,
-		'Use "bundled" (prinfer\'s own TypeScript, the default), "project" (the project\'s), or "auto" (the project\'s when it has a supported one).',
+		`Unknown compiler ${JSON.stringify(value)}${env ? ` in ${env.variable}` : ""}.`,
+		'Use "bundled" (typeprobe\'s own TypeScript, the default), "project" (the project\'s), or "auto" (the project\'s when it has a supported one).',
 	);
 }
 
@@ -157,12 +161,12 @@ function declaresPackage(dir: string, name: string): boolean {
 }
 
 /**
- * prinfer depends on `typescript` 6 and `@typescript/native` (typescript
- * 7), so a package manager that hoists them puts prinfer's own copies in
+ * typeprobe depends on `typescript` 6 and `@typescript/native` (typescript
+ * 7), so a package manager that hoists them puts typeprobe's own copies in
  * the project's node_modules, where an import finds them. Such a copy is
  * the project's compiler only if the project declares the package.
  */
-function isPrinferOwn(
+function isTypeprobeOwn(
 	found: FoundPackage,
 	bundledDir: string | null | undefined,
 	dir: string,
@@ -173,7 +177,7 @@ function isPrinferOwn(
 /** Why a package that was found isn't used, for "found no package" errors. */
 function ownCopyNote(own: FoundPackage | undefined): string {
 	return own
-		? `; the ${own.name} ${own.version} at ${own.dir} is prinfer's own dependency, which the project doesn't declare`
+		? `; the ${own.name} ${own.version} at ${own.dir} is typeprobe's own dependency, which the project doesn't declare`
 		: "";
 }
 
@@ -221,7 +225,7 @@ const warned = new Set<string>();
 function warnFallback(message: string): void {
 	if (warned.has(message)) return;
 	warned.add(message);
-	process.stderr.write(`prinfer: ${message}\n`);
+	process.stderr.write(`typeprobe: ${message}\n`);
 }
 
 // ---------------------------------------------------------------- TypeScript 6
@@ -233,7 +237,7 @@ export interface TypeScript6Compiler {
 
 let bundledTypeScript6: TypeScript6Compiler | undefined;
 
-/** prinfer's own `typescript`. */
+/** typeprobe's own `typescript`. */
 function bundled6(): TypeScript6Compiler {
 	bundledTypeScript6 ??= {
 		ts: bundledTypeScript,
@@ -288,35 +292,35 @@ function findTypeScript6(
 ): TypeScript6Compiler {
 	const resolved = findPackage(dir, "typescript");
 	const own =
-		resolved && isPrinferOwn(resolved, bundledTypeScript6Dir(), dir)
+		resolved && isTypeprobeOwn(resolved, bundledTypeScript6Dir(), dir)
 			? resolved
 			: undefined;
 	const found = own ? undefined : resolved;
 	if (!found) {
 		if (mode === "auto") return bundled6();
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project" found no typescript package from ${dir}${ownCopyNote(own)}.`,
-			`${own ? "Add typescript (5.0 to 6.x) to the project's devDependencies" : "Install typescript (5.0 to 6.x) in the project"}, or omit compiler for prinfer's bundled TypeScript ${bundledTypeScript.version}.`,
+			`${own ? "Add typescript (5.0 to 6.x) to the project's devDependencies" : "Install typescript (5.0 to 6.x) in the project"}, or omit compiler for typeprobe's bundled TypeScript ${bundledTypeScript.version}.`,
 		);
 	}
 	const unsupported = unsupportedTypeScript6(found);
 	if (unsupported) {
 		if (mode === "auto") {
 			warnFallback(
-				`${unsupported} Using prinfer's bundled TypeScript ${bundledTypeScript.version} instead (compiler "auto").`,
+				`${unsupported} Using typeprobe's bundled TypeScript ${bundledTypeScript.version} instead (compiler "auto").`,
 			);
 			return bundled6();
 		}
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project": ${unsupported}`,
 			found.version.startsWith("7")
-				? `Use backend "typescript7" to run the project's TypeScript 7, or omit compiler for prinfer's bundled TypeScript ${bundledTypeScript.version}.`
-				: `Upgrade the project's typescript to 5.0 or later, or omit compiler for prinfer's bundled TypeScript ${bundledTypeScript.version}.`,
+				? `Use backend "typescript7" to run the project's TypeScript 7, or omit compiler for typeprobe's bundled TypeScript ${bundledTypeScript.version}.`
+				: `Upgrade the project's typescript to 5.0 or later, or omit compiler for typeprobe's bundled TypeScript ${bundledTypeScript.version}.`,
 		);
 	}
-	// The project declares the very copy prinfer uses: the same compiler.
+	// The project declares the very copy typeprobe uses: the same compiler.
 	if (found.dir === bundledTypeScript6Dir()) return bundled6();
 	let compiler = projectTypeScript6.get(found.dir);
 	if (!compiler) {
@@ -353,17 +357,17 @@ function loadTypeScript6(found: FoundPackage): TypeScript {
 			found.dir,
 		) as TypeScript;
 	} catch (error) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project" could not load typescript ${found.version} from ${found.dir}: ${error instanceof Error ? error.message : String(error)}`,
-			"Reinstall the project's dependencies, or omit compiler for prinfer's bundled TypeScript.",
+			"Reinstall the project's dependencies, or omit compiler for typeprobe's bundled TypeScript.",
 		);
 	}
 	if (typeof loaded?.createProgram !== "function") {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project": typescript ${found.version} at ${found.dir} has no compiler API (createProgram).`,
-			"Omit compiler for prinfer's bundled TypeScript.",
+			"Omit compiler for typeprobe's bundled TypeScript.",
 		);
 	}
 	return loaded;
@@ -392,7 +396,7 @@ export function runTypeScript6<T extends object>(
 
 /**
  * Packages that hold a TypeScript 7 compiler. The nearest install wins;
- * this order breaks a tie. `@typescript/native` is the name prinfer itself
+ * this order breaks a tie. `@typescript/native` is the name typeprobe itself
  * installs `typescript` 7 under.
  */
 const TYPESCRIPT7_PACKAGES = [
@@ -460,17 +464,17 @@ async function loadBundled7(): Promise<NativeCompiler> {
 			async,
 		};
 	} catch (error) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
-			`prinfer could not load its TypeScript 7 compiler API (@typescript/native): ${error instanceof Error ? error.message : String(error)}`,
-			"Check that @typescript/native is installed next to prinfer (it is a dependency) and supports this platform; reinstalling dependencies usually fixes a partial install. Use backend typescript6 meanwhile.",
+			`typeprobe could not load its TypeScript 7 compiler API (@typescript/native): ${error instanceof Error ? error.message : String(error)}`,
+			"Check that @typescript/native is installed next to typeprobe (it is a dependency) and supports this platform; reinstalling dependencies usually fixes a partial install. Use backend typescript6 meanwhile.",
 		);
 	}
 }
 
 /**
- * prinfer's own `@typescript/native` (an alias of typescript 7). Global
- * installs run bins through symlinks such as <prefix>/bin/prinfer-mcp,
+ * typeprobe's own `@typescript/native` (an alias of typescript 7). Global
+ * installs run bins through symlinks such as <prefix>/bin/typeprobe-mcp,
  * where no node_modules is reachable, so the real script location is tried
  * first, then this module's.
  */
@@ -503,11 +507,11 @@ function binScript(found: FoundPackage): string | undefined {
 }
 
 /**
- * The first `@typescript/native-preview` build prinfer works with. Earlier
+ * The first `@typescript/native-preview` build typeprobe works with. Earlier
  * builds ship no API client (`./unstable/async` arrived in
  * 7.0.0-dev.20260515.1), or one whose `updateSnapshot({ openFiles })`
  * opens no project for the file, through 7.0.0-dev.20260623.1. Neither
- * prinfer's own client nor theirs can then look a type up.
+ * typeprobe's own client nor theirs can then look a type up.
  */
 const MIN_NATIVE_PREVIEW_DATE = 20260624;
 const MIN_NATIVE_PREVIEW_VERSION = "7.0.0-dev.20260624.1";
@@ -523,8 +527,8 @@ function unsupportedTypeScript7(found: FoundPackage): string | undefined {
 	const date = /^7\.0\.0-dev\.(\d{8})/.exec(found.version)?.[1];
 	if (date !== undefined && Number(date) < MIN_NATIVE_PREVIEW_DATE) {
 		return hasClient
-			? `${where} predates the TypeScript 7 API prinfer uses: its API server opens no project for a file (fixed in ${MIN_NATIVE_PREVIEW_VERSION}).`
-			: `${where} ships no TypeScript 7 API client (no "./unstable/async" export), and its compiler predates the API protocol prinfer speaks (${MIN_NATIVE_PREVIEW_VERSION} or later).`;
+			? `${where} predates the TypeScript 7 API typeprobe uses: its API server opens no project for a file (fixed in ${MIN_NATIVE_PREVIEW_VERSION}).`
+			: `${where} ships no TypeScript 7 API client (no "./unstable/async" export), and its compiler predates the API protocol typeprobe speaks (${MIN_NATIVE_PREVIEW_VERSION} or later).`;
 	}
 	if (!hasClient) {
 		return `${where} ships no TypeScript 7 API client (no "./unstable/async" export).`;
@@ -547,17 +551,17 @@ async function findTypeScript7(
 			candidate !== undefined && majorVersion(candidate.version) >= 7,
 	) as FoundPackage[];
 	const own = candidates.find((candidate) =>
-		isPrinferOwn(candidate, bundledDir, dir),
+		isTypeprobeOwn(candidate, bundledDir, dir),
 	);
 	const found = candidates
 		.filter((candidate) => candidate !== own)
 		.sort((left, right) => installDepth(right) - installDepth(left))[0];
 	if (!found) {
 		if (mode === "auto") return bundled7();
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project" found no TypeScript 7 package (typescript 7, @typescript/native, or @typescript/native-preview) from ${dir}${ownCopyNote(own)}.`,
-			`${own ? "Add typescript@7, @typescript/native, or @typescript/native-preview to the project's devDependencies" : "Install typescript@7, @typescript/native, or @typescript/native-preview in the project"}, or omit compiler for prinfer's bundled TypeScript 7.`,
+			`${own ? "Add typescript@7, @typescript/native, or @typescript/native-preview to the project's devDependencies" : "Install typescript@7, @typescript/native, or @typescript/native-preview in the project"}, or omit compiler for typeprobe's bundled TypeScript 7.`,
 		);
 	}
 	const problem = unsupportedTypeScript7(found);
@@ -565,17 +569,17 @@ async function findTypeScript7(
 		const bundledVersion = bundledNativePackage()?.version ?? "7";
 		if (mode === "auto") {
 			warnFallback(
-				`${problem} Using prinfer's bundled TypeScript ${bundledVersion} instead (compiler "auto").`,
+				`${problem} Using typeprobe's bundled TypeScript ${bundledVersion} instead (compiler "auto").`,
 			);
 			return bundled7();
 		}
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project": ${problem}`,
-			`Upgrade ${found.name} (typescript or @typescript/native 7.0 or later, or @typescript/native-preview ${MIN_NATIVE_PREVIEW_VERSION} or later), or omit compiler for prinfer's bundled TypeScript ${bundledVersion}.`,
+			`Upgrade ${found.name} (typescript or @typescript/native 7.0 or later, or @typescript/native-preview ${MIN_NATIVE_PREVIEW_VERSION} or later), or omit compiler for typeprobe's bundled TypeScript ${bundledVersion}.`,
 		);
 	}
-	// The project declares the very copy prinfer uses: the same compiler.
+	// The project declares the very copy typeprobe uses: the same compiler.
 	if (found.dir === bundledDir) return bundled7();
 	let compiler = projectNative.get(found.dir);
 	if (!compiler) {
@@ -611,10 +615,10 @@ async function loadProject7(found: FoundPackage): Promise<NativeCompiler> {
 			async,
 		};
 	} catch (error) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`compiler "project" could not load ${found.name} ${found.version} from ${found.dir}: ${error instanceof Error ? error.message : String(error)}`,
-			"Reinstall the project's dependencies, or omit compiler for prinfer's bundled TypeScript 7.",
+			"Reinstall the project's dependencies, or omit compiler for typeprobe's bundled TypeScript 7.",
 		);
 	}
 }

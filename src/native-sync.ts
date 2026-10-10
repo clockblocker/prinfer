@@ -9,7 +9,7 @@ import {
 } from "node:worker_threads";
 import { withCompilerInfo } from "./compiler.js";
 import { NameNotFoundError } from "./core/name-lookup.js";
-import { PrinferError, TypeScriptInternalError } from "./errors.js";
+import { TypeprobeError, TypeScriptInternalError } from "./errors.js";
 import type {
 	CompilerInfo,
 	CompletionOptions,
@@ -18,7 +18,7 @@ import type {
 } from "./types.js";
 
 /**
- * Synchronous TypeScript 7 lookups for `prinfer/testing`.
+ * Synchronous TypeScript 7 lookups for `typeprobe/testing`.
  *
  * `@typescript/native` only has an async API under Bun (its `unstable/sync`
  * entry reads a stdout file descriptor Bun doesn't expose), so the async
@@ -131,7 +131,7 @@ export interface SerializedError {
  */
 const ERROR_CLASSES: Record<string, { prototype: Error }> = {
 	NameNotFoundError,
-	PrinferError,
+	TypeprobeError,
 	TypeScriptInternalError,
 };
 
@@ -223,10 +223,10 @@ class NativeWorker {
 		// thread can't see while it waits.
 		for (const file of [boot, entry]) {
 			if (!fs.existsSync(file)) {
-				throw new PrinferError(
+				throw new TypeprobeError(
 					"INTERNAL_ERROR",
-					`Cannot find the prinfer TypeScript 7 worker at ${file}.`,
-					"prinfer/testing loads it from next to its own module, so import prinfer/testing from the installed package rather than a bundle. Omit backend to use TypeScript 6 meanwhile.",
+					`Cannot find the typeprobe TypeScript 7 worker at ${file}.`,
+					"typeprobe/testing loads it from next to its own module, so import typeprobe/testing from the installed package rather than a bundle. Omit backend to use TypeScript 6 meanwhile.",
 				);
 			}
 		}
@@ -321,9 +321,9 @@ export function callNative<K extends Exclude<keyof NativeOperations, "close">>(
 	const response = target.request(op, args, timeoutMs);
 	if (!response) {
 		recycle(target);
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"TYPESCRIPT_ERROR",
-			`TypeScript 7 did not answer within ${timeoutMs}ms; prinfer stopped its compiler, and the next call starts a new one.`,
+			`TypeScript 7 did not answer within ${timeoutMs}ms; typeprobe stopped its compiler, and the next call starts a new one.`,
 			`A cold load of a large project can take that long: raise the limit with timeout (in ms) in the selector, e.g. { timeout: ${timeoutMs * 2} }. If every call times out, check the tsconfig.json that includes the file, or omit backend to use TypeScript 6.`,
 		);
 	}
@@ -344,11 +344,11 @@ export function callNative<K extends Exclude<keyof NativeOperations, "close">>(
 }
 
 /** The worker module failed to load, as from a broken install. */
-function startupError(cause: Error): PrinferError {
-	const error = new PrinferError(
+function startupError(cause: Error): TypeprobeError {
+	const error = new TypeprobeError(
 		"TYPESCRIPT_ERROR",
-		`prinfer could not start its TypeScript 7 worker: loading the TypeScript 7 compiler API failed (${cause.message}).`,
-		"Check that @typescript/native is installed next to prinfer (it is a dependency) and supports this platform; reinstalling dependencies usually fixes a partial install. Omit backend to use TypeScript 6 meanwhile.",
+		`typeprobe could not start its TypeScript 7 worker: loading the TypeScript 7 compiler API failed (${cause.message}).`,
+		"Check that @typescript/native is installed next to typeprobe (it is a dependency) and supports this platform; reinstalling dependencies usually fixes a partial install. Omit backend to use TypeScript 6 meanwhile.",
 	);
 	error.cause = cause;
 	return error;

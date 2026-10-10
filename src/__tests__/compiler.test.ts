@@ -34,7 +34,7 @@ setDefaultTimeout(60_000);
 
 /*
  * Project-mode fixtures: directories whose node_modules hold stand-ins for
- * a project's own compilers. Each stand-in re-exports prinfer's own
+ * a project's own compilers. Each stand-in re-exports typeprobe's own
  * dependency under another version, so the tests run offline and still
  * prove which package was resolved, loaded, and reported.
  */
@@ -102,7 +102,7 @@ function typeScriptPackage(version: string): Record<string, string> {
 /**
  * `@typescript/native-preview` at `version`. With `api`, it exports the
  * API client and has a bin that starts the language server, both from
- * prinfer's `@typescript/native`; without, it is shaped like the dev builds
+ * typeprobe's `@typescript/native`; without, it is shaped like the dev builds
  * before 7.0.0-dev.20260515.1, which exported only package.json. `name` is
  * the install directory and `manifestName` its package.json name: an alias
  * such as `@typescript/native` (npm:typescript@7) differs.
@@ -159,7 +159,7 @@ let hoistedWorkspace: string;
 
 beforeAll(() => {
 	root = fs.realpathSync(
-		fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-compiler-")),
+		fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-compiler-")),
 	);
 	ts59 = project("ts59", typeScriptPackage("5.9.9"));
 	ts49 = project("ts49", typeScriptPackage("4.9.5"));
@@ -203,7 +203,7 @@ beforeAll(() => {
 	});
 	nativeNested = project("native-nested/app", alias("7.0.5"));
 	oldAlias = project("old-alias", alias("7.0.0-dev.20260421.2"));
-	// prinfer's own typescript and @typescript/native, hoisted into the
+	// typeprobe's own typescript and @typescript/native, hoisted into the
 	// project's node_modules, as npm and bun install them.
 	const hoist = (dir: string, manifest: object) => {
 		const file = project(dir, {});
@@ -244,10 +244,15 @@ afterAll(async () => {
 	fs.rmSync(root, { recursive: true, force: true });
 });
 
+const LEGACY_COMPILER_ENV = "PRINFER_COMPILER";
 const previousEnv = process.env[COMPILER_ENV];
+const previousLegacyEnv = process.env[LEGACY_COMPILER_ENV];
 afterEach(() => {
 	if (previousEnv === undefined) delete process.env[COMPILER_ENV];
 	else process.env[COMPILER_ENV] = previousEnv;
+	if (previousLegacyEnv === undefined)
+		delete process.env[LEGACY_COMPILER_ENV];
+	else process.env[LEGACY_COMPILER_ENV] = previousLegacyEnv;
 });
 
 function programs(): number {
@@ -275,7 +280,7 @@ const bundled6: CompilerInfo = {
 };
 
 describe("compiler mode", () => {
-	test("defaults to bundled, then PRINFER_COMPILER, then the option", () => {
+	test("defaults to bundled, then TYPEPROBE_COMPILER, then the option", () => {
 		delete process.env[COMPILER_ENV];
 		expect(compilerMode()).toBe("bundled");
 		process.env[COMPILER_ENV] = "auto";
@@ -283,10 +288,23 @@ describe("compiler mode", () => {
 		expect(compilerMode("project")).toBe("project");
 	});
 
+	test("falls back to the deprecated PRINFER_COMPILER", () => {
+		delete process.env[COMPILER_ENV];
+		process.env[LEGACY_COMPILER_ENV] = "auto";
+		expect(compilerMode()).toBe("auto");
+		process.env[COMPILER_ENV] = "project";
+		expect(compilerMode()).toBe("project");
+		delete process.env[COMPILER_ENV];
+		process.env[LEGACY_COMPILER_ENV] = "local";
+		expect(thrown(() => compilerMode()).message).toBe(
+			'Unknown compiler "local" in PRINFER_COMPILER.',
+		);
+	});
+
 	test("rejects an unknown mode, naming where it came from", () => {
 		process.env[COMPILER_ENV] = "local";
 		expect(thrown(() => compilerMode()).message).toBe(
-			'Unknown compiler "local" in PRINFER_COMPILER.',
+			'Unknown compiler "local" in TYPEPROBE_COMPILER.',
 		);
 		const error = thrown(() =>
 			hover(ts59, "user", { compiler: "local" as never }),
@@ -323,7 +341,7 @@ describe("TypeScript 6 in project mode", () => {
 		).toMatchObject({ result: { compiler: { version: "5.9.9" } } });
 	});
 
-	test("PRINFER_COMPILER selects it when the call doesn't", () => {
+	test("TYPEPROBE_COMPILER selects it when the call doesn't", () => {
 		process.env[COMPILER_ENV] = "project";
 		expect(diagnostics(ts59).compiler?.version).toBe("5.9.9");
 		expect(hover(ts59, "user", { compiler: "bundled" }).compiler).toEqual(
@@ -471,7 +489,7 @@ describe("TypeScript 6 in project mode", () => {
 			);
 			expect(warnings).toHaveLength(1);
 			expect(String(warnings[0]?.[0])).toContain(
-				`Using prinfer's bundled TypeScript ${ts.version} instead (compiler "auto").`,
+				`Using typeprobe's bundled TypeScript ${ts.version} instead (compiler "auto").`,
 			);
 		} finally {
 			write.mockRestore();
@@ -678,7 +696,7 @@ describe("TypeScript 7 in project mode", () => {
 			"@typescript/native 7.0.0-dev.20260421.2 at",
 		);
 		expect(error.message).toContain(
-			"predates the TypeScript 7 API prinfer uses",
+			"predates the TypeScript 7 API typeprobe uses",
 		);
 	});
 
@@ -706,7 +724,7 @@ describe("TypeScript 7 in project mode", () => {
 			"@typescript/native-preview 7.0.0-dev.20260421.2 at",
 		);
 		expect(error.message).toContain(
-			"its compiler predates the API protocol prinfer speaks (7.0.0-dev.20260624.1 or later)",
+			"its compiler predates the API protocol typeprobe speaks (7.0.0-dev.20260624.1 or later)",
 		);
 		// The TypeScript 6 side of the same project still works.
 		expect(
@@ -728,7 +746,7 @@ describe("TypeScript 7 in project mode", () => {
 	});
 });
 
-describe("prinfer's own compilers hoisted into a project", () => {
+describe("typeprobe's own compilers hoisted into a project", () => {
 	const typeInfo = (file: string, compiler: "project" | "auto") =>
 		inferredTypeInfo(file, {
 			name: "user",
@@ -743,7 +761,7 @@ describe("prinfer's own compilers hoisted into a project", () => {
 		const native = thrown(() => typeInfo(hoisted, "project"));
 		expect(native.code).toBe("TYPESCRIPT_ERROR");
 		expect(native.message).toContain(
-			`; the @typescript/native ${nativeVersion} at ${fs.realpathSync(realNative)} is prinfer's own dependency, which the project doesn't declare.`,
+			`; the @typescript/native ${nativeVersion} at ${fs.realpathSync(realNative)} is typeprobe's own dependency, which the project doesn't declare.`,
 		);
 		expect(native.suggestion).toContain(
 			"Add typescript@7, @typescript/native, or @typescript/native-preview to the project's devDependencies",
@@ -752,7 +770,7 @@ describe("prinfer's own compilers hoisted into a project", () => {
 			hover(hoisted, "user", { compiler: "project" }),
 		);
 		expect(typeScript6.message).toContain(
-			`; the typescript ${ts.version} at ${fs.realpathSync(realTypeScript)} is prinfer's own dependency`,
+			`; the typescript ${ts.version} at ${fs.realpathSync(realTypeScript)} is typeprobe's own dependency`,
 		);
 		expect(typeScript6.suggestion).toContain(
 			"Add typescript (5.0 to 6.x) to the project's devDependencies",

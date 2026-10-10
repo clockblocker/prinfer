@@ -35,7 +35,7 @@ const source = [
 
 function project(): string {
 	const dir = fs.realpathSync(
-		fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-lines-")),
+		fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-lines-")),
 	);
 	fs.writeFileSync(
 		path.join(dir, "tsconfig.json"),

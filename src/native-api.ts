@@ -36,7 +36,7 @@ import {
 } from "./core/signature-text.js";
 import { ts } from "./core/ts-runtime.js";
 import { sortResultUnions } from "./core/union-order.js";
-import { PrinferError } from "./errors.js";
+import { TypeprobeError } from "./errors.js";
 import {
 	API,
 	activeNativeCompiler,
@@ -83,7 +83,7 @@ const sessions = new Map<string, NativeApiSession>();
  * Where the compiler child process of a TypeScript 7 API instance stands.
  * `not-spawned`: the client has the expected shape but no request has
  * started the process yet. `missing`: the client no longer has the shape
- * prinfer reads, so the process cannot be found.
+ * typeprobe reads, so the process cannot be found.
  */
 export type CompilerProcessLookup =
 	| { status: "found"; child: ChildProcess }
@@ -147,9 +147,9 @@ function warnFallback(reason: string): void {
 	warnedFallback = true;
 	process.stderr.write(
 		[
-			`prinfer: cannot find the TypeScript 7 compiler process in ${compilerName()} (${reason}), so idle sessions cannot be unref'd.`,
-			`prinfer now closes a session after ${IDLE_CLOSE_MS}ms idle so the process can still exit; the next call restarts the compiler.`,
-			'Fix: call `await closeTestingSessions()` from "prinfer/testing" in afterAll to shut sessions down yourself, and report this at https://github.com/clockblocker/prinfer/issues.',
+			`typeprobe: cannot find the TypeScript 7 compiler process in ${compilerName()} (${reason}), so idle sessions cannot be unref'd.`,
+			`typeprobe now closes a session after ${IDLE_CLOSE_MS}ms idle so the process can still exit; the next call restarts the compiler.`,
+			'Fix: call `await closeTestingSessions()` from "typeprobe/testing" in afterAll to shut sessions down yourself, and report this at https://github.com/clockblocker/typeprobe/issues.',
 			"",
 		].join("\n"),
 	);
@@ -183,7 +183,7 @@ function waitForExit(child: ChildProcess, ms: number): Promise<void> {
 	});
 }
 
-/** Ref or unref the compiler process and the pipes prinfer talks over. */
+/** Ref or unref the compiler process and the pipes typeprobe talks over. */
 function setChildReferenced(child: ChildProcess, active: boolean): void {
 	const method = active ? "ref" : "unref";
 	child[method]();
@@ -208,10 +208,10 @@ class NativeApiSession {
 	/** The compiler process, once watched for exit. */
 	private child: ChildProcess | undefined;
 	/** Set once the compiler process has exited; the session is unusable. */
-	private exitError: PrinferError | undefined;
+	private exitError: TypeprobeError | undefined;
 	/** Rejects when the compiler process exits, failing in-flight requests. */
 	private readonly exited: Promise<never>;
-	private rejectExited: (error: PrinferError) => void = () => undefined;
+	private rejectExited: (error: TypeprobeError) => void = () => undefined;
 
 	constructor(key: string, root: string, projectFile?: string) {
 		this.api = new API({ cwd: root });
@@ -356,7 +356,7 @@ class NativeApiSession {
 	): void {
 		if (this.exitError) return;
 		const how = signal ?? (code === null ? "input closed" : `code ${code}`);
-		this.exitError = new PrinferError(
+		this.exitError = new TypeprobeError(
 			"TYPESCRIPT_ERROR",
 			`The TypeScript 7 compiler process exited (${how}).`,
 			"bun test kills child processes when a test times out; the next call restarts the compiler. Raise the test timeout if a cold TypeScript 7 project load exceeds it.",
@@ -447,7 +447,7 @@ class NativeApiSession {
 			? snapshot.getProject(this.projectFile)
 			: await snapshot.getDefaultProjectForFile(file);
 		if (!project) {
-			throw new PrinferError(
+			throw new TypeprobeError(
 				"TYPESCRIPT_ERROR",
 				`Could not load source file into a TypeScript 7 project: ${file}`,
 				"Check that the nearest tsconfig.json includes the file, or pass project.",
@@ -455,7 +455,7 @@ class NativeApiSession {
 		}
 		const sourceFile = await project.program.getSourceFile(file);
 		if (!sourceFile) {
-			throw new PrinferError(
+			throw new TypeprobeError(
 				"TYPESCRIPT_ERROR",
 				`Could not load source file into the TypeScript 7 program: ${file}`,
 				this.projectFile
@@ -566,7 +566,7 @@ export async function nativeTypeInfoAt(
 	const { file, text, line, column, position } = cursor;
 	const type = await hoveredType(project, sourceFile, file, position);
 	if (!type) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"SYMBOL_NOT_FOUND",
 			`No symbol found at ${file}:${line}:${column}`,
 		);
@@ -1377,7 +1377,7 @@ function findSyntaxNodeAt(
 
 /**
  * Run an operation in the file's session. When the compiler fails under it
- * (the process exited, or a request failed outside prinfer's own checks,
+ * (the process exited, or a request failed outside typeprobe's own checks,
  * as when a process that got SIGTERM answers before it exits), retire the
  * session and retry once in a fresh one.
  */
@@ -1390,7 +1390,7 @@ async function runInSession<T>(
 	try {
 		return await session.run(file, operation);
 	} catch (error) {
-		if (error instanceof PrinferError && !session.dead) throw error;
+		if (error instanceof TypeprobeError && !session.dead) throw error;
 		void session.retire();
 		return getSession(file, project).run(file, operation);
 	}
@@ -1413,7 +1413,10 @@ function getSession(file: string, project?: string): NativeApiSession {
 function resolveFile(file: string): string {
 	const resolved = path.resolve(process.cwd(), file);
 	if (!fs.existsSync(resolved))
-		throw new PrinferError("FILE_NOT_FOUND", `File not found: ${resolved}`);
+		throw new TypeprobeError(
+			"FILE_NOT_FOUND",
+			`File not found: ${resolved}`,
+		);
 	return resolved;
 }
 
@@ -1430,7 +1433,7 @@ function resolveProject(
 		? path.join(resolved, "tsconfig.json")
 		: resolved;
 	if (!fs.existsSync(projectFile)) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"FILE_NOT_FOUND",
 			`TypeScript project not found: ${projectFile}`,
 			"Pass project as a tsconfig.json path or its directory.",
@@ -1465,7 +1468,7 @@ function sourcePosition(
 		line < 1 ||
 		column < 1
 	) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			"Line and column must be positive integers.",
 		);
@@ -1474,7 +1477,7 @@ function sourcePosition(
 	for (let current = 1; current < line; current += 1) {
 		const newline = text.indexOf("\n", lineStart);
 		if (newline < 0)
-			throw new PrinferError(
+			throw new TypeprobeError(
 				"INVALID_ARGUMENT",
 				`No cursor position at ${file}:${line}:${column}`,
 				`The file has ${current} lines.`,
@@ -1486,7 +1489,7 @@ function sourcePosition(
 	const lineEnd = text[rawLineEnd - 1] === "\r" ? rawLineEnd - 1 : rawLineEnd;
 	const position = lineStart + column - 1;
 	if (position > lineEnd) {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"INVALID_ARGUMENT",
 			`No cursor position at ${file}:${line}:${column}`,
 			`Line ${line} has ${lineEnd - lineStart} characters, so the last cursor column is ${lineEnd - lineStart + 1}.`,

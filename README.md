@@ -1,21 +1,23 @@
 <p align="center">
-  <img src="printfer-logo.webp" alt="prinfer logo" width="400">
+  <img src="typeprobe-logo.webp" alt="typeprobe logo" width="400">
 </p>
 
-# prinfer
+# typeprobe
 
-prinfer asks the TypeScript compiler what it infers (types, completions, type errors) so that AI coding agents and tests don't have to guess. It comes as:
+typeprobe asks the TypeScript compiler what it infers (types, completions, type errors) so that AI coding agents and tests don't have to guess. It comes as:
 
 - an MCP server for coding agents (Claude Code, Codex, Cursor, VS Code, Gemini CLI, any stdio client),
-- `prinfer/testing`, which returns inferred types as strings for snapshot tests,
+- `typeprobe/testing`, which returns inferred types as strings for snapshot tests,
 - a CLI and a synchronous library API.
+
+typeprobe was called prinfer until 4.0.0. See [Migrating from prinfer](#migrating-from-prinfer).
 
 ## Quick start
 
 Give your agent the compiler:
 
 ```bash
-npx -y prinfer setup claude    # or codex, cursor, vscode, gemini; see Install
+npx -y typeprobe setup claude    # or codex, cursor, vscode, gemini; see Install
 ```
 
 The agent can now call `hover_by_name(file: "src/utils.ts", name: "names")` and get `Type: string[]` back, or `diagnostics(file)` after an edit.
@@ -24,7 +26,7 @@ Lock the types your API infers in a test (Vitest, Jest, Bun, or any runner with 
 
 ```typescript
 import { expect, test } from "vitest"; // or "bun:test"
-import { inferredType } from "prinfer/testing";
+import { inferredType } from "typeprobe/testing";
 import { groupBy, type User } from "../src/users";
 
 const users: User[] = [{ name: "Ada", role: "admin" }];
@@ -40,54 +42,55 @@ Write the matcher empty (`toMatchInlineSnapshot()`) and the runner fills it in. 
 
 ## Install
 
-Every command runs through `npx`, so nothing needs installing first. After `npm i -g prinfer`, drop the `npx -y` prefix: setup then registers the `prinfer-mcp` binary, which skips npx's package check on each launch.
+Every command runs through `npx`, so nothing needs installing first. After `npm i -g typeprobe`, drop the `npx -y` prefix: setup then registers the `typeprobe-mcp` binary, which skips npx's package check on each launch.
 
 **Claude Code.** The plugin bundles the MCP server and a skill that tells Claude when to use it:
 
 ```text
-/plugin marketplace add clockblocker/prinfer
-/plugin install prinfer@prinfer
+/plugin marketplace add clockblocker/typeprobe
+/plugin install typeprobe@typeprobe
 ```
 
 **Other clients**, or Claude Code without the plugin:
 
 | Client | Command | Writes |
 | :- | :- | :- |
-| Claude Code | `npx -y prinfer setup claude` | `claude mcp add`; `--scope project` for a shared `.mcp.json` |
-| Codex | `npx -y prinfer setup codex` | `codex mcp add` (`~/.codex/config.toml`) |
-| Cursor | `npx -y prinfer setup cursor` | `~/.cursor/mcp.json`; `--scope project`: `.cursor/mcp.json` |
-| VS Code | `npx -y prinfer setup vscode` | `code --add-mcp`; `--scope project`: `.vscode/mcp.json` |
-| Gemini CLI | `npx -y prinfer setup gemini` | `~/.gemini/settings.json`; `--scope project`: `.gemini/settings.json` |
+| Claude Code | `npx -y typeprobe setup claude` | `claude mcp add`; `--scope project` for a shared `.mcp.json` |
+| Codex | `npx -y typeprobe setup codex` | `codex mcp add` (`~/.codex/config.toml`) |
+| Cursor | `npx -y typeprobe setup cursor` | `~/.cursor/mcp.json`; `--scope project`: `.cursor/mcp.json` |
+| VS Code | `npx -y typeprobe setup vscode` | `code --add-mcp`; `--scope project`: `.vscode/mcp.json` |
+| Gemini CLI | `npx -y typeprobe setup gemini` | `~/.gemini/settings.json`; `--scope project`: `.gemini/settings.json` |
 
-Any other MCP client: prinfer is a stdio server started with `npx -y prinfer mcp`.
+Any other MCP client: typeprobe is a stdio server started with `npx -y typeprobe mcp`.
 
 ```json
 {
   "mcpServers": {
-    "prinfer": { "command": "npx", "args": ["-y", "prinfer", "mcp"] }
+    "typeprobe": { "command": "npx", "args": ["-y", "typeprobe", "mcp"] }
   }
 }
 ```
 
-It is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.clockblocker/prinfer) as `io.github.clockblocker/prinfer` and on [Smithery](https://smithery.ai/servers/clockblocker/prinfer).
+It is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.clockblocker/typeprobe) as `io.github.clockblocker/typeprobe` and on [Smithery](https://smithery.ai/servers/clockblocker/typeprobe).
 
 Setup options:
 
 - `--print` shows the command or config change without applying it.
-- `--npx` registers `npx -y prinfer mcp` even when `prinfer-mcp` is installed. Use it when the client can't find `prinfer-mcp`; editors started outside a shell often miss nvm, fnm, or volta paths.
-- Re-running setup updates the `prinfer` entry's command and leaves other servers alone. JSON configs keep keys you added to the entry, such as `env`. A JSON config that doesn't parse is left untouched, and setup prints the entry to add by hand.
-- On Windows the server is registered as `cmd /c npx -y prinfer mcp` (or `cmd /c prinfer-mcp`), because clients launch it without a shell and can't run npm's `.cmd` shims.
+- `--npx` registers `npx -y typeprobe mcp` even when `typeprobe-mcp` is installed. Use it when the client can't find `typeprobe-mcp`; editors started outside a shell often miss nvm, fnm, or volta paths.
+- Re-running setup updates the `typeprobe` entry's command and leaves other servers alone. JSON configs keep keys you added to the entry, such as `env`. A JSON config that doesn't parse is left untouched, and setup prints the entry to add by hand.
+- A `prinfer` entry from before the rename is replaced rather than kept next to the new one: `claude` and `codex` remove it, and JSON configs swap it for `typeprobe` in place, keeping its other keys (with `PRINFER_*` env names renamed to `TYPEPROBE_*`).
+- On Windows the server is registered as `cmd /c npx -y typeprobe mcp` (or `cmd /c typeprobe-mcp`), because clients launch it without a shell and can't run npm's `.cmd` shims.
 
 ### Tell the agent when to use it
 
 Tool descriptions only go so far; agents still reach for `tsc` or write annotations by hand. Add a short usage block to your instructions file (the Claude Code plugin ships the same guidance as a skill):
 
 ```bash
-npx -y prinfer setup agents-md                  # ./AGENTS.md
-npx -y prinfer setup agents-md --file CLAUDE.md
+npx -y typeprobe setup agents-md                  # ./AGENTS.md
+npx -y typeprobe setup agents-md --file CLAUDE.md
 ```
 
-The block sits between `<!-- prinfer:start -->` and `<!-- prinfer:end -->`; re-running updates it in place.
+The block sits between `<!-- typeprobe:start -->` and `<!-- typeprobe:end -->`; re-running updates it in place, and replaces a block prinfer wrote (`<!-- prinfer:start -->`).
 
 ## MCP tools
 
@@ -137,7 +140,7 @@ Position: 1:17
 
 ### hover
 
-Pass `text` copied from the line and prinfer finds the column. Whole identifiers match first: on `users.map((user) => user.name)`, `text: "user"` skips `users` and hits the callback parameter, and `occurrence: 2` picks the next `user`. Only when the line has no whole-identifier match is `text` matched as a substring. `column` works in place of `text`. Generic calls show their instantiated types, as in an editor.
+Pass `text` copied from the line and typeprobe finds the column. Whole identifiers match first: on `users.map((user) => user.name)`, `text: "user"` skips `users` and hits the callback parameter, and `occurrence: 2` picks the next `user`. Only when the line has no whole-identifier match is `text` matched as a substring. `column` works in place of `text`. Generic calls show their instantiated types, as in an editor.
 
 ```text
 hover(file: "src/utils.ts", line: 11, text: "user")
@@ -207,7 +210,7 @@ completions(file: "src/utils.ts", line: 20, column: 1, prefix: "use", limit: 20)
 
 Entries come in TypeScript's ranking: locals, members, and literal values first, then globals (keywords after other entries of the same rank), then auto-imports. At most `limit` come back (default 50, up to 500); when more match, the text ends with `… 947 more; pass prefix to narrow, or raise limit` and the structured result has `total` and `truncated: true`.
 
-`prefix` keeps names that start with it, ignoring case. Without it, the text typed left of the cursor filters the list as in an editor (after `use` in `useSt`, only `use…` names); `prefix: ""` turns that off. At a key of an object literal that accepts any key (`Record<string, number>`), prinfer returns no entries and a `note` saying so, instead of every global. `completions` always runs on TypeScript 6.
+`prefix` keeps names that start with it, ignoring case. Without it, the text typed left of the cursor filters the list as in an editor (after `use` in `useSt`, only `use…` names); `prefix: ""` turns that off. At a key of an object literal that accepts any key (`Record<string, number>`), typeprobe returns no entries and a `note` saying so, instead of every global. `completions` always runs on TypeScript 6.
 
 ### diagnostics
 
@@ -255,10 +258,10 @@ Suggestion: Check the spelling against candidates, pass line to pick the match o
 
 ## Type tests
 
-`prinfer/testing` returns the type as the editor displays it, so the snapshot is never written by hand, unlike `expectTypeOf` or `tsd`, and any change shows up, including a literal union widening to `string`. Update snapshots after an intended change with the runner's update flag (`vitest -u`, `bun test --update-snapshots`). The lookup helpers are synchronous on both backends, so there is no promise to forget to await.
+`typeprobe/testing` returns the type as the editor displays it, so the snapshot is never written by hand, unlike `expectTypeOf` or `tsd`, and any change shows up, including a literal union widening to `string`. Update snapshots after an intended change with the runner's update flag (`vitest -u`, `bun test --update-snapshots`). The lookup helpers are synchronous on both backends, so there is no promise to forget to await.
 
 ```typescript
-import { inferredCompletions, inferredType } from "prinfer/testing";
+import { inferredCompletions, inferredType } from "typeprobe/testing";
 
 // Another module: resolve it against the test file.
 expect(inferredType(new URL("../src/users.ts", import.meta.url), { name: "groupBy" }))
@@ -304,13 +307,13 @@ Options go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`
 | `include_docs` | `false` | Adds `documentation` to `inferredTypeInfo`. |
 | `include_cost` | `false` | Adds `cost` to `inferredTypeInfo` (TypeScript 6 only). |
 | `project` | nearest `tsconfig.json` | The tsconfig to read the file with. |
-| `compiler` | `PRINFER_COMPILER`, else `"bundled"` | Whose TypeScript to use; see [Bundled or project compilers](#bundled-or-project-compilers). |
+| `compiler` | `TYPEPROBE_COMPILER`, else `"bundled"` | Whose TypeScript to use; see [Bundled or project compilers](#bundled-or-project-compilers). |
 | `timeout` | `60000` | Milliseconds a TypeScript 7 call may block before it throws. |
 | `strict` | `false` | Throws on unknown keys, naming the closest valid one. Test runners don't type-check test files, so without it a camelCase `sortUnions` does nothing. |
 
 Failed lookups throw with the fix in the message: an unknown name lists the closest declarations, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
 
-`prinfer/vitest` is a deprecated alias for `prinfer/testing`.
+`typeprobe/vitest` is a deprecated alias for `typeprobe/testing`.
 
 ### Stable union order
 
@@ -361,7 +364,7 @@ expect(
 `inferredTypeCost` counts the work TypeScript does for a type, so a test can stop an expensive type from getting more expensive:
 
 ```typescript
-import { inferredTypeCost } from "prinfer/testing";
+import { inferredTypeCost } from "typeprobe/testing";
 
 test("userSchema stays cheap to infer", () => {
   expect(inferredTypeCost(import.meta.url, { name: "userSchema" }).instantiations)
@@ -369,7 +372,7 @@ test("userSchema stays cheap to infer", () => {
 });
 ```
 
-It returns `{ instantiations, types }`: the type instantiations (what `tsc --extendedDiagnostics` reports as `Instantiations`) and types that a fresh TypeScript 6 checker creates while it resolves the target and writes out its untruncated type. Because each count gets a new checker, the numbers are the same on every run, in every process, in any test order, and with any display option; only the code, the compiler options, and the TypeScript version change them. The count runs on prinfer's bundled TypeScript 6 unless you pass `compiler: "project"`; either way, pin that version in a project that budgets types. The cost's non-enumerable `compiler` says which one counted. prinfer reports no wall-clock time, since identical runs differ by several times.
+It returns `{ instantiations, types }`: the type instantiations (what `tsc --extendedDiagnostics` reports as `Instantiations`) and types that a fresh TypeScript 6 checker creates while it resolves the target and writes out its untruncated type. Because each count gets a new checker, the numbers are the same on every run, in every process, in any test order, and with any display option; only the code, the compiler options, and the TypeScript version change them. The count runs on typeprobe's bundled TypeScript 6 unless you pass `compiler: "project"`; either way, pin that version in a project that budgets types. The cost's non-enumerable `compiler` says which one counted. typeprobe reports no wall-clock time, since identical runs differ by several times.
 
 The count covers what the target's type takes: for `const x = expr`, checking `expr`; for a function without a return type annotation, inferring the return type. Code the type doesn't depend on isn't counted, such as an initializer under an annotation (`const x: T = expr` takes its type from `T`); target the expression with `{ line, text }` to count it.
 
@@ -384,7 +387,7 @@ const [first, second] = inferredTypeCost(import.meta.url, {
 });
 ```
 
-A batch counts exactly what single calls do. What it shares is loading: within one process a project's files are parsed once per compiler, so counting in another file of the project takes 30 to 70 ms on top of the counts instead of about 300 ms (on prinfer's own repository), and an unchanged target is counted only once. The count itself is never shared: a type that takes 80,000 instantiations takes about 250 ms to count. `bun test` runs every test file in one process, so the project loads once; with Vitest's default isolation, each test file loads it again.
+A batch counts exactly what single calls do. What it shares is loading: within one process a project's files are parsed once per compiler, so counting in another file of the project takes 30 to 70 ms on top of the counts instead of about 300 ms (on typeprobe's own repository), and an unchanged target is counted only once. The count itself is never shared: a type that takes 80,000 instantiations takes about 250 ms to count. `bun test` runs every test file in one process, so the project loads once; with Vitest's default isolation, each test file loads it again.
 
 TypeScript 7 exposes no instantiation counts, so costs are TypeScript 6 only: with `backend: "typescript7"`, `inferredTypeCost` and `include_cost` throw. Elsewhere, `include_cost` (MCP, library) and `--cost` (CLI) add the same numbers to a hover result.
 
@@ -395,7 +398,7 @@ If you type-check with TypeScript 7, the TypeScript 6 counts are still a close g
 `expectType` checks a target's printed type, cost, and readability in one call, and throws one error listing every check that failed:
 
 ```typescript
-import { expectType } from "prinfer/testing";
+import { expectType } from "typeprobe/testing";
 
 test("user stays readable and cheap", () => {
   expectType(import.meta.url, {
@@ -453,40 +456,40 @@ Each entry takes `expectType`'s selector, and needs a check of its own only when
 
 TypeScript 7 runs in a worker thread with one compiler process per project, and each call blocks until the compiler answers. Neither keeps the test process alive, so no teardown is needed.
 
-A test runner's timeout can't interrupt a blocked call, so prinfer has its own: a call with no answer within `timeout` milliseconds (default 60000) throws and stops that compiler, and the next call starts a new one. A hung compiler fails one test instead of stalling the run. For a project that loads slower, raise it on every call with a shared selector such as `const ts7 = { backend: "typescript7", timeout: 120_000 } as const`. If the compiler process exits, the call in flight retries once.
+A test runner's timeout can't interrupt a blocked call, so typeprobe has its own: a call with no answer within `timeout` milliseconds (default 60000) throws and stops that compiler, and the next call starts a new one. A hung compiler fails one test instead of stalling the run. For a project that loads slower, raise it on every call with a shared selector such as `const ts7 = { backend: "typescript7", timeout: 120_000 } as const`. If the compiler process exits, the call in flight retries once.
 
-`closeTestingSessions()` stops the compilers early and is safe to skip. If you call it, call it once per run after the last test, not per test file: the next TypeScript 7 call starts a new compiler and loads the project again (about 190 ms on prinfer's repository, against 2 ms for a warm call). Under `bun test`, put `afterAll(closeTestingSessions)` in a `--preload` file (`preload` in `bunfig.toml`). Under Vitest, leave it out: `setupFiles` run per test file, and `globalSetup` runs in a process with no sessions. It doesn't affect TypeScript 6, whose programs stay loaded.
+`closeTestingSessions()` stops the compilers early and is safe to skip. If you call it, call it once per run after the last test, not per test file: the next TypeScript 7 call starts a new compiler and loads the project again (about 190 ms on typeprobe's repository, against 2 ms for a warm call). Under `bun test`, put `afterAll(closeTestingSessions)` in a `--preload` file (`preload` in `bunfig.toml`). Under Vitest, leave it out: `setupFiles` run per test file, and `globalSetup` runs in a process with no sessions. It doesn't affect TypeScript 6, whose programs stay loaded.
 
 ## CLI
 
 ```bash
 # Type by name, optionally with a line hint
-prinfer src/utils.ts:format
-prinfer src/utils.ts:names:11
-prinfer 'src/store.ts:$store'          # any JavaScript identifier
+typeprobe src/utils.ts:format
+typeprobe src/utils.ts:names:11
+typeprobe 'src/store.ts:$store'          # any JavaScript identifier
 
 # Type of a token: text copied from the line, or a column
-prinfer src/utils.ts:11:user
-prinfer src/utils.ts:11 --text user --occurrence 2
-prinfer src/utils.ts:11:33
+typeprobe src/utils.ts:11:user
+typeprobe src/utils.ts:11 --text user --occurrence 2
+typeprobe src/utils.ts:11:33
 
-prinfer src/utils.ts:format --docs
-prinfer src/utils.ts:largeType --full --max-chars 0
-prinfer src/utils.ts:status --sort-unions
-prinfer src/utils.ts:format --cost
-prinfer src/utils.ts:format -p ./tsconfig.json --compiler project
+typeprobe src/utils.ts:format --docs
+typeprobe src/utils.ts:largeType --full --max-chars 0
+typeprobe src/utils.ts:status --sort-unions
+typeprobe src/utils.ts:format --cost
+typeprobe src/utils.ts:format -p ./tsconfig.json --compiler project
 
 # Completions: the top 50, filtered by the text left of the cursor
-prinfer complete src/utils.ts:14:30
-prinfer complete src/utils.ts:11:user.  # cursor right after the text
-prinfer complete src/utils.ts:20:1 --prefix use --limit 20
+typeprobe complete src/utils.ts:14:30
+typeprobe complete src/utils.ts:11:user.  # cursor right after the text
+typeprobe complete src/utils.ts:20:1 --prefix use --limit 20
 
-prinfer check src/utils.ts              # type errors in one file
-prinfer annotations src/utils.ts        # annotations TypeScript would infer anyway
+typeprobe check src/utils.ts              # type errors in one file
+typeprobe annotations src/utils.ts        # annotations TypeScript would infer anyway
 ```
 
 ```text
-$ prinfer src/utils.ts:format --docs
+$ typeprobe src/utils.ts:format --docs
 (value: number, digits?: number): string
 returns: string
 name: format
@@ -494,7 +497,7 @@ kind: function
 docs: Formats a number with a fixed number of digits.
 ```
 
-Type lookups and `check` use TypeScript 6 unless you pass `--backend typescript7`; `complete` and `annotations` always use TypeScript 6. Run `prinfer --help` for every option.
+Type lookups and `check` use TypeScript 6 unless you pass `--backend typescript7`; `complete` and `annotations` always use TypeScript 6. Run `typeprobe --help` for every option.
 
 - In `<file>:<line>:<text>`, everything after the line is the text, colons and dots included. All-digit text reads as a column, so pass it with `--text`.
 - Value options take `--opt value` or `--opt=value`. An unknown option, or one the command doesn't take, is an error.
@@ -503,18 +506,18 @@ Type lookups and `check` use TypeScript 6 unless you pass `--backend typescript7
 - `--json` prints the versioned contract on stdout, never capped, and nothing on stderr. Check `ok` to tell a failed run from a file with type errors.
 
 ```bash
-$ prinfer src/utils.ts:names --json
+$ typeprobe src/utils.ts:names --json
 {"version":1,"ok":true,"result":{"signature":"string[]","line":11,"column":14,"kind":"const","name":"names","compiler":{...}}}
 ```
 
-`prinfer mcp` starts the MCP server on stdio, the same as the `prinfer-mcp` binary. `prinfer setup` is described under [Install](#install).
+`typeprobe mcp` starts the MCP server on stdio, the same as the `typeprobe-mcp` binary. `typeprobe setup` is described under [Install](#install).
 
 ## Library API
 
-The library is synchronous, runs on TypeScript 6, and throws on failure. `contractError(error)` turns a caught error into the contract shape.
+The library is synchronous, runs on TypeScript 6, and throws on failure, mostly `TypeprobeError`s (exported from `typeprobe` and `typeprobe/testing`) with a `code` and `suggestion`. `contractError(error)` turns a caught error into the contract shape.
 
 ```typescript
-import { annotations, batchHover, completions, diagnostics, hover } from "prinfer";
+import { annotations, batchHover, completions, diagnostics, hover } from "typeprobe";
 
 hover("./src/utils.ts", "format");
 // => { signature: "(value: number, digits?: number): string", returnType: "string",
@@ -547,9 +550,9 @@ Options: `project`, `compiler`, and, for hovers, `include_docs`, `include_cost`,
 | MCP server | TS7; `backend: "typescript6"` | TS6, top 50 | TS7; `backend: "typescript6"` | TS6 |
 | CLI | TS6; `--backend typescript7` | TS6, top 50 | TS6; `--backend typescript7` | TS6 |
 | Library | TS6 | TS6, all entries | TS6 | TS6 |
-| `prinfer/testing` | TS6; `backend: "typescript7"` | TS7, all names | none | none |
+| `typeprobe/testing` | TS6; `backend: "typescript7"` | TS7, all names | none | none |
 
-`typescript7` runs the native TypeScript 7 language server, with one warm session per project shared across requests; its output is closest to what your editor shows. (`prinfer/testing` uses TypeScript 7's compiler API instead.) `typescript6` uses the TypeScript 6 compiler API in-process. Type costs are counted on TypeScript 6 everywhere.
+`typescript7` runs the native TypeScript 7 language server, with one warm session per project shared across requests; its output is closest to what your editor shows. (`typeprobe/testing` uses TypeScript 7's compiler API instead.) `typescript6` uses the TypeScript 6 compiler API in-process. Type costs are counted on TypeScript 6 everywhere.
 
 The TypeScript 7 backend is experimental: its programmatic API and hover format may still change. Both backends pick the same symbol for a name, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
 
@@ -559,15 +562,15 @@ The TypeScript 7 backend is experimental: its programmatic API and hover format 
 
 ### Bundled or project compilers
 
-By default prinfer prints and counts with the TypeScript 6 and 7 it depends on (`typescript` 6, and `@typescript/native`, an alias of `typescript` 7), so results are the same on every machine whatever the project installs. To get what your own compiler infers, so snapshots and budgets move when you upgrade it, use the project's compilers:
+By default typeprobe prints and counts with the TypeScript 6 and 7 it depends on (`typescript` 6, and `@typescript/native`, an alias of `typescript` 7), so results are the same on every machine whatever the project installs. To get what your own compiler infers, so snapshots and budgets move when you upgrade it, use the project's compilers:
 
 | Mode | TypeScript 6 backend | TypeScript 7 backend |
 | :- | :- | :- |
-| `bundled` (default) | prinfer's `typescript` | prinfer's `@typescript/native` |
+| `bundled` (default) | typeprobe's `typescript` | typeprobe's `@typescript/native` |
 | `project` | the project's `typescript`, 5.0 to 6.x | the project's `typescript` 7, `@typescript/native`, or `@typescript/native-preview` 7.0.0-dev.20260624.1 or later |
 | `auto` | the project's when supported, else bundled | the project's when supported, else bundled |
 
-Set it with `compiler` (library options and `prinfer/testing` selectors), `--compiler` (CLI), or `PRINFER_COMPILER` (every surface, including the MCP server); an explicit option wins. The packages are resolved the way Node resolves an import from the directory of the file's `tsconfig.json` (or of `project`); for TypeScript 7 the nearest of `typescript` 7, `@typescript/native`, and `@typescript/native-preview` wins, in that order when they sit side by side. prinfer runs that package's own API client and compiler binary. A package manager that hoists prinfer's own `typescript` and `@typescript/native` puts them where the project resolves them too; such a copy is the project's only if the project's nearest `package.json`, or its workspace root's, declares the package, and then it runs and is reported as the bundled compiler.
+Set it with `compiler` (library options and `typeprobe/testing` selectors), `--compiler` (CLI), or `TYPEPROBE_COMPILER` (every surface, including the MCP server); an explicit option wins. The packages are resolved the way Node resolves an import from the directory of the file's `tsconfig.json` (or of `project`); for TypeScript 7 the nearest of `typescript` 7, `@typescript/native`, and `@typescript/native-preview` wins, in that order when they sit side by side. typeprobe runs that package's own API client and compiler binary. A package manager that hoists typeprobe's own `typescript` and `@typescript/native` puts them where the project resolves them too; such a copy is the project's only if the project's nearest `package.json`, or its workspace root's, declares the package, and then it runs and is reported as the bundled compiler.
 
 `project` throws a `TYPESCRIPT_ERROR` when the project has no compiler for the backend, and names the package, version, and path when it has an unsupported one: `typescript` before 5.0, a `typescript` 7 asked for TypeScript 6 output, or a `@typescript/native-preview` older than 7.0.0-dev.20260624.1. `auto` falls back to the bundled compiler, with one warning on stderr when the project's is unsupported. On TypeScript 5.0 to 5.8 some types and messages print differently from TypeScript 6, so expect snapshot changes when you switch.
 
@@ -579,12 +582,32 @@ One process runs one TypeScript 7 compiler at a time: a call that needs another 
 
 | Variable | Effect |
 | :- | :- |
-| `PRINFER_BACKEND=typescript6` | MCP server only: default backend for the hover tools and `diagnostics`. An explicit `backend` argument, or `include_cost`, wins. |
-| `PRINFER_COMPILER=project` | `bundled`, `project`, or `auto` on every surface; see above. |
+| `TYPEPROBE_BACKEND=typescript6` | MCP server only: default backend for the hover tools and `diagnostics`. An explicit `backend` argument, or `include_cost`, wins. |
+| `TYPEPROBE_COMPILER=project` | `bundled`, `project`, or `auto` on every surface; see above. |
+
+The prinfer-era names `PRINFER_BACKEND` and `PRINFER_COMPILER` are deprecated but still read when the `TYPEPROBE_*` variable is unset.
 
 ## Requirements
 
-Node.js 20 or later. prinfer bundles its own TypeScript 6 and 7, so your project's `typescript` version doesn't matter unless you opt into [project compilers](#bundled-or-project-compilers). The TypeScript 7 package is loaded only when a TypeScript 7 call needs it.
+Node.js 20 or later. typeprobe bundles its own TypeScript 6 and 7, so your project's `typescript` version doesn't matter unless you opt into [project compilers](#bundled-or-project-compilers). The TypeScript 7 package is loaded only when a TypeScript 7 call needs it.
+
+## Migrating from prinfer
+
+prinfer was renamed to typeprobe in 4.0.0. Results, snapshots, and the JSON contract are unchanged, apart from `error.name`, which is now `"TypeprobeError"`. The last prinfer, 3.5.0, depends on typeprobe and forwards to it (its `prinfer` and `prinfer-mcp` commands, and `prinfer`, `prinfer/testing` and `prinfer/vitest` imports), so old setups keep working until you switch. Its CLI prints a one-line notice on stderr; the MCP server prints nothing.
+
+| prinfer 3.x | typeprobe 4 |
+| :- | :- |
+| `npm i -D prinfer` | `npm rm prinfer && npm i -D typeprobe` |
+| `import { inferredType } from "prinfer/testing"` | `import { inferredType } from "typeprobe/testing"` (also `typeprobe`, `typeprobe/vitest`) |
+| `prinfer`, `prinfer-mcp`, `npx -y prinfer mcp` | `typeprobe`, `typeprobe-mcp`, `npx -y typeprobe mcp` |
+| MCP server `prinfer` | MCP server `typeprobe`: re-run `npx -y typeprobe setup <client>`, which replaces the `prinfer` entry |
+| `PRINFER_BACKEND`, `PRINFER_COMPILER` | `TYPEPROBE_BACKEND`, `TYPEPROBE_COMPILER` (the old names are still read when the new ones are unset) |
+| error name `PrinferError` | `TypeprobeError`, now exported; `PrinferError` is a deprecated alias of the same class, so `instanceof` works with either |
+| Claude Code plugin `prinfer@prinfer` | `/plugin uninstall prinfer@prinfer`, `/plugin marketplace remove prinfer`, then the two commands under [Install](#install) |
+| MCP Registry `io.github.clockblocker/prinfer`, Smithery `clockblocker/prinfer` | `io.github.clockblocker/typeprobe`, `clockblocker/typeprobe` |
+| `<!-- prinfer:start -->` block in AGENTS.md | `npx -y typeprobe setup agents-md` replaces it |
+
+`setup vscode` at user scope goes through `code --add-mcp`, which can't remove servers: delete the old `prinfer` server from VS Code's MCP list yourself.
 
 ## Development
 
@@ -596,6 +619,24 @@ bun run ci    # typecheck, build, biome check, tests
 The repository type-checks with TypeScript 7 (`bun run typecheck`); TypeScript 6 does the declaration bundling.
 
 Add a changeset for user-facing changes (`bun run changeset`). To release, run `bun run version` (it applies the changesets and copies the version into `server.json`, the plugin manifest, and the MCPB manifest), commit, then publish by hand: `bun run release` publishes to npm, and `bun run mcpb` packs the bundle for Smithery.
+
+### Publishing the rename (typeprobe 4.0.0 and prinfer 3.5.0)
+
+`shim/prinfer/` is the final prinfer release: plain JavaScript, no build, not part of typeprobe's package. Publish it only after typeprobe 4.0.0 is on npm, since it depends on `typeprobe@^4.0.0`.
+
+1. Release typeprobe as usual: `bun run version`, commit `chore: release typeprobe 4.0.0`, then `bun run release` (npm), and tag `v4.0.0`. Check with `npx -y typeprobe@4.0.0 --version`.
+2. Publish the shim: `bun run shim:pack` (writes `prinfer-3.5.0.tgz`), then `npm publish prinfer-3.5.0.tgz`. Check with `npx -y prinfer@3.5.0 --version`, which prints the notice and 4.0.0.
+3. Deprecate every prinfer version, the shim included, so each install points at typeprobe (the shim still works):
+   ```bash
+   npm deprecate prinfer "prinfer is now typeprobe: npm i -D typeprobe. Migration guide: https://github.com/clockblocker/typeprobe#migrating-from-prinfer"
+   ```
+4. MCP Registry: `mcp-publisher login github`, `mcp-publisher publish` (registers `io.github.clockblocker/typeprobe`, which the registry checks against `mcpName` in typeprobe's package.json), then deprecate the old name:
+   ```bash
+   mcp-publisher status --status deprecated --all-versions \
+     --message "Renamed to io.github.clockblocker/typeprobe (npm: typeprobe)" \
+     io.github.clockblocker/prinfer
+   ```
+5. Smithery: `bun run mcpb`, then `npx -y smithery@1.2.0 mcp publish ./typeprobe.mcpb -n clockblocker/typeprobe` (needs `SMITHERY_API_KEY`). Point the old `clockblocker/prinfer` listing at the new one, or unpublish it, in Smithery's settings.
 
 ## License
 

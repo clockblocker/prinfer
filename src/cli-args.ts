@@ -116,7 +116,7 @@ function plausibleFile(file: string, cwd: string): boolean {
 }
 
 /**
- * A hint for arguments the shell probably rewrote before prinfer saw them:
+ * A hint for arguments the shell probably rewrote before typeprobe saw them:
  * an expanded or leftover `$` (`src/store.ts:$store` unquoted loses
  * `$store`), or a zsh modifier applied to a variable (`$F:root` becomes
  * `${F:r}oot`, a path without its extension).

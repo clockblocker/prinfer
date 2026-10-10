@@ -148,7 +148,7 @@ const roots: string[] = [];
 
 function project(): string {
 	const dir = fs.realpathSync(
-		fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-unions-")),
+		fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-unions-")),
 	);
 	roots.push(dir);
 	fs.writeFileSync(

@@ -1,0 +1,73 @@
+{
+	"name": "prinfer",
+	"version": "3.5.0",
+	"description": "prinfer is now typeprobe. This package re-exports typeprobe and forwards the prinfer and prinfer-mcp commands to it.",
+	"type": "module",
+	"main": "./index.cjs",
+	"module": "./index.js",
+	"types": "./index.d.ts",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./index.d.ts",
+				"default": "./index.js"
+			},
+			"require": {
+				"types": "./index.d.cts",
+				"default": "./index.cjs"
+			}
+		},
+		"./vitest": {
+			"import": {
+				"types": "./vitest.d.ts",
+				"default": "./vitest.js"
+			},
+			"require": {
+				"types": "./vitest.d.cts",
+				"default": "./vitest.cjs"
+			}
+		},
+		"./testing": {
+			"import": {
+				"types": "./testing.d.ts",
+				"default": "./testing.js"
+			},
+			"require": {
+				"types": "./testing.d.cts",
+				"default": "./testing.cjs"
+			}
+		}
+	},
+	"bin": {
+		"prinfer": "bin/prinfer.js",
+		"prinfer-mcp": "bin/prinfer-mcp.js"
+	},
+	"files": [
+		"bin",
+		"index.*",
+		"testing.*",
+		"vitest.*"
+	],
+	"keywords": [
+		"typeprobe",
+		"typescript",
+		"mcp",
+		"deprecated"
+	],
+	"license": "MIT",
+	"homepage": "https://github.com/clockblocker/typeprobe#migrating-from-prinfer",
+	"bugs": {
+		"url": "https://github.com/clockblocker/typeprobe/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/clockblocker/typeprobe.git",
+		"directory": "shim/prinfer"
+	},
+	"engines": {
+		"node": ">=20.0.0"
+	},
+	"dependencies": {
+		"typeprobe": "^4.0.0"
+	}
+}

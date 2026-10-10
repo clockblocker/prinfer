@@ -55,7 +55,7 @@ const roots: string[] = [];
 
 function project(): string {
 	const dir = fs.realpathSync(
-		fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-type-references-")),
+		fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-type-references-")),
 	);
 	roots.push(dir);
 	fs.writeFileSync(
@@ -145,7 +145,7 @@ describe("type references read the same type on TypeScript 6 and 7", () => {
 			const selector = { line: lineOf(context), text };
 			const ts6 = comparable(inferredTypeInfo(file, selector));
 			expect(ts6).toMatchObject(expected);
-			// Through the synchronous prinfer/testing worker.
+			// Through the synchronous typeprobe/testing worker.
 			const ts7 = comparable(
 				inferredTypeInfo(file, { ...selector, backend: "typescript7" }),
 			);

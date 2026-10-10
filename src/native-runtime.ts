@@ -5,7 +5,7 @@ import type { CompilerInfo } from "./types.js";
 
 /**
  * The TypeScript 7 compiler API that native-api.ts and native-lsp.ts run
- * against: prinfer's `@typescript/native`, or a project's `typescript` 7,
+ * against: typeprobe's `@typescript/native`, or a project's `typescript` 7,
  * `@typescript/native`, or `@typescript/native-preview`, loaded on first
  * use (see compiler.ts).
  * The modules come from one package, so the API client always speaks its

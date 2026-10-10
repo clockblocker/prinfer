@@ -19,7 +19,7 @@ function canaryFailure(when: string, lookup: CompilerProcessLookup): Error {
 	return new Error(
 		[
 			`@typescript/native ${version} no longer keeps its compiler child process at the private API.client.process field: ${when} the lookup was ${describeLookup(lookup)}.`,
-			"Without it prinfer/testing cannot unref idle TypeScript 7 sessions; they fall back to closing after IDLE_CLOSE_MS and print a warning telling users to call closeTestingSessions().",
+			"Without it typeprobe/testing cannot unref idle TypeScript 7 sessions; they fall back to closing after IDLE_CLOSE_MS and print a warning telling users to call closeTestingSessions().",
 			"Update locateCompilerProcess in src/native-api.ts to wherever this release keeps the process (or to a public handle if it now has one).",
 		].join("\n"),
 	);

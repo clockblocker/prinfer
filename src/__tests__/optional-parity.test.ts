@@ -70,7 +70,7 @@ const roots: string[] = [];
 /** The source in a fresh project, with exactOptionalPropertyTypes on or off. */
 function project(exact: boolean): string {
 	const dir = fs.realpathSync(
-		fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-optional-")),
+		fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-optional-")),
 	);
 	roots.push(dir);
 	fs.writeFileSync(
@@ -108,9 +108,9 @@ const backends: Array<[string, Lookup]> = [
 	["typescript6", async (file, name, options) => hover(file, name, options)],
 	["typescript7 (language server)", nativeHoverByName],
 	["typescript7 (testing API)", nativeApiTypeInfoByName],
-	// The same API through the synchronous prinfer/testing worker.
+	// The same API through the synchronous typeprobe/testing worker.
 	[
-		"typescript7 (prinfer/testing)",
+		"typescript7 (typeprobe/testing)",
 		async (file, name, options) =>
 			inferredTypeInfo(file, {
 				name,

@@ -46,13 +46,13 @@ const backends: Array<[string, Lookup]> = [
 
 /**
  * Every backend, plus the testing API through the synchronous
- * prinfer/testing worker. That helper wraps lookup errors with its own
+ * typeprobe/testing worker. That helper wraps lookup errors with its own
  * suggestions, so the error-shape tests below use `backends`.
  */
 const lookups: Array<[string, Lookup]> = [
 	...backends,
 	[
-		"typescript7 (prinfer/testing)",
+		"typescript7 (typeprobe/testing)",
 		async (name, options) =>
 			inferredTypeInfo(fixture, {
 				name,
@@ -308,7 +308,7 @@ describe("a line hint that misses lists where the name is declared", () => {
 
 test("alternatives and declaredAt read variable kinds on a fresh program", () => {
 	// The first lookup in a new program runs before the checker binds it.
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-kinds-"));
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-kinds-"));
 	const file = path.join(dir, "kinds.ts");
 	fs.writeFileSync(
 		file,

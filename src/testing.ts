@@ -24,7 +24,7 @@ import {
 } from "./core/readability.js";
 import { resolveTextColumn } from "./core/text-target.js";
 import { withTypeScript } from "./core/ts-runtime.js";
-import { COST_NEEDS_TYPESCRIPT6, PrinferError } from "./errors.js";
+import { COST_NEEDS_TYPESCRIPT6, TypeprobeError } from "./errors.js";
 import { hover } from "./index.js";
 import { callNative, closeNative, DEFAULT_TIMEOUT_MS } from "./native-sync.js";
 import type {
@@ -35,6 +35,7 @@ import type {
 	HoverResult,
 } from "./types.js";
 
+export { PrinferError, TypeprobeError } from "./errors.js";
 export {
 	DEFAULT_UTILITY_TYPES,
 	type ReadabilityIssue,
@@ -57,7 +58,7 @@ interface InferredCompletionsOptions {
 	/**
 	 * `inferredCompletions` always runs on TypeScript 7 and returns every
 	 * completion name, with no prefix filter or limit. (The MCP `completions`
-	 * tool and `prinfer complete` use TypeScript 6 and return 50 by default.)
+	 * tool and `typeprobe complete` use TypeScript 6 and return 50 by default.)
 	 */
 	backend?: "typescript7";
 	/** Which TypeScript 7 compiler to use; see `CompilerMode`. */
@@ -110,7 +111,7 @@ export interface InferredTypeOptions
 	 */
 	full?: boolean;
 	/**
-	 * `prinfer/testing` defaults to `"typescript6"`. Both backends return
+	 * `typeprobe/testing` defaults to `"typescript6"`. Both backends return
 	 * synchronously. (The MCP server defaults to TypeScript 7; the CLI and
 	 * library to TypeScript 6.)
 	 */
@@ -1123,7 +1124,7 @@ function assertCompilerMode(
 	throw testingError(
 		"INVALID_ARGUMENT",
 		`${helper} got unknown ${field} ${JSON.stringify(value)}.`,
-		'Use "bundled" (prinfer\'s own TypeScript), "project" (the project\'s), or "auto" (the project\'s when it has a supported one).',
+		'Use "bundled" (typeprobe\'s own TypeScript), "project" (the project\'s), or "auto" (the project\'s when it has a supported one).',
 	);
 }
 
@@ -1510,7 +1511,7 @@ function assertPositive(helper: string, field: string, value: unknown): void {
 const SELECTOR_SHAPES =
 	"Pass { name }, { line, text, occurrence? }, or { line, column }; lines and columns are 1-based.";
 
-function invalidSelector(helper: string): PrinferError {
+function invalidSelector(helper: string): TypeprobeError {
 	const shapes =
 		helper === "inferredCompletions"
 			? 'Pass { line, text, occurrence?, cursor? } or { line, column }; text places the cursor after the match unless cursor: "start".'
@@ -1522,7 +1523,7 @@ function invalidSelector(helper: string): PrinferError {
 	);
 }
 
-function costNeedsTypeScript6(helper: string): PrinferError {
+function costNeedsTypeScript6(helper: string): TypeprobeError {
 	return testingError(
 		"INVALID_ARGUMENT",
 		`${helper} cannot count type costs on backend "typescript7". ${COST_NEEDS_TYPESCRIPT6}`,
@@ -1532,12 +1533,12 @@ function costNeedsTypeScript6(helper: string): PrinferError {
 
 /** Test runners print only the message, so it carries the suggestion too. */
 function testingError(
-	code: PrinferError["code"],
+	code: TypeprobeError["code"],
 	message: string,
 	suggestion: string,
 	cause?: Error,
-): PrinferError {
-	const error = new PrinferError(
+): TypeprobeError {
+	const error = new TypeprobeError(
 		code,
 		`${message}\n${suggestion}`,
 		suggestion,
@@ -1550,7 +1551,7 @@ function testingError(
 function explain(error: unknown, request: Request, selector: object): Error {
 	if (!(error instanceof Error)) return new Error(String(error));
 	const existing =
-		error instanceof PrinferError ? error.suggestion : undefined;
+		error instanceof TypeprobeError ? error.suggestion : undefined;
 	if (existing && error.message.endsWith(existing)) return error;
 	const { code } = contractError(error).error;
 	let suggestion: string | undefined;
@@ -1679,7 +1680,7 @@ function editDistance(left: string, right: string): number {
 
 function readSource(file: string): string {
 	if (!fs.existsSync(file)) {
-		throw new PrinferError("FILE_NOT_FOUND", `File not found: ${file}`);
+		throw new TypeprobeError("FILE_NOT_FOUND", `File not found: ${file}`);
 	}
 	return fs.readFileSync(file, "utf8");
 }

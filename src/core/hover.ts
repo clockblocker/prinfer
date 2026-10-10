@@ -67,7 +67,7 @@ function variableKind(node: ts.VariableDeclaration): string {
  * The kind of a bare identifier or property access, from the declaration of
  * the symbol it refers to: a reference to a parameter is `parameter`, to a
  * const is `const`, `obj.fn` is `method`. Falls back to `fallback` when the
- * symbol has no declaration prinfer can classify.
+ * symbol has no declaration typeprobe can classify.
  */
 function referenceKind(
 	checker: ts.TypeChecker,

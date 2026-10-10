@@ -27,7 +27,7 @@ export default defineConfig({
     },
   },
   define: {
-    __PRINFER_VERSION__: JSON.stringify(version),
+    __TYPEPROBE_VERSION__: JSON.stringify(version),
   },
   // CJS builds get import.meta.url, which src/native-sync.ts uses to find
   // the worker entry.

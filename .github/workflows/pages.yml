@@ -7,7 +7,7 @@ on:
     branches: [master]
     paths:
       - README.md
-      - printfer-logo.webp
+      - typeprobe-logo.webp
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -29,9 +29,9 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p site
-          cp printfer-logo.webp site/
+          cp typeprobe-logo.webp site/
           cat > site/_config.yml <<'EOF'
-          title: prinfer
+          title: typeprobe
           description: TypeScript inferred types, completions and type errors for AI coding agents and type tests
           theme: jekyll-theme-cayman
           EOF

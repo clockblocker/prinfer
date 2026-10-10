@@ -48,7 +48,7 @@ describe("loadProgram", () => {
 
 	test("rebuilds when a source file changes", () => {
 		const directory = fs.mkdtempSync(
-			path.join(os.tmpdir(), "prinfer-cache-"),
+			path.join(os.tmpdir(), "typeprobe-cache-"),
 		);
 		const file = path.join(directory, "sample.ts");
 		try {
@@ -67,7 +67,7 @@ describe("loadProgram", () => {
 
 	test("rebuilds when tsconfig changes or a root file is added", () => {
 		const directory = fs.mkdtempSync(
-			path.join(os.tmpdir(), "prinfer-cache-"),
+			path.join(os.tmpdir(), "typeprobe-cache-"),
 		);
 		const file = path.join(directory, "sample.ts");
 		const addedFile = path.join(directory, "added.ts");

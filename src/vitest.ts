@@ -1,2 +1,2 @@
-/** @deprecated Import from `prinfer/testing` instead. */
+/** @deprecated Import from `typeprobe/testing` instead. */
 export * from "./testing.js";

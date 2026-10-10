@@ -55,7 +55,7 @@ describe("TypeScript 7 project selection", () => {
 	const compilerOptions = { strict: true, types: [] };
 	function setup(files: Record<string, unknown>): string {
 		const dir = fs.realpathSync(
-			fs.mkdtempSync(path.join(os.tmpdir(), "prinfer-project-")),
+			fs.mkdtempSync(path.join(os.tmpdir(), "typeprobe-project-")),
 		);
 		fs.mkdirSync(path.join(dir, "src"));
 		fs.writeFileSync(

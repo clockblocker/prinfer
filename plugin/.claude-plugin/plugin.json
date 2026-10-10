@@ -1,13 +1,13 @@
 {
-	"name": "prinfer",
+	"name": "typeprobe",
 	"version": "3.4.0",
-	"description": "Lets Claude see TypeScript's inferred types, completions and type errors through the prinfer MCP server",
+	"description": "Lets Claude see TypeScript's inferred types, completions and type errors through the typeprobe MCP server",
 	"author": {
 		"name": "clockblocker",
 		"url": "https://github.com/clockblocker"
 	},
-	"homepage": "https://github.com/clockblocker/prinfer#readme",
-	"repository": "https://github.com/clockblocker/prinfer",
+	"homepage": "https://github.com/clockblocker/typeprobe#readme",
+	"repository": "https://github.com/clockblocker/typeprobe",
 	"license": "MIT",
 	"keywords": [
 		"typescript",

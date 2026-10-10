@@ -34,7 +34,7 @@ import {
 	WorkspaceFiles,
 	type WorkspaceScanStats,
 } from "./core/workspace-files.js";
-import { PrinferError } from "./errors.js";
+import { TypeprobeError } from "./errors.js";
 import {
 	countNativeUnionMembers,
 	hoveredType,
@@ -257,7 +257,7 @@ class NativeLspClient {
 		for (const resolve of waiters) resolve();
 	}
 
-	/** The `typescript` settings section prinfer runs the server with. */
+	/** The `typescript` settings section typeprobe runs the server with. */
 	private preferences(): Record<string, unknown> {
 		return this.fullHovers ? { maximumHoverLength: FULL_HOVER_LENGTH } : {};
 	}
@@ -467,7 +467,7 @@ class NativeLspClient {
 			});
 			snapshot = await api.updateSnapshot({ openProjects: [project] });
 		} catch (error) {
-			throw new PrinferError(
+			throw new TypeprobeError(
 				"TYPESCRIPT_ERROR",
 				`TypeScript 7 could not open project ${project}: ${error instanceof Error ? error.message : String(error)}`,
 				"Check that the tsconfig is valid, or use the typescript6 backend.",
@@ -476,7 +476,7 @@ class NativeLspClient {
 		try {
 			const loaded = snapshot.getProject(project);
 			if (!loaded) {
-				throw new PrinferError(
+				throw new TypeprobeError(
 					"TYPESCRIPT_ERROR",
 					`TypeScript 7 could not load project ${project}`,
 					"Check that the tsconfig is valid, or use the typescript6 backend.",
@@ -484,7 +484,7 @@ class NativeLspClient {
 			}
 			const sourceFile = await loaded.program.getSourceFile(file);
 			if (!sourceFile) {
-				throw new PrinferError(
+				throw new TypeprobeError(
 					"INVALID_ARGUMENT",
 					`The TypeScript 7 backend can't use project ${project} for ${file}: the project doesn't include that file`,
 					`Add the file to ${path.basename(project)}'s include or files, use the typescript6 backend (which adds the file to the project), or omit project.`,
@@ -835,7 +835,7 @@ function getNativeClient(root: string): NativeLspClient {
 	if (!client) {
 		const compiler = activeNativeCompiler();
 		if (!compiler) {
-			throw new PrinferError(
+			throw new TypeprobeError(
 				"INTERNAL_ERROR",
 				"No TypeScript 7 compiler is active for a language server.",
 			);
@@ -862,7 +862,7 @@ function resolveProject(
 		if (fs.statSync(resolved).isDirectory())
 			config = path.join(resolved, "tsconfig.json");
 	} catch {
-		throw new PrinferError(
+		throw new TypeprobeError(
 			"FILE_NOT_FOUND",
 			`Project not found: ${resolved}`,
 			"Pass the path of an existing tsconfig.json, or omit project.",
@@ -1040,7 +1040,7 @@ const IDENTIFIER = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*/u;
 const OVERLOADS = /\s*\(\+\d+ overloads?\)$/;
 
 /**
- * Hover labels TypeScript 7 uses where prinfer's kind vocabulary (shared
+ * Hover labels TypeScript 7 uses where typeprobe's kind vocabulary (shared
  * with the TypeScript 6 backend) has another name.
  */
 const KIND_ALIASES = new Map([

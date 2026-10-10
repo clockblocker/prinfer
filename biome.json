@@ -9,6 +9,7 @@
 		"includes": [
 			"src/**",
 			"scripts/**",
+			"shim/**",
 			"*.ts",
 			"package.json",
 			"server.json",
@@ -37,6 +38,10 @@
 			"**/src/**/*.ts",
 			"**/test/**/*.ts",
 			"**/scripts/**/*.mjs",
+			"**/shim/**/*.js",
+			"**/shim/**/*.cjs",
+			"**/shim/**/*.ts",
+			"**/shim/**/*.cts",
 			"./**/*.json"
 		],
 		"indentStyle": "tab",

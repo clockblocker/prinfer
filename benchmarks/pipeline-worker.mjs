@@ -1,6 +1,10 @@
 import { performance } from "node:perf_hooks";
 
-const hotSamples = Number(process.env.PRINFER_BENCH_HOT_SAMPLES ?? 7);
+const hotSamples = Number(
+	process.env.TYPEPROBE_BENCH_HOT_SAMPLES ??
+		process.env.PRINFER_BENCH_HOT_SAMPLES ??
+		7,
+);
 const fixture = "src/__tests__/fixtures/sample.ts";
 const runtimeStarted = performance.now();
 const module = await import("../dist/index.js");
