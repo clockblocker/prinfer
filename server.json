@@ -33,12 +33,6 @@
 					"format": "string",
 					"default": "typescript7",
 					"choices": ["typescript7", "typescript6"]
-				},
-				{
-					"name": "PRINFER_INCLUDE_TIMING",
-					"description": "Set to 1 or true to add type-resolution timing to every hover result.",
-					"format": "boolean",
-					"default": "false"
 				}
 			]
 		}

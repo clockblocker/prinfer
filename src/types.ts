@@ -46,7 +46,7 @@ export interface HoverOptions {
  * expands it into its untruncated text. A warm checker would reuse earlier
  * lookups, so counting from a fresh one makes the numbers the same on every
  * run, in any process, whatever was looked up before. Display options
- * (`full`, `include_docs`) do not change them. Only the files, the compiler
+ * (`full`, `include_docs`, `sort_unions`) do not change them. Only the files, the compiler
  * options, and the TypeScript version do.
  */
 export interface HoverCost {

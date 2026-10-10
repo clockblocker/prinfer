@@ -41,3 +41,10 @@ export const flags = pipe(
 );
 
 export const light = 1;
+
+export const choice = pipe(
+	1,
+	(n): "zeta" | "alpha" | null => (n > 1 ? "zeta" : n > 0 ? "alpha" : null),
+	(s) => ({ s }),
+	(o) => [o.s] as const,
+);

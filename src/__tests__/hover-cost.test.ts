@@ -2,6 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import path from "node:path";
 import { PrinferError } from "../errors.js";
 import {
+	batchHover,
 	clearProgramCache,
 	findNodeByNameAndLine,
 	getHoverInfo,
@@ -64,6 +65,31 @@ describe("include_cost", () => {
 		expect(
 			hover(costFile, line, column, { include_cost: true }).cost,
 		).toEqual(base);
+	});
+
+	test("is the same with sort_unions, which reorders the printed type", () => {
+		const plain = hover(costFile, "choice", {
+			full: true,
+			include_cost: true,
+		});
+		const sorted = hover(costFile, "choice", {
+			full: true,
+			include_cost: true,
+			sort_unions: true,
+		});
+		expect(plain.signature).toBe('readonly ["zeta" | "alpha" | null]');
+		expect(sorted.signature).toBe('readonly ["alpha" | "zeta" | null]');
+		expect(plain.cost?.instantiations).toBeGreaterThan(0);
+		expect(sorted.cost).toEqual(plain.cost as HoverCost);
+		expect(
+			inferredTypeCost(costFile, { name: "choice", sort_unions: true }),
+		).toEqual(plain.cost as HoverCost);
+		const [batched] = batchHover(
+			costFile,
+			[{ line: plain.line, column: plain.column }],
+			{ include_cost: true, sort_unions: true },
+		).items;
+		expect(batched?.result?.cost).toEqual(plain.cost as HoverCost);
 	});
 
 	test("orders types by the work they take", () => {

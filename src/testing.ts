@@ -278,7 +278,8 @@ export function inferredTypeInfo(
  * budget. The counts come from a fresh TypeScript 6 checker (see
  * `HoverCost`), so they are the same on every run, in any test order, and
  * change only when the code, the compiler options, or the TypeScript
- * version does. Synchronous; TypeScript 6 only.
+ * version does. Synchronous; TypeScript 6 only. Takes the same selector
+ * as `inferredType`, `strict` included; a third argument throws.
  *
  * @example
  * ```ts
@@ -290,18 +291,21 @@ export function inferredTypeInfo(
 export function inferredTypeCost(
 	file: TestingFile,
 	selector: TypeScript6InferredTypeSelector,
+): HoverCost;
+export function inferredTypeCost(
+	file: TestingFile,
+	selector: TypeScript6InferredTypeSelector,
+	...extra: unknown[]
 ): HoverCost {
-	const request = createRequest("inferredTypeCost", file, selector, []);
+	const helper = "inferredTypeCost";
+	const request = createRequest(helper, file, selector, extra);
 	if (request.backend === "typescript7") {
-		throw costNeedsTypeScript6(request.helper);
+		throw costNeedsTypeScript6(helper);
 	}
 	const result = inferredTypeInfoImpl(
-		"inferredTypeCost",
+		helper,
 		file,
-		{
-			...selector,
-			include_cost: true,
-		},
+		{ ...selector, include_cost: true },
 		[],
 	) as HoverResult;
 	return result.cost as HoverCost;
@@ -382,6 +386,8 @@ const TYPE_SELECTOR_KEYS = [
 	"project",
 	"full",
 	"include_docs",
+	"include_cost",
+	"sort_unions",
 	"include_timing",
 	"backend",
 	"strict",
@@ -389,8 +395,12 @@ const TYPE_SELECTOR_KEYS = [
 
 /** A selector example that shows options sitting next to the target. */
 function selectorExample(helper: string): string {
-	return helper === "inferredCompletions"
-		? `${helper}(file, { line: 3, text: "user.", project: "./tsconfig.json" })`
+	if (helper === "inferredCompletions") {
+		return `${helper}(file, { line: 3, text: "user.", project: "./tsconfig.json" })`;
+	}
+	// inferredTypeCost has no TypeScript 7 backend to show.
+	return helper === "inferredTypeCost"
+		? `${helper}(file, { name: "result", project: "./tsconfig.json" })`
 		: `${helper}(file, { name: "result", backend: "typescript7" })`;
 }
 

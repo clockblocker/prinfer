@@ -7,6 +7,7 @@ import {
 	type InferredCompletionsSelector,
 	inferredCompletions,
 	inferredType,
+	inferredTypeCost,
 	inferredTypeInfo,
 } from "../testing.js";
 
@@ -365,6 +366,75 @@ describe("misplaced options", () => {
 		expect(error.message).toContain('unknown selector key "full"');
 		expect(error.message).toContain(
 			"Selector keys: line, column, text, occurrence, cursor, project, backend, strict.",
+		);
+	});
+
+	test("strict: true accepts sort_unions and include_cost", () => {
+		expect(
+			inferredType(targets, {
+				name: "pick",
+				sort_unions: true,
+				strict: true,
+			}),
+		).toBe("Drink");
+		expect(
+			inferredTypeInfo(targets, {
+				name: "pick",
+				include_cost: true,
+				strict: true,
+			}).cost,
+		).toEqual(inferredTypeCost(targets, { name: "pick" }));
+	});
+
+	test("strict: true suggests sort_unions for sortUnions", () => {
+		const error = thrown(() =>
+			inferredType(targets, {
+				name: "pick",
+				sortUnions: true,
+				strict: true,
+			} as { name: string }),
+		);
+		expect(error.message).toContain(
+			'inferredType got unknown selector key "sortUnions".',
+		);
+		expect(error.message).toContain("Did you mean sort_unions?");
+	});
+
+	test("inferredTypeCost takes strict and the same selector options", () => {
+		const cost = inferredTypeCost(targets, { name: "pick" });
+		expect(
+			inferredTypeCost(targets, {
+				name: "pick",
+				full: false,
+				include_docs: true,
+				include_cost: true,
+				sort_unions: true,
+				strict: true,
+			}),
+		).toEqual(cost);
+		const error = thrown(() =>
+			inferredTypeCost(targets, {
+				name: "pick",
+				sortUnions: true,
+				strict: true,
+			} as { name: string }),
+		);
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain(
+			'inferredTypeCost got unknown selector key "sortUnions".',
+		);
+		expect(error.message).toContain("Did you mean sort_unions?");
+	});
+
+	test("a third argument to inferredTypeCost throws", () => {
+		const call = inferredTypeCost as (...args: unknown[]) => unknown;
+		const error = thrown(() => call(targets, { name: "pick" }, {}));
+		expect(error.code).toBe("INVALID_ARGUMENT");
+		expect(error.message).toContain(
+			"inferredTypeCost takes two arguments (file, selector), got 3.",
+		);
+		expect(error.message).toContain(
+			'inferredTypeCost(file, { name: "result", project: "./tsconfig.json" })',
 		);
 	});
 
