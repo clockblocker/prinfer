@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkerFactory } from "../core/hover-cost.js";
+import { withTypeScript } from "../core/ts-runtime.js";
 import { PrinferError } from "../errors.js";
 import {
 	batchHover,
@@ -14,6 +15,7 @@ import {
 } from "../index.js";
 import { inferredTypeCost, inferredTypeInfo } from "../testing.js";
 import type { HoverCost } from "../types.js";
+import { freshTypeScript } from "./helpers/typescript.js";
 
 // The first lookup loads a compiler program.
 setDefaultTimeout(30_000);
@@ -170,6 +172,30 @@ describe("programs of one project", () => {
 			first.getSourceFile(costFile) as never,
 		);
 		expect(second.getTypeChecker()).not.toBe(first.getTypeChecker());
+	});
+
+	test("share nothing with another TypeScript instance", () => {
+		clearProgramCache();
+		const sample = path.join(import.meta.dir, "fixtures", "sample.ts");
+		const other = freshTypeScript();
+		const bundled = loadProgram(costFile);
+		const project = withTypeScript(other, () => loadProgram(sample));
+		const afterwards = loadProgram(sample);
+		const parsedBy = (program: typeof bundled) =>
+			new Set(program.getSourceFiles());
+		const bundledFiles = parsedBy(bundled);
+		const projectFiles = parsedBy(project);
+		expect(projectFiles.size).toBeGreaterThan(1);
+		for (const file of projectFiles) {
+			expect(bundledFiles.has(file)).toBe(false);
+		}
+		// The bundled program of the same entry takes the bundled files.
+		for (const file of afterwards.getSourceFiles()) {
+			expect(projectFiles.has(file)).toBe(false);
+		}
+		expect(afterwards.getSourceFile(costFile)).toBe(
+			bundled.getSourceFile(costFile) as never,
+		);
 	});
 
 	test("count the same whichever program parsed the files", () => {

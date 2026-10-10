@@ -6,8 +6,11 @@ interface ProgramCacheEntry {
 	program: ts.Program;
 	files: Map<string, string>;
 	directories: Map<string, string>;
-	/** The compiler options, as JSON: programs with the same share files. */
-	options: string;
+	/**
+	 * The TypeScript instance and compiler options: programs with the same
+	 * share files (see sharingHost).
+	 */
+	sharing: string;
 }
 
 const programCache = new Map<string, ProgramCacheEntry>();
@@ -158,18 +161,29 @@ function programKey(entryFileAbs: string, tsconfigPath?: string): string {
  * A compiler host that takes unchanged files from the cached programs with
  * the same compiler options, so a program for another entry file of a
  * project does not parse and bind the project and its libraries again. The
- * programs share only source files, which depend on nothing but their text
- * and the options; each keeps its own checker.
+ * programs share only source files, which depend on nothing but their text,
+ * the options, and the compiler that parsed and bound them; each keeps its
+ * own checker. Programs of another TypeScript instance never share: syntax
+ * kinds, flags, and binder state differ between versions, so a file one
+ * version parsed would be misread by another's checker.
  */
 function sharingHost(options: ts.CompilerOptions): ts.CompilerHost {
 	const host = ts.createCompilerHost(options);
-	const key = JSON.stringify(options);
+	const key = sharingKey(options);
 	const donors = [...programCache.values()].filter(
-		(entry) => entry.options === key,
+		(entry) => entry.sharing === key,
 	);
 	if (donors.length === 0) return host;
 	const readSourceFile = host.getSourceFile;
-	host.getSourceFile = (fileName, ...rest) => {
+	host.getSourceFile = (fileName, languageVersion, onError, createNew) => {
+		if (createNew) {
+			return readSourceFile(
+				fileName,
+				languageVersion,
+				onError,
+				createNew,
+			);
+		}
 		let current: string | undefined;
 		for (const donor of donors) {
 			const signature = donor.files.get(fileName);
@@ -179,9 +193,14 @@ function sharingHost(options: ts.CompilerOptions): ts.CompilerHost {
 			const sourceFile = donor.program.getSourceFile(fileName);
 			if (sourceFile) return sourceFile;
 		}
-		return readSourceFile(fileName, ...rest);
+		return readSourceFile(fileName, languageVersion, onError, createNew);
 	};
 	return host;
+}
+
+/** What programs must have in common to share source files. */
+function sharingKey(options: ts.CompilerOptions): string {
+	return `${typeScriptId()}\0${JSON.stringify(options)}`;
 }
 
 function cacheProgram(
@@ -211,7 +230,7 @@ function cacheProgram(
 		program,
 		files,
 		directories,
-		options: JSON.stringify(program.getCompilerOptions()),
+		sharing: sharingKey(program.getCompilerOptions()),
 	});
 	if (programCache.size > MAX_CACHED_PROGRAMS) {
 		const oldestKey = programCache.keys().next().value;
