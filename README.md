@@ -156,7 +156,7 @@ It takes the same selector as `inferredType`, `strict` included, and like it thr
 
 The count covers what the target's type takes: for `const x = expr`, checking `expr`; for a function without a return type annotation, inferring the return type from its `return` statements. Code the type doesn't depend on is not counted, such as an initializer under an annotation (`const x: T = expr` takes its type from `T`). Target that expression with `{ line, text }` to count it.
 
-To count several targets of one file, pass `names` for a record of costs by name, or `targets` (any selector shape, without options) for an array in order:
+To count several targets of one file, pass `names` for a record of costs by name, or `targets` (any selector shape, without options) for an array in order. The options a count uses, `project`, `compiler`, and `strict`, go next to `names` or `targets`; with `strict: true`, a batch also rejects the display options it would ignore, such as `full` or `sort_unions`:
 
 ```typescript
 const costs = inferredTypeCost(import.meta.url, { names: ["userSchema", "orderSchema"] });
@@ -167,7 +167,7 @@ const [first, second] = inferredTypeCost(import.meta.url, {
 });
 ```
 
-A batch counts exactly what single calls do: every count still gets a new checker. What is shared is the loading. In one process, a project's files are parsed once, and the programs for its other files reuse them, so counting in another file of the project costs little more than the counts themselves: 30 to 70 ms per further file instead of about 300 ms, on prinfer's own repository. A count is also kept while no file changes, so asking for the same target again is free. The count itself is the checker's work for that target and is never shared: a type that takes 80,000 instantiations takes about 250 ms to count. `bun test` runs every test file in one process, so the project loads once per run; with Vitest's default isolation, each test file loads it again.
+A batch counts exactly what single calls do: every count still gets a new checker. What is shared is the loading. In one process, a project's files are parsed once per compiler, and the programs for its other files reuse them, so counting in another file of the project costs little more than the counts themselves: 30 to 70 ms per further file instead of about 300 ms, on prinfer's own repository. A count is also kept while no file changes, so asking for the same target again is free. The count itself is the checker's work for that target and is never shared: a type that takes 80,000 instantiations takes about 250 ms to count. `bun test` runs every test file in one process, so the project loads once per run; with Vitest's default isolation, each test file loads it again.
 
 TypeScript 7 exposes no instantiation counts, so costs are TypeScript 6 only: with `backend: "typescript7"`, `inferredTypeCost` and `include_cost` throw, and `expectType` counts on TypeScript 6 regardless. The other surfaces take `include_cost` (MCP, library) or `--cost` (CLI) and add the same numbers to the hover result as `cost`.
 

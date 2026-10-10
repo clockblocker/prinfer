@@ -13,4 +13,4 @@ expectType(import.meta.url, {
 });
 ```
 
-The selector is `inferredType`'s (`backend`, `sort_unions`, `full`, and `strict` apply) plus `printed`, `maxInstantiations`, `maxTypes`, and `readable`. Costs are always counted on TypeScript 6, also when `backend: "typescript7"` picks the text, and the error says so.
+The selector is `inferredType`'s (`backend`, `compiler`, `sort_unions`, `full`, and `strict` apply) plus `printed`, `maxInstantiations`, `maxTypes`, and `readable`. Costs are always counted on TypeScript 6, also when `backend: "typescript7"` picks the text, and a failed budget names the compiler that counted (`counted on typescript 6.0.3, bundled`). `compiler` applies to the count too; with `backend: "typescript7"`, `compiler: "project"` counts on the project's TypeScript 6 when it has one and on the bundled one otherwise.
