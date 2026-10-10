@@ -30,7 +30,8 @@ type JsonSchema = Record<string, unknown>;
  * `$schema` (2020-12 is the MCP default), zod's safe-integer bounds,
  * `exclusiveMinimum: 0` on integers (as `minimum: 1`), `type` next to
  * `const` or a string `enum`, and, in output schemas, `additionalProperties: false` (results
- * may gain fields within contract version 1) and descriptions.
+ * may gain fields within contract version 1), descriptions, and the
+ * `compiler` of results, which is still sent.
  */
 export function compactJsonSchema(
 	schema: unknown,
@@ -55,10 +56,18 @@ export function compactJsonSchema(
 		out[key] =
 			key === "properties" && value && typeof value === "object"
 				? Object.fromEntries(
-						Object.entries(value).map(([name, property]) => [
-							name,
-							compactJsonSchema(property, io),
-						]),
+						Object.entries(value)
+							// Results report their compiler without
+							// advertising it: it would cost every session
+							// context for a field agents rarely read.
+							.filter(
+								([name]) =>
+									!(io === "output" && name === "compiler"),
+							)
+							.map(([name, property]) => [
+								name,
+								compactJsonSchema(property, io),
+							]),
 					)
 				: compactJsonSchema(value, io);
 	}

@@ -2,12 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
+import { compilerMode } from "./compiler.js";
 import { contractError } from "./contract.js";
 import { resolveTextColumn } from "./core/text-target.js";
 import { COST_NEEDS_TYPESCRIPT6, PrinferError } from "./errors.js";
 import { hover } from "./index.js";
 import { callNative, closeNative, DEFAULT_TIMEOUT_MS } from "./native-sync.js";
-import type { HoverCost, HoverOptions, HoverResult } from "./types.js";
+import type {
+	CompilerMode,
+	HoverCost,
+	HoverOptions,
+	HoverResult,
+} from "./types.js";
 
 /**
  * A source file for the testing helpers. Pass `import.meta.url` for the test
@@ -26,6 +32,8 @@ interface InferredCompletionsOptions {
 	 * tool and `prinfer complete` use TypeScript 6 and return 50 by default.)
 	 */
 	backend?: "typescript7";
+	/** Which TypeScript 7 compiler to use; see `CompilerMode`. */
+	compiler?: CompilerMode;
 	/** See `InferredTypeOptions.timeout`. */
 	timeout?: number;
 	/**
@@ -183,7 +191,10 @@ export function inferredCompletions(
 				request.file,
 				target.line,
 				target.column,
-				{ project: projectPath(selector.project) },
+				{
+					project: projectPath(selector.project),
+					compiler: compilerMode(selector.compiler),
+				},
 			],
 			request.timeout,
 		);
@@ -304,6 +315,8 @@ function inferredTypeInfoImpl(
 			const options = {
 				...hoverOptions(selector),
 				project: projectPath(selector.project),
+				// Resolved here: the worker sees the environment it started with.
+				compiler: compilerMode(selector.compiler),
 			};
 			return target.kind === "name"
 				? callNative(
@@ -346,6 +359,7 @@ const COMPLETIONS_SELECTOR_KEYS = [
 	"occurrence",
 	"cursor",
 	"project",
+	"compiler",
 	"backend",
 	"timeout",
 	"strict",
@@ -360,6 +374,7 @@ const TYPE_SELECTOR_KEYS = [
 	"occurrence",
 	"cursor",
 	"project",
+	"compiler",
 	"full",
 	"include_docs",
 	"include_cost",
@@ -538,8 +553,9 @@ function hoverOptions(selector: InferredTypeSelector): HoverOptions {
 		include_cost,
 		full = true,
 		sort_unions,
+		compiler,
 	} = selector;
-	return { project, include_docs, include_cost, full, sort_unions };
+	return { project, include_docs, include_cost, full, sort_unions, compiler };
 }
 
 function assertPositive(helper: string, field: string, value: unknown): void {

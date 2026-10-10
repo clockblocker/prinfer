@@ -9,7 +9,7 @@ import type {
  * Entry of the worker thread behind the synchronous TypeScript 7 helpers.
  *
  * It imports nothing that can fail to load, then loads the real worker
- * (native-worker.ts, which pulls in `@typescript/native`) dynamically. If
+ * (native-worker.ts, which loads the compiler API on first use) dynamically. If
  * that import throws, the thread would otherwise just die: its error event
  * can't reach a calling thread blocked in `Atomics.wait`, so every call
  * would wait out its full timeout. Instead the failure is posted as a

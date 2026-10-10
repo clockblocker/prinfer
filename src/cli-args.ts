@@ -151,6 +151,7 @@ export const FLAGS: Record<string, { key: string; value?: true }> = {
 	"--project": { key: "project", value: true },
 	"-p": { key: "project", value: true },
 	"--backend": { key: "backend", value: true },
+	"--compiler": { key: "compiler", value: true },
 	"--prefix": { key: "prefix", value: true },
 	"--limit": { key: "limit", value: true },
 };

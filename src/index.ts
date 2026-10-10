@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { runTypeScript6, withCompilerInfo } from "./compiler.js";
 import { contractError } from "./contract.js";
 import { getFileAnnotations } from "./core/annotations.js";
 import {
@@ -22,6 +23,8 @@ import type {
 	AnnotationTarget,
 	BatchHoverItem,
 	BatchHoverResult,
+	CompilerInfo,
+	CompilerMode,
 	CompletionEntry,
 	CompletionOptions,
 	CompletionResult,
@@ -52,6 +55,7 @@ export {
 	CONTRACT_VERSION,
 	type ContractErrorCode,
 	type ContractErrorResponse,
+	compilerInfoSchema,
 	contractError,
 	contractErrorCodeSchema,
 	contractErrorResponseSchema,
@@ -95,6 +99,8 @@ export type {
 	AnnotationTarget,
 	BatchHoverItem,
 	BatchHoverResult,
+	CompilerInfo,
+	CompilerMode,
 	CompletionEntry,
 	CompletionOptions,
 	CompletionResult,
@@ -123,10 +129,12 @@ export function completions(
 	column: number,
 	options?: CompletionOptions,
 ): CompletionResult {
-	return getCompletions(file, line, column, options?.project, {
-		prefix: options?.prefix,
-		limit: options?.limit,
-	});
+	return runTypeScript6(file, options, () =>
+		getCompletions(file, line, column, options?.project, {
+			prefix: options?.prefix,
+			limit: options?.limit,
+		}),
+	);
 }
 
 /**
@@ -148,10 +156,12 @@ export function diagnostics(
 	file: string,
 	options?: DiagnosticsOptions,
 ): DiagnosticsResult {
-	return getFileDiagnostics(
-		file,
-		options?.project,
-		options?.include_suggestions ?? false,
+	return runTypeScript6(file, options, () =>
+		getFileDiagnostics(
+			file,
+			options?.project,
+			options?.include_suggestions ?? false,
+		),
 	);
 }
 
@@ -176,7 +186,9 @@ export function annotations(
 	file: string,
 	options?: AnnotationsOptions,
 ): AnnotationsResult {
-	return getFileAnnotations(file, options?.project);
+	return runTypeScript6(file, options, () =>
+		getFileAnnotations(file, options?.project),
+	);
 }
 
 /**
@@ -244,17 +256,19 @@ export function hover(
 	options?: HoverOptions,
 ): HoverResult {
 	if (typeof lineOrName === "string") {
-		return hoverByNameImpl(
-			file,
-			lineOrName,
-			columnOrOptions as HoverByNameOptions | undefined,
+		const byName = columnOrOptions as HoverByNameOptions | undefined;
+		return runTypeScript6(file, byName, (compiler) =>
+			hoverByNameImpl(file, lineOrName, compiler, byName),
 		);
 	}
-	return hoverByPositionImpl(
-		file,
-		lineOrName,
-		columnOrOptions as number,
-		options,
+	return runTypeScript6(file, options, (compiler) =>
+		hoverByPositionImpl(
+			file,
+			lineOrName,
+			columnOrOptions as number,
+			compiler,
+			options,
+		),
 	);
 }
 
@@ -262,6 +276,7 @@ function hoverByPositionImpl(
 	file: string,
 	line: number,
 	column: number,
+	compiler: CompilerInfo,
 	options?: HoverOptions,
 ): HoverResult {
 	const {
@@ -296,7 +311,10 @@ function hoverByPositionImpl(
 	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
 	if (sort_unions) sortResultUnions(result);
 	if (include_cost) {
-		result.cost = measureHoverCost(program, node, sourceFile);
+		result.cost = withCompilerInfo(
+			measureHoverCost(program, node, sourceFile),
+			compiler,
+		);
 	}
 	return result;
 }
@@ -304,6 +322,7 @@ function hoverByPositionImpl(
 function hoverByNameImpl(
 	file: string,
 	name: string,
+	compiler: CompilerInfo,
 	options?: HoverByNameOptions,
 ): HoverResult {
 	const {
@@ -338,7 +357,10 @@ function hoverByNameImpl(
 	const result = getHoverInfo(program, node, sourceFile, include_docs, full);
 	if (sort_unions) sortResultUnions(result);
 	if (include_cost) {
-		result.cost = measureHoverCost(program, node, sourceFile);
+		result.cost = withCompilerInfo(
+			measureHoverCost(program, node, sourceFile),
+			compiler,
+		);
 	}
 	if (alternatives) result.alternatives = alternatives;
 	return result;
@@ -371,6 +393,17 @@ function hoverByNameImpl(
 export function batchHover(
 	file: string,
 	positions: HoverPosition[],
+	options?: HoverOptions,
+): BatchHoverResult {
+	return runTypeScript6(file, options, (compiler) =>
+		batchHoverImpl(file, positions, compiler, options),
+	);
+}
+
+function batchHoverImpl(
+	file: string,
+	positions: HoverPosition[],
+	compiler: CompilerInfo,
 	options?: HoverOptions,
 ): BatchHoverResult {
 	const {
@@ -436,9 +469,15 @@ export function batchHover(
 			);
 			if (sort_unions) sortResultUnions(result);
 			if (include_cost) {
-				result.cost = measureHoverCost(program, node, sourceFile);
+				result.cost = withCompilerInfo(
+					measureHoverCost(program, node, sourceFile),
+					compiler,
+				);
 			}
-			items.push({ position: pos, result });
+			items.push({
+				position: pos,
+				result: withCompilerInfo(result, compiler),
+			});
 		} catch (err) {
 			items.push({
 				position: pos,

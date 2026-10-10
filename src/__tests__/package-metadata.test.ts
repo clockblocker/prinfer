@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ensureFreshBuild } from "./helpers/build.js";
 
 const root = join(import.meta.dir, "..", "..");
 
@@ -54,6 +55,29 @@ describe("MCPB manifest (Smithery)", () => {
 			},
 		});
 		expect(manifest.user_config).toBeUndefined();
+	});
+});
+
+describe("published build", () => {
+	const dist = join(root, "dist");
+
+	test("ships no sourcemaps", () => {
+		ensureFreshBuild();
+		expect(
+			readdirSync(dist).filter((name) => name.endsWith(".map")),
+		).toEqual([]);
+	});
+
+	test("loads @typescript/native only on a TypeScript 7 call", () => {
+		ensureFreshBuild();
+		for (const name of readdirSync(dist)) {
+			if (!/\.c?js$/.test(name)) continue;
+			const code = readFileSync(join(dist, name), "utf8");
+			// A static import or require would load it with the module; the
+			// lazy import() in src/compiler.ts is the only reference allowed.
+			expect(code).not.toMatch(/^import [^(]*["']@typescript\/native/m);
+			expect(code).not.toMatch(/require\(["']@typescript\/native/);
+		}
 	});
 });
 

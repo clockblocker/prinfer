@@ -157,8 +157,13 @@ export function formatHoverText(
 	if (result.documentation)
 		lines.push(`${labels.docs}${result.documentation}`);
 	if (result.cost) {
+		// Counts change with the compiler version, so say which one counted.
+		const compiler = result.cost.compiler ?? result.compiler;
+		const counter = compiler
+			? ` (${compiler.name} ${compiler.version}, ${compiler.source})`
+			: "";
 		lines.push(
-			`${labels.cost}${formatCount(result.cost.instantiations)} instantiations, ${formatCount(result.cost.types)} types`,
+			`${labels.cost}${formatCount(result.cost.instantiations)} instantiations, ${formatCount(result.cost.types)} types${counter}`,
 		);
 	}
 	if (options.target) {

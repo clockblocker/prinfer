@@ -1,16 +1,45 @@
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { version as nativeVersion } from "@typescript/native";
-import {
-	type CallExpression,
-	type Node,
-	NodeFlags,
-	type SourceFile,
-	SyntaxKind,
-	type TypeParameterDeclaration,
+import type {
+	CallExpression,
+	Node,
+	SourceFile,
+	TypeParameterDeclaration,
 } from "@typescript/native/unstable/ast";
+import type {
+	Checker,
+	Diagnostic as NativeDiagnostic,
+	Project,
+	Signature,
+	Snapshot,
+	Symbol as TsSymbol,
+	Type,
+	UnionType,
+} from "@typescript/native/unstable/async";
 import {
+	compilerDirectory,
+	compilerMode,
+	resolveTypeScript7,
+	withCompilerInfo,
+} from "./compiler.js";
+import { getNodeName, getSymbolKind } from "./core/hover.js";
+import { lineStarts, positionAt, stripBom } from "./core/lines.js";
+import { lookupName } from "./core/name-lookup.js";
+import { findNodeAtPosition as findSyntaxNode } from "./core/node-find.js";
+import { getNameNode } from "./core/node-match.js";
+import {
+	canonicalOptionalsAsync,
+	type OptionalFacts,
+	type OptionalStep,
+	singleLine,
+} from "./core/signature-text.js";
+import { ts } from "./core/ts-runtime.js";
+import { sortResultUnions } from "./core/union-order.js";
+import { PrinferError } from "./errors.js";
+import {
+	API,
+	activeNativeCompiler,
 	isClassDeclaration,
 	isExpressionWithTypeArguments,
 	isFunctionDeclaration,
@@ -30,37 +59,16 @@ import {
 	isTypeNode,
 	isTypeQueryNode,
 	isVariableDeclaration,
-} from "@typescript/native/unstable/ast/is";
-import {
-	API,
-	type Checker,
-	type Diagnostic as NativeDiagnostic,
 	DiagnosticCategory as NativeDiagnosticCategory,
 	NodeBuilderFlags,
-	type Project,
-	type Signature,
+	NodeFlags,
+	onNativeCompilerSwitch,
 	SignatureKind,
-	type Snapshot,
 	SymbolFlags,
-	type Symbol as TsSymbol,
-	type Type,
+	SyntaxKind,
 	TypeFlags,
-	type UnionType,
-} from "@typescript/native/unstable/async";
-import * as ts from "typescript";
-import { getNodeName, getSymbolKind } from "./core/hover.js";
-import { lineStarts, positionAt, stripBom } from "./core/lines.js";
-import { lookupName } from "./core/name-lookup.js";
-import { findNodeAtPosition as findSyntaxNode } from "./core/node-find.js";
-import { getNameNode } from "./core/node-match.js";
-import {
-	canonicalOptionalsAsync,
-	type OptionalFacts,
-	type OptionalStep,
-	singleLine,
-} from "./core/signature-text.js";
-import { sortResultUnions } from "./core/union-order.js";
-import { PrinferError } from "./errors.js";
+	withNativeCompiler,
+} from "./native-runtime.js";
 import type {
 	CompletionOptions,
 	DiagnosticCategory as DiagnosticCategoryName,
@@ -128,12 +136,18 @@ export const IDLE_CLOSE_MS = 1_000;
 
 let warnedFallback = false;
 
+/** The active TypeScript 7 package, for messages: `typescript 7.0.2`. */
+function compilerName(): string {
+	const info = activeNativeCompiler()?.info;
+	return info ? `${info.name} ${info.version}` : "@typescript/native";
+}
+
 function warnFallback(reason: string): void {
 	if (warnedFallback) return;
 	warnedFallback = true;
 	process.stderr.write(
 		[
-			`prinfer: cannot find the TypeScript 7 compiler process in @typescript/native ${nativeVersion} (${reason}), so idle sessions cannot be unref'd.`,
+			`prinfer: cannot find the TypeScript 7 compiler process in ${compilerName()} (${reason}), so idle sessions cannot be unref'd.`,
 			`prinfer now closes a session after ${IDLE_CLOSE_MS}ms idle so the process can still exit; the next call restarts the compiler.`,
 			'Fix: call `await closeTestingSessions()` from "prinfer/testing" in afterAll to shut sessions down yourself, and report this at https://github.com/clockblocker/prinfer/issues.',
 			"",
@@ -453,6 +467,28 @@ class NativeApiSession {
 	}
 }
 
+// Sessions hold objects of the compiler that created them.
+onNativeCompilerSwitch(() => closeNativeApiSessions());
+
+/**
+ * Run a call on the TypeScript 7 compiler its options select (see
+ * `CompilerMode`), loading it on first use, and mark the result with it.
+ */
+async function onCompiler<T extends object>(
+	file: string,
+	options: Pick<HoverOptions, "project" | "compiler"> | undefined,
+	run: () => Promise<T>,
+): Promise<T> {
+	const compiler = await resolveTypeScript7(
+		compilerMode(options?.compiler),
+		compilerDirectory(file, options?.project),
+	);
+	return withCompilerInfo(
+		await withNativeCompiler(compiler, run),
+		compiler.info,
+	);
+}
+
 export async function nativeApiCompletionNames(
 	file: string,
 	line: number,
@@ -462,13 +498,15 @@ export async function nativeApiCompletionNames(
 	const entryFileAbs = resolveFile(file);
 	const text = fs.readFileSync(entryFileAbs, "utf8");
 	const position = sourcePosition(entryFileAbs, text, line, column);
-	return runInSession(entryFileAbs, options?.project, async ({ checker }) => {
-		const completions = await checker.getCompletionsAtPosition(
-			entryFileAbs,
-			position,
-		);
-		return completions?.entries.map((entry) => entry.name) ?? [];
-	});
+	return onCompiler(entryFileAbs, options, () =>
+		runInSession(entryFileAbs, options?.project, async ({ checker }) => {
+			const completions = await checker.getCompletionsAtPosition(
+				entryFileAbs,
+				position,
+			);
+			return completions?.entries.map((entry) => entry.name) ?? [];
+		}),
+	);
 }
 
 export async function nativeApiTypeInfo(
@@ -478,6 +516,17 @@ export async function nativeApiTypeInfo(
 	options?: HoverOptions,
 ): Promise<HoverResult> {
 	const entryFileAbs = resolveFile(file);
+	return onCompiler(entryFileAbs, options, () =>
+		typeInfoInSession(entryFileAbs, line, column, options),
+	);
+}
+
+function typeInfoInSession(
+	entryFileAbs: string,
+	line: number,
+	column: number,
+	options?: HoverOptions,
+): Promise<HoverResult> {
 	const text = fs.readFileSync(entryFileAbs, "utf8");
 	const position = sourcePosition(entryFileAbs, text, line, column);
 	return runInSession(entryFileAbs, options?.project, (project, sourceFile) =>
@@ -617,14 +666,16 @@ export async function nativeApiTypeInfoByName(
 	const { line, character } = syntax.getLineAndCharacterOfPosition(
 		getNameNode(node).getStart(syntax),
 	);
-	const result = await nativeApiTypeInfo(
-		entryFileAbs,
-		line + 1,
-		character + 1,
-		options,
-	);
-	if (alternatives) result.alternatives = alternatives;
-	return result;
+	return onCompiler(entryFileAbs, options, async () => {
+		const result = await typeInfoInSession(
+			entryFileAbs,
+			line + 1,
+			character + 1,
+			options,
+		);
+		if (alternatives) result.alternatives = alternatives;
+		return result;
+	});
 }
 
 export async function closeNativeApiSessions(): Promise<void> {

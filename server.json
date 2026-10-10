@@ -33,6 +33,13 @@
 					"format": "string",
 					"default": "typescript7",
 					"choices": ["typescript7", "typescript6"]
+				},
+				{
+					"name": "PRINFER_COMPILER",
+					"description": "Which TypeScript compilers to use: prinfer's bundled ones, the project's own (typescript 5.0 to 6.x; typescript 7 or @typescript/native-preview), or auto: the project's when supported, else bundled.",
+					"format": "string",
+					"default": "bundled",
+					"choices": ["bundled", "project", "auto"]
 				}
 			]
 		}

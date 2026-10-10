@@ -50,7 +50,7 @@ The second argument picks the target:
 - `{ line, text, occurrence? }`: the token where `text` starts on that line, matched like the `hover` tool's `text`.
 - `{ line, column }`: a 1-based position.
 
-Options (`backend`, `project`, `full`, `include_docs`, `sort_unions`, `include_cost`, `timeout`, `strict`) go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`. There is no third argument; passing one throws. Keys a helper doesn't know are ignored. Pass `strict: true` to make them throw, with the closest valid key: test runners don't type-check test files, so a camelCase `sortUnions` for `sort_unions` would otherwise do nothing and give no error.
+Options (`backend`, `project`, `compiler`, `full`, `include_docs`, `sort_unions`, `include_cost`, `timeout`, `strict`) go in the same object, e.g. `{ name: "byRole", backend: "typescript7" }`. There is no third argument; passing one throws. Keys a helper doesn't know are ignored. Pass `strict: true` to make them throw, with the closest valid key: test runners don't type-check test files, so a camelCase `sortUnions` for `sort_unions` would otherwise do nothing and give no error.
 
 `inferredType` and `inferredTypeInfo` (the full hover result: name, kind, return type, docs) use TypeScript 6 by default. Pass `backend: "typescript7"` for TypeScript 7 output. Every helper is synchronous on both backends, so there is no promise to forget to await. Types are untruncated by default, so a change deep inside an object or union fails the snapshot; pass `full: false` for the editor's shortened form (`{ ...; }`). `include_docs` adds JSDoc to `inferredTypeInfo`.
 
@@ -98,7 +98,7 @@ test("userSchema stays cheap to infer", () => {
 });
 ```
 
-It takes the same selector as `inferredType`, `strict` included, and like it throws on a third argument. It returns `{ instantiations, types }`: the type instantiations (what `tsc --extendedDiagnostics` reports as `Instantiations`) and the types that a fresh TypeScript 6 checker creates while it resolves the target and writes out its untruncated type. Each count gets a new checker, so no earlier lookup has done part of the work. The numbers are the same on every run, in every process, in any test order, and with any display option. Only the code, the compiler options, and the TypeScript version change them, so pin `typescript` in a project that budgets types. prinfer reports no wall-clock time: identical runs of the same lookup differ by several times.
+It takes the same selector as `inferredType`, `strict` included, and like it throws on a third argument. It returns `{ instantiations, types }`: the type instantiations (what `tsc --extendedDiagnostics` reports as `Instantiations`) and the types that a fresh TypeScript 6 checker creates while it resolves the target and writes out its untruncated type. Each count gets a new checker, so no earlier lookup has done part of the work. The numbers are the same on every run, in every process, in any test order, and with any display option. Only the code, the compiler options, and the TypeScript version change them. They are counted by prinfer's bundled TypeScript 6 unless you pass `compiler: "project"` to count with your own `typescript` (see [Bundled or project compilers](#bundled-or-project-compilers)); pin that version in a project that budgets types. The returned object's non-enumerable `compiler` says which one counted. prinfer reports no wall-clock time: identical runs of the same lookup differ by several times.
 
 The count covers what the target's type takes: for `const x = expr`, checking `expr`; for a function without a return type annotation, inferring the return type from its `return` statements. Code the type doesn't depend on is not counted, such as an initializer under an annotation (`const x: T = expr` takes its type from `T`). Target that expression with `{ line, text }` to count it.
 
@@ -393,6 +393,24 @@ A `redundant` annotation can be deleted without changing the type. A `widening` 
 - `typescript6` uses the TypeScript 6 compiler API in-process. If a lookup fails or looks wrong on TypeScript 7, retry that call with `typescript6`.
 - [Type costs](#type-cost-budgets) (`include_cost`, `--cost`, `inferredTypeCost`) are counted on TypeScript 6 on every surface.
 
+### Bundled or project compilers
+
+By default prinfer prints and counts with the TypeScript 6 and TypeScript 7 it depends on (`typescript` 6, and `@typescript/native`, an alias of `typescript` 7), so results are the same on every machine whatever the project installs. To get exactly what your own compiler infers (for snapshots and cost budgets that should move when you upgrade it, and only then), use the project's compilers instead:
+
+| Mode | TypeScript 6 backend | TypeScript 7 backend |
+| :- | :- | :- |
+| `bundled` (default) | prinfer's `typescript` | prinfer's `@typescript/native` |
+| `project` | the project's `typescript`, 5.0 to 6.x | the project's `typescript` 7 or `@typescript/native-preview` (7.0.0-dev.20260624.1 or later) |
+| `auto` | the project's when supported, else bundled | the project's when supported, else bundled |
+
+Set it with `compiler` in the library options and the `prinfer/testing` selectors (`{ name: "user", compiler: "project" }`), `--compiler` on the CLI, or `PRINFER_COMPILER` for every surface, including the MCP server. An explicit option wins over the variable. The project's packages are resolved the way Node resolves an import from the directory of the file's `tsconfig.json` (or of `project`); for TypeScript 7 the nearest of `typescript` 7 and `@typescript/native-preview` wins. prinfer then uses that package's own API client and compiler binary, so the two always speak the same protocol.
+
+`project` throws a `TYPESCRIPT_ERROR` naming the package, version, and path when the project has none or an unsupported one: `typescript` before 5.0, a `typescript` 7 asked for TypeScript 6 output, or a `@typescript/native-preview` before 7.0.0-dev.20260624.1 (builds before 7.0.0-dev.20260515.1 ship no API client, and later ones up to 7.0.0-dev.20260623.1 open no project for a file). `auto` uses the bundled compiler instead, with one warning on stderr when the project's is unsupported. On TypeScript 5.0 to 5.8 some types and messages print differently from TypeScript 6; that is the point of the mode, but expect snapshot differences when you switch.
+
+Every result says which compiler produced it, as `compiler: { name, version, source }` with `source` `"bundled"` or `"project"`. On library and testing results it is a non-enumerable property, so snapshots, `toEqual`, and `JSON.stringify` stay the same when only the compiler changes; read it directly (`inferredTypeInfo(...).compiler`, `inferredTypeCost(...).compiler`). The CLI's `--json` output and the MCP tools' structured content include it in `result`, and cost lines name it: `cost: 412 instantiations, 96 types (typescript 6.0.3, bundled)`.
+
+One process runs one TypeScript 7 compiler at a time: a call that needs another one waits for the calls in flight, closes their sessions, and starts the other compiler.
+
 The TypeScript 7 backend is experimental: TypeScript 7.0's programmatic API and hover format may still change. Both backends pick the same symbol for `hover_by_name`, report the position of its name token, and count lines the way TypeScript does (CR, LF, CRLF, U+2028, and U+2029 end a line; a leading BOM is ignored). Known differences:
 
 - `signature` has the same shape on both (see [Hover results](#hover-results)). Only the language server reports `display`.
@@ -404,6 +422,7 @@ Environment variables on the server process:
 | Variable | Effect |
 | :- | :- |
 | `PRINFER_BACKEND=typescript6` | Default backend for `hover_by_name`, `hover`, `batch_hover`, and `diagnostics`. An explicit `backend` argument, or `include_cost`, still wins. |
+| `PRINFER_COMPILER=project` | Use the project's own compilers instead of the bundled ones (`auto`: the project's when supported); see [Bundled or project compilers](#bundled-or-project-compilers). Also read by the CLI, the library, and `prinfer/testing`. |
 
 `PRINFER_INCLUDE_TIMING` is no longer read; pass `include_cost` for [type costs](#type-cost-budgets) instead.
 
@@ -460,6 +479,7 @@ prinfer src/utils.ts:status --sort-unions  # union members in a fixed order, the
 prinfer src/utils.ts:largeType --max-chars 0   # print the whole type (default cap: 4000 chars)
 prinfer src/utils.ts:format --cost      # type instantiations, the same every run (TS6)
 prinfer src/utils.ts:format -p ./tsconfig.json
+prinfer src/utils.ts:format --compiler project  # the project's own typescript, not prinfer's
 
 # Completions at a cursor: the top 50, filtered by the text typed left of the cursor
 prinfer complete src/utils.ts:14:30
@@ -580,7 +600,7 @@ Unlike the MCP server, the library throws on failure (`batchHover` reports bad p
 
 - Node.js >= 20.0.0
 
-prinfer bundles its own TypeScript 6 and TypeScript 7 as internal dependencies, so your project's `typescript` version doesn't matter and doesn't need aliasing or downgrading.
+prinfer bundles its own TypeScript 6 and TypeScript 7 as internal dependencies, so your project's `typescript` version doesn't matter and doesn't need aliasing or downgrading. To use your project's compilers instead, see [Bundled or project compilers](#bundled-or-project-compilers). The TypeScript 7 package is loaded only when a TypeScript 7 call needs it.
 
 ## Development
 
