@@ -67,7 +67,7 @@ expect(inferredType(new URL("./groupBy.fixture.ts", import.meta.url), { name: "b
 
 `inferredCompletions` uses TypeScript 7 and resolves to every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
 
-TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early.
+TypeScript 7 calls share one compiler process per project. It doesn't keep the test process alive, so no teardown is needed; `await closeTestingSessions()` (e.g. in `afterAll`) shuts it down early. If the process exits, as when `bun test` kills child processes after a test times out, the next call starts a new one.
 
 Failed lookups throw (or reject) with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
 

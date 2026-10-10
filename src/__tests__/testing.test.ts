@@ -375,4 +375,42 @@ describe("teardown", () => {
 		]);
 		expect(stderr).not.toContain("prinfer:");
 	}, 60_000);
+
+	test("bun test killing the compiler on a test timeout does not break later calls", async () => {
+		// bun test kills every live child process when a test times out,
+		// including the shared compiler: SIGTERM, which it answers for a
+		// moment before exiting. Later calls must restart it, not hang or
+		// fail against the dead session, and teardown must still succeed.
+		const project = path.join(path.dirname(targetsPath), "tsconfig.json");
+		const call = (extra = "") =>
+			`expect(await inferredType(file, { name: "pick", backend: "typescript7"${extra} })).toBe("Drink");`;
+		const withProject = `, project: ${JSON.stringify(project)}`;
+		const source = [
+			'import { afterAll, expect, test } from "bun:test";',
+			`import { closeTestingSessions, inferredType } from ${JSON.stringify(path.join(packageRoot, "src", "testing.ts"))};`,
+			`const file = ${JSON.stringify(targetsPath)};`,
+			"afterAll(() => closeTestingSessions());",
+			`test("warm", async () => { ${call()} });`,
+			'test("idle timeout", async () => { await new Promise((resolve) => setTimeout(resolve, 1000)); }, 50);',
+			`test("after an idle kill", async () => { ${call()} }, 10_000);`,
+			`test("in-flight timeout", async () => { ${call(withProject)} }, 1);`,
+			`test("after an in-flight kill", async () => { ${call(withProject)} }, 10_000);`,
+		].join("\n");
+		const proc = Bun.spawn(
+			[process.execPath, "test", writeScript("kill.test.ts", source)],
+			{ stdout: "pipe", stderr: "pipe" },
+		);
+		const timer = setTimeout(() => proc.kill(), 30_000);
+		const exitCode = await proc.exited;
+		clearTimeout(timer);
+		const output =
+			(await new Response(proc.stdout).text()) +
+			(await new Response(proc.stderr).text());
+		expect(output).toContain("killed 1 dangling process");
+		expect(output).toContain("(fail) idle timeout");
+		expect(output).toContain("(fail) in-flight timeout");
+		expect(output).toContain(" 3 pass");
+		expect(output).toContain(" 2 fail");
+		expect(exitCode).toBe(1);
+	}, 40_000);
 });

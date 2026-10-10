@@ -146,13 +146,35 @@ class NativeApiSession {
 	/** The process cannot be unref'd, so idle sessions are closed instead. */
 	private fallback = false;
 	private idleTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The compiler process, once watched for exit. */
+	private child: ChildProcess | undefined;
+	/** Set once the compiler process has exited; the session is unusable. */
+	private exitError: PrinferError | undefined;
+	/** Rejects when the compiler process exits, failing in-flight requests. */
+	private readonly exited: Promise<never>;
+	private rejectExited: (error: PrinferError) => void = () => undefined;
 
 	constructor(key: string, root: string, projectFile?: string) {
 		this.api = new API({ cwd: root });
 		this.key = key;
 		this.projectFile = projectFile;
+		this.exited = new Promise<never>((_, reject) => {
+			this.rejectExited = reject;
+		});
+		this.exited.catch(() => undefined);
 		const lookup = compilerProcessLocator.locate(this.api);
 		if (lookup.status === "missing") this.useFallback(lookup.reason);
+	}
+
+	/** The compiler process has exited, so no request can succeed. */
+	get dead(): boolean {
+		const child = this.child;
+		// Bun can destroy stdin before the exit event arrives; a request
+		// written then fails with an unhandled rejection in vscode-jsonrpc.
+		if (!this.exitError && child && (child.stdin?.destroyed ?? false)) {
+			this.handleExit(child.exitCode, child.signalCode);
+		}
+		return this.exitError !== undefined;
 	}
 
 	run<T>(
@@ -162,7 +184,13 @@ class NativeApiSession {
 		this.pending += 1;
 		this.cancelIdleClose();
 		this.setReferenced(true);
-		const result = this.tail.then(() => this.runNow(file, operation));
+		this.watchExit();
+		// A request to an exited process never settles, so race the exit.
+		const result = this.tail.then(() =>
+			this.dead
+				? Promise.reject(this.exitError)
+				: Promise.race([this.runNow(file, operation), this.exited]),
+		);
 		this.tail = result.then(
 			() => undefined,
 			() => undefined,
@@ -177,10 +205,75 @@ class NativeApiSession {
 	async close(): Promise<void> {
 		this.cancelIdleClose();
 		await this.tail;
-		await this.snapshot?.dispose();
+		const snapshot = this.snapshot;
 		this.snapshot = undefined;
 		this.documents.clear();
-		await this.api.close();
+		// The connection to an exited process is closed: nothing to release.
+		if (this.dead) return;
+		try {
+			// A process that got SIGTERM may exit without answering.
+			await Promise.race([
+				(async () => {
+					await snapshot?.dispose();
+					await this.api.close();
+				})(),
+				this.exited,
+			]);
+		} catch {
+			// It answers with errors until it exits; stop it.
+			this.child?.kill();
+		}
+	}
+
+	/**
+	 * Stop routing calls here after a compiler failure. The process is
+	 * killed rather than closed: requests to a process that is exiting can
+	 * fail with unhandled rejections inside vscode-jsonrpc.
+	 */
+	retire(): void {
+		if (sessions.get(this.key) === this) sessions.delete(this.key);
+		if (this.child) this.child.kill();
+		else void this.close().catch(() => undefined);
+	}
+
+	/**
+	 * Watch the compiler process so its exit retires the session: `bun test`
+	 * kills every live child process when a test times out, and a crash
+	 * ends it too. The first request spawns the process a few ticks after
+	 * it starts, so poll until it appears.
+	 */
+	private watchExit(): void {
+		if (this.child || this.fallback) return;
+		const lookup = compilerProcessLocator.locate(this.api);
+		if (lookup.status === "not-spawned") {
+			if (this.pending === 0) return;
+			const timer = setTimeout(() => this.watchExit(), 10);
+			timer.unref?.();
+			return;
+		}
+		if (lookup.status !== "found") return;
+		const { child } = lookup;
+		this.child = child;
+		if (child.exitCode !== null || child.signalCode !== null) {
+			this.handleExit(child.exitCode, child.signalCode);
+		} else {
+			child.once("exit", (code, signal) => this.handleExit(code, signal));
+		}
+	}
+
+	private handleExit(
+		code: number | null,
+		signal: NodeJS.Signals | null,
+	): void {
+		if (this.exitError) return;
+		const how = signal ?? (code === null ? "input closed" : `code ${code}`);
+		this.exitError = new PrinferError(
+			"TYPESCRIPT_ERROR",
+			`The TypeScript 7 compiler process exited (${how}).`,
+			"bun test kills child processes when a test times out; the next call restarts the compiler. Raise the test timeout if a cold TypeScript 7 project load exceeds it.",
+		);
+		if (sessions.get(this.key) === this) sessions.delete(this.key);
+		this.rejectExited(this.exitError);
 	}
 
 	/**
@@ -299,16 +392,13 @@ export async function nativeApiCompletionNames(
 	const entryFileAbs = resolveFile(file);
 	const text = fs.readFileSync(entryFileAbs, "utf8");
 	const position = sourcePosition(entryFileAbs, text, line, column);
-	return getSession(entryFileAbs, options?.project).run(
-		entryFileAbs,
-		async ({ checker }) => {
-			const completions = await checker.getCompletionsAtPosition(
-				entryFileAbs,
-				position,
-			);
-			return completions?.entries.map((entry) => entry.name) ?? [];
-		},
-	);
+	return runInSession(entryFileAbs, options?.project, async ({ checker }) => {
+		const completions = await checker.getCompletionsAtPosition(
+			entryFileAbs,
+			position,
+		);
+		return completions?.entries.map((entry) => entry.name) ?? [];
+	});
 }
 
 export async function nativeApiTypeInfo(
@@ -320,15 +410,13 @@ export async function nativeApiTypeInfo(
 	const entryFileAbs = resolveFile(file);
 	const text = fs.readFileSync(entryFileAbs, "utf8");
 	const position = sourcePosition(entryFileAbs, text, line, column);
-	return getSession(entryFileAbs, options?.project).run(
-		entryFileAbs,
-		(project, sourceFile) =>
-			nativeTypeInfoAt(
-				project,
-				sourceFile,
-				{ file: entryFileAbs, text, line, column, position },
-				options,
-			),
+	return runInSession(entryFileAbs, options?.project, (project, sourceFile) =>
+		nativeTypeInfoAt(
+			project,
+			sourceFile,
+			{ file: entryFileAbs, text, line, column, position },
+			options,
+		),
 	);
 }
 
@@ -1055,6 +1143,27 @@ function findSyntaxNodeAt(
 		return findSyntaxNode(syntax, position.line, position.column);
 	} catch {
 		return undefined;
+	}
+}
+
+/**
+ * Run an operation in the file's session. When the compiler fails under it
+ * (the process exited, or a request failed outside prinfer's own checks,
+ * as when a process that got SIGTERM answers before it exits), retire the
+ * session and retry once in a fresh one.
+ */
+async function runInSession<T>(
+	file: string,
+	project: string | undefined,
+	operation: (project: Project, sourceFile: SourceFile) => Promise<T>,
+): Promise<T> {
+	const session = getSession(file, project);
+	try {
+		return await session.run(file, operation);
+	} catch (error) {
+		if (error instanceof PrinferError && !session.dead) throw error;
+		session.retire();
+		return getSession(file, project).run(file, operation);
 	}
 }
 
