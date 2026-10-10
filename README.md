@@ -79,11 +79,65 @@ expect(inferredType(new URL("./groupBy.fixture.ts", import.meta.url), { name: "b
 
 `inferredCompletions` uses TypeScript 7 and returns every completion name, with no prefix filter or limit, so a snapshot catches any added or removed entry. A `text` target puts the cursor right after the match, so `text: "user."` lists members and `text: '"'` lists string-literal union members; pass `cursor: "start"` to put it before the match instead.
 
-TypeScript 7 runs in a worker thread, with one compiler process per project; each call blocks until the compiler answers. Neither keeps the test process alive, so no teardown is needed; `closeTestingSessions()` (e.g. in `afterAll`) shuts them down early. A test runner's own timeout cannot interrupt a blocked call, so prinfer has its own: a call that gets no answer within `timeout` milliseconds (default 60000, enough for a cold load of a large project) throws, and the next call starts a new compiler. A hung compiler fails one test instead of stalling the run. For a project that takes longer to load, raise it on the first call, or on all of them with a shared selector such as `const ts7 = { backend: "typescript7", timeout: 120_000 } as const`. If the compiler process exits, the call in flight retries once and later calls start a new one.
+TypeScript 7 runs in a worker thread, with one compiler process per project; each call blocks until the compiler answers. Neither keeps the test process alive, so no teardown is needed. `closeTestingSessions()` shuts them down early; it is safe to skip. If you call it, call it once per run, after the last test, not once per test file: the next TypeScript 7 call after it starts a new worker thread and compiler and loads the project again, which took about 190 ms on prinfer's own repository against 2 ms for a warm call, and takes longer on a larger project. It does not touch TypeScript 6, whose programs stay loaded. Under `bun test`, put `afterAll(closeTestingSessions)` in a file passed to `--preload` (`preload` in `bunfig.toml`): hooks there run once for the whole run. Under Vitest, leave it out: `setupFiles` run per test file, and `globalSetup` runs in a process that has no sessions. A test runner's own timeout cannot interrupt a blocked call, so prinfer has its own: a call that gets no answer within `timeout` milliseconds (default 60000, enough for a cold load of a large project) throws, and the next call starts a new compiler. A hung compiler fails one test instead of stalling the run. For a project that takes longer to load, raise it on the first call, or on all of them with a shared selector such as `const ts7 = { backend: "typescript7", timeout: 120_000 } as const`. If the compiler process exits, the call in flight retries once and later calls start a new one.
 
 Failed lookups throw with the fix in the message: an unknown name lists the closest declarations in the file, missing text quotes the line, and a missing relative path explains how to resolve it against the test file.
 
 `prinfer/vitest` remains as a deprecated alias for `prinfer/testing`.
+
+### One call: text, cost, and readability
+
+`expectType` checks a target's printed type, its cost, and its readability in one call, and throws one error that lists every check that failed:
+
+```typescript
+import { expectType } from "prinfer/testing";
+
+test("toUser stays readable and cheap", () => {
+  expectType(import.meta.url, {
+    name: "user",
+    printed: "{ id: string; name: string; }",
+    maxInstantiations: 500,
+    readable: true,
+  });
+});
+```
+
+```
+expectType failed 3 checks for "user" at test/users.test.ts:9:14:
+- printed: the type differs at character 1.
+    expected: { id: string; name: string; }
+    actual:   Omit<User, "email">
+              ^
+- maxInstantiations: 612 instantiations, over the budget of 500 by 112 (counted on TypeScript 6).
+- readable: 1 readability issue:
+    utility-type: Omit<User, "email"> is unresolved: TypeScript printed Omit<...> instead of the type it produces.
+```
+
+The selector is `inferredType`'s plus the checks, of which at least one is required:
+
+- `printed`: the exact text `inferredType` returns for the same selector, so `backend`, `sort_unions`, and `full` apply.
+- `maxInstantiations`, `maxTypes`: budgets for the [cost](#type-cost-budgets). The cost is always counted on TypeScript 6, also with `backend: "typescript7"`, which only picks where the text comes from; the error says so.
+- `readable`: `true` for the default [readability rules](#readability-checks), or a rules object.
+
+The error is a `TypeExpectationError` with every failure in `failures`. When the text differs it also carries `actual` and `expected`, so Vitest and Jest print their own diff. `expectType` only throws, so it works in any runner, and when every check passes it returns `{ printed, cost? }`. Like the other helpers it is synchronous on both backends, takes `strict`, and throws on a third argument.
+
+### Readability checks
+
+A type can be right and still print in a form a reader has to work out. `typeReadabilityIssues(text, rules?)` returns those places in printed type text, `inferredTypeIssues(file, selector)` in a target's printed type (an empty array means none), and `expectType`'s `readable` fails on them. The default rules:
+
+- `utility-type`: an unresolved utility type with type arguments, anywhere in the type: `Omit`, `Pick`, `Partial`, `Required`, `Readonly`, `Exclude`, `Extract`, `NonNullable`, `ReturnType`, `Parameters`, `ConstructorParameters`, `InstanceType`, `Awaited`, `ThisParameterType`, `OmitThisParameter` (exported as `DEFAULT_UTILITY_TYPES`). The outermost one is reported for nested ones. One over a type parameter of the printed signature, such as `Omit<T, "id">` in `<T>(value: T) => Omit<T, "id">`, is not: nothing can resolve it before `T` is known. `Record`, `Promise`, `Array`, and other generic types are not flagged.
+- `object-intersection`: an intersection with an object type, `User & { id: string; }` or a mapped type. `string & {}`, which keeps literal suggestions, is not flagged.
+- `truncation`: `... 3 more ...`, `{ ...; }`, a `...` placeholder, and text cut at the length limit. The helpers print untruncated types unless `full: false`, so this mostly catches `full: false` and text from elsewhere.
+
+The text is read with the TypeScript scanner and parser rather than matched as characters, so a string literal type like `"Omit<"` or `"..."` is not flagged, and neither is a rest parameter or a spread tuple. Each issue is `{ rule, text, offset, message }`, where `text` is the offending part as printed. Text that does not parse even with truncation markers taken out, such as text cut at the length limit, gets its truncation issues only.
+
+Rules take `utilityTypes` (the names to flag, e.g. `[...DEFAULT_UTILITY_TYPES, "DeepPartial"]` for your own aliases, or `false`), `objectIntersections` and `truncation` (`false` turns them off), and `allow`, fragments that are fine as printed: an issue whose `text` is in it is not reported, for example a branded `string & { readonly __brand: "UserId"; }`.
+
+```typescript
+expect(
+  inferredTypeIssues(import.meta.url, { name: "userId", rules: { allow: ['string & { readonly __brand: "UserId"; }'] } }),
+).toEqual([]);
+```
 
 ### Type cost budgets
 
@@ -102,7 +156,22 @@ It takes the same selector as `inferredType`, `strict` included, and like it thr
 
 The count covers what the target's type takes: for `const x = expr`, checking `expr`; for a function without a return type annotation, inferring the return type from its `return` statements. Code the type doesn't depend on is not counted, such as an initializer under an annotation (`const x: T = expr` takes its type from `T`). Target that expression with `{ line, text }` to count it.
 
-TypeScript 7 exposes no instantiation counts, so costs are TypeScript 6 only: with `backend: "typescript7"`, `inferredTypeCost` and `include_cost` throw. The other surfaces take `include_cost` (MCP, library) or `--cost` (CLI) and add the same numbers to the hover result as `cost`.
+To count several targets of one file, pass `names` for a record of costs by name, or `targets` (any selector shape, without options) for an array in order:
+
+```typescript
+const costs = inferredTypeCost(import.meta.url, { names: ["userSchema", "orderSchema"] });
+expect(costs.userSchema.instantiations).toBeLessThan(5_000);
+
+const [first, second] = inferredTypeCost(import.meta.url, {
+  targets: [{ name: "userSchema" }, { line: 12, text: "parse(" }],
+});
+```
+
+A batch counts exactly what single calls do: every count still gets a new checker. What is shared is the loading. In one process, a project's files are parsed once, and the programs for its other files reuse them, so counting in another file of the project costs little more than the counts themselves: 30 to 70 ms per further file instead of about 300 ms, on prinfer's own repository. A count is also kept while no file changes, so asking for the same target again is free. The count itself is the checker's work for that target and is never shared: a type that takes 80,000 instantiations takes about 250 ms to count. `bun test` runs every test file in one process, so the project loads once per run; with Vitest's default isolation, each test file loads it again.
+
+TypeScript 7 exposes no instantiation counts, so costs are TypeScript 6 only: with `backend: "typescript7"`, `inferredTypeCost` and `include_cost` throw, and `expectType` counts on TypeScript 6 regardless. The other surfaces take `include_cost` (MCP, library) or `--cost` (CLI) and add the same numbers to the hover result as `cost`.
+
+If you type-check with TypeScript 7, the TypeScript 6 counts are still a close guide. Measured with `--extendedDiagnostics` (TypeScript 7.0.2 with `--checkers 1`, TypeScript 6.0.3) on ten projects of one declaration each (recursive tuples, `DeepPartial`, a generic `pipe`, mapped and template literal types, a zod schema, `Object.fromEntries` chains), seven counted the same instantiations on both, two differed by 2% or less, and a recursive dotted-path type `Paths<T>` counted 17% more on TypeScript 7. Over prinfer's own source, TypeScript 7 counted 4% fewer instantiations and 4% more types. Ranked by cost, the declarations came out in the same order on both, except two within 15% of each other that swapped places. So a budget with 20% headroom over the TypeScript 6 count held for every case measured; expect a few percent of difference, more for recursive key and path types. Without `--checkers 1`, TypeScript 7 adds up the counts of its parallel checkers (1.7 times as many on prinfer's source), which can't be compared.
 
 ## Install
 
